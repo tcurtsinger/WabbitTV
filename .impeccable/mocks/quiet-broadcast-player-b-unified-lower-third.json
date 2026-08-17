@@ -1,0 +1,6 @@
+{
+  "name": "Unified Lower Third",
+  "target": "lib/src/features/playback/player_screen.dart",
+  "approved": false,
+  "prompt": "High-fidelity 16:9 native Windows Wabbit TV player comp. Thin dark native title bar; full-client aspect-preserving synthetic video; one unified solid near-black lower-third deck containing Back, City Desk, media-kind marker, timeline, grouped transport controls, mute, volume, and fullscreen. Top and center of video remain clean. Quiet Broadcast palette and Segoe UI; one crisp amber focus edge; no gradients, glass, glow, floating cards, rail, provider branding, storefront, PiP, multiview, or device frame."
+}

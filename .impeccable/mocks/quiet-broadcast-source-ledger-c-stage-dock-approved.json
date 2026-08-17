@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "option": "C — Focused Ledger with Three-Stage Dock",
+  "target": "lib/src/features/sources/source_setup_screen.dart",
+  "mode": "Operate",
+  "direction": "Source Ledger",
+  "prompt": "Approved Wabbit TV Source Ledger composition C: Quiet Broadcast shell, centered four-field Xtream form, Cancel and Connect and import actions, and one full-width bottom dock divided evenly into exactly three Live Movies Series waiting cells. No fourth cell or content-neutrality copy.",
+  "approved": true,
+  "approvedAt": "2026-08-16",
+  "approvalNote": "User approved C with the fourth informational box removed and the Live, Movies, and Series cells expanded evenly."
+}

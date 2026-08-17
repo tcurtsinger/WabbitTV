@@ -1,0 +1,7 @@
+{
+  "artifact": "wabbit-tv-icon.png",
+  "purpose": "Windows application icon source",
+  "generated": "2026-08-16",
+  "prompt": "Create a square Windows application icon for Wabbit TV. No text. Premium restrained rabbit-and-television glyph on near-black graphite: two signal-amber rabbit ears flow into a simplified TV/playback outline with a small warm-white play triangle. Clean geometric edges, strong 16px silhouette, generous padding, flat restrained palette, no mascot face or decorative scene.",
+  "ico": "../../windows/runner/resources/app_icon.ico"
+}

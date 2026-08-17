@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "option": "C — Airy Thumbnail Directory",
+  "target": "lib/src/features/browse/basic_browse_screen.dart",
+  "mode": "Operate",
+  "direction": "Source Directory List",
+  "prompt": "Native Windows Wabbit TV Phase 1 Series browse comp at 1265x713: Quiet Broadcast shell, 244px Categories pane, television-legible 76px virtualized rows with fixed synthetic abstract thumbnails and detail chevrons, one amber focus edge, synthetic titles only, no hero, grid, storefront, search, filters, favorites, groups, fake metadata, gradients, glass, or glow.",
+  "approved": false,
+  "generatedAt": "2026-08-16",
+  "literalCautions": "Synthetic titles, thumbnails, counts, title-bar details, and rail icon rendering are compositional evidence; runtime artwork is optional and broken artwork must use a fixed placeholder."
+}

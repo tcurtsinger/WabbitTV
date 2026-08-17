@@ -1,0 +1,19 @@
+{
+  "artifact": "quiet-broadcast-home-b-focused-shelf.png",
+  "option": "B",
+  "label": "Focused Shelf",
+  "target": "App shell + Home first viewport",
+  "viewport": "16:10 landscape desktop reference",
+  "product": "Wabbit TV",
+  "mode": "Operate",
+  "direction": "Quiet Broadcast",
+  "shape_briefs": [
+    "docs/shapes/0-app-shell.md",
+    "docs/shapes/0-home.md"
+  ],
+  "prompt": "Create a high-fidelity 16:10 desktop application UI composition for Wabbit TV, a Windows 11 IPTV player that supplies no content. This is COMPOSITION B: \"Focused Shelf\". Show a full 1600x1000-style app viewport, straight-on, no device frame or perspective. Visual world: Quiet Broadcast: graphite, warm-white type, restrained signal-amber focus, artwork-led color, no gradients, glassmorphism, decorative blobs, promotional hero, huge title, or excessive pills. Layout: collapsed spatial left rail; quiet Home header; first pinned Living Room shelf uses a restrained shelf-height two-column treatment with compact metadata at left and a focused card carousel at right; normal Weekend Movies and Favorites shelves below; mixed manual-order media, original abstract artwork, sparse text, predictable remote focus. Production-ready desktop product screenshot.",
+  "generated": "2026-08-16",
+  "approved": true,
+  "approved_at": "2026-08-16",
+  "approval": "User confirmed composition B — Focused Shelf"
+}

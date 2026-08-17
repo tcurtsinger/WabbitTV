@@ -1,0 +1,17 @@
+{
+  "artifact": "quiet-broadcast-home-a-rail-shelves.png",
+  "option": "A",
+  "label": "Rail + Shelves",
+  "target": "App shell + Home first viewport",
+  "viewport": "16:10 landscape desktop reference",
+  "product": "Wabbit TV",
+  "mode": "Operate",
+  "direction": "Quiet Broadcast",
+  "shape_briefs": [
+    "docs/shapes/0-app-shell.md",
+    "docs/shapes/0-home.md"
+  ],
+  "prompt": "Create a high-fidelity 16:10 desktop application UI composition for Wabbit TV, a Windows 11 IPTV player that supplies no content. This is COMPOSITION A: \"Rail + Shelves\". Show a full 1600x1000-style app viewport, straight-on, no device frame, no marketing poster, no perspective. Visual world: Quiet Broadcast. Near-black graphite canvas, warm-white typography, one restrained signal-amber accent for focus, artwork supplies nearly all other color. Crisp 1px amber focus edge plus subtle elevation; no neon glow, gradients, glassmorphism, huge title, decorative blobs, or excessive rounded cards. Layout: expanded overlay left rail with Home, Live, Movies, Series, Search, Library, Settings; quiet Home header; pinned Living Room and Weekend Movies shelves followed by Favorites; mixed media with original abstract artwork; first item focused; no promotional hero; subtle real-history progress only. Production-ready desktop product screenshot.",
+  "generated": "2026-08-16",
+  "approved": false
+}

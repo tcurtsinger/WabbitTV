@@ -1,0 +1,17 @@
+{
+  "artifact": "quiet-broadcast-home-c-context-dock.png",
+  "option": "C",
+  "label": "Context Dock",
+  "target": "App shell + Home first viewport",
+  "viewport": "16:10 landscape desktop reference",
+  "product": "Wabbit TV",
+  "mode": "Operate",
+  "direction": "Quiet Broadcast",
+  "shape_briefs": [
+    "docs/shapes/0-app-shell.md",
+    "docs/shapes/0-home.md"
+  ],
+  "prompt": "Create a high-fidelity 16:10 desktop application UI composition for Wabbit TV, a Windows 11 IPTV player that supplies no content. This is COMPOSITION C: \"Context Dock\". Show a full 1600x1000-style app viewport, straight-on, no device frame or perspective. Visual world: Quiet Broadcast: near-black graphite, warm-white type, restrained signal-amber focus, original artwork-led color, no gradients, glassmorphism, decorative blobs, huge text, promotional hero, or excessive pills. Layout: collapsed spatial left rail; quiet Home header; 70/30 body with compact horizontal landscape-card shelves on the left and a narrow persistent focused-item Context Dock on the right; pinned Living Room and Weekend Movies before Favorites; three shelves visible; mixed media with original abstract artwork; right dock is not a hero. Production-ready desktop product screenshot.",
+  "generated": "2026-08-16",
+  "approved": false
+}

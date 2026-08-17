@@ -1,0 +1,6 @@
+{
+  "name": "Broadcast Deck",
+  "target": "lib/src/features/playback/player_screen.dart",
+  "approved": true,
+  "prompt": "High-fidelity 16:9 native Windows Wabbit TV player comp. Thin native title bar; full-client aspect-preserving synthetic video; narrow solid graphite identity band at top with Back and City Desk; compact full-width bottom transport deck with VOD timeline, skip-back, play/pause, skip-forward, mute, volume, and fullscreen. Quiet Broadcast graphite, warm white, quiet gray, and signal amber focus; Segoe UI; square compact controls; no gradients, glass, glow, cards, storefront, rail, provider branding, PiP, multiview, diagnostics console, or device frame."
+}

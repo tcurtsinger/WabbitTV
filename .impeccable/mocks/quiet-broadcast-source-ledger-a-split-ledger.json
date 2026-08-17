@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "option": "A — Split Ledger",
+  "target": "lib/src/features/sources/source_setup_screen.dart",
+  "mode": "Operate",
+  "direction": "Source Ledger",
+  "prompt": "Native Windows Wabbit TV source setup comp, Option A Split Ledger: Quiet Broadcast shell, 30/70 context and four-field Xtream form, inactive Live Movies Series ledger, Connect and import primary action, harmless synthetic values only.",
+  "approved": false,
+  "generatedAt": "2026-08-16"
+}

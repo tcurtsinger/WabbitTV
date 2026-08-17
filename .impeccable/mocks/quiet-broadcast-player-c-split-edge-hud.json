@@ -1,0 +1,6 @@
+{
+  "name": "Split Edge HUD",
+  "target": "lib/src/features/playback/player_screen.dart",
+  "approved": false,
+  "prompt": "High-fidelity 16:9 native Windows Wabbit TV player comp. Thin dark native title bar; full-client aspect-preserving synthetic video; compact top-left Back and City Desk strip; bottom full-width timeline; transport block anchored bottom-left and mute, volume, fullscreen block anchored bottom-right. Quiet Broadcast graphite, warm white, quiet gray, amber focus; edge-attached square geometry; no gradients, glass, glow, floating cards, rail, storefront, provider branding, PiP, multiview, diagnostics console, or device frame."
+}

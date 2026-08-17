@@ -1,0 +1,292 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-16T00:00:00-05:00",
+  "title": "Design System: Wabbit TV",
+  "extensions": {
+    "colorMeta": {
+      "graphite": {
+        "role": "neutral",
+        "displayName": "Broadcast Graphite",
+        "canonical": "#111212",
+        "tonalRamp": [
+          "#111212",
+          "#1A1B1B",
+          "#282929",
+          "#3A3B3A",
+          "#565653",
+          "#7B7A75",
+          "#B8B5AD",
+          "#F4F0E7"
+        ]
+      },
+      "rail": {
+        "role": "neutral",
+        "displayName": "Rail Graphite",
+        "canonical": "#171818",
+        "tonalRamp": [
+          "#111212",
+          "#171818",
+          "#222321",
+          "#343534",
+          "#565653",
+          "#7B7A75",
+          "#AAA8A2",
+          "#F4F0E7"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Quiet Surface",
+        "canonical": "#191A1A",
+        "tonalRamp": [
+          "#111212",
+          "#171818",
+          "#191A1A",
+          "#222321",
+          "#343534",
+          "#565653",
+          "#AAA8A2",
+          "#F4F0E7"
+        ]
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Raised Graphite",
+        "canonical": "#222321",
+        "tonalRamp": [
+          "#111212",
+          "#171818",
+          "#191A1A",
+          "#222321",
+          "#343534",
+          "#565653",
+          "#AAA8A2",
+          "#F4F0E7"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Quiet Separator",
+        "canonical": "#343534",
+        "tonalRamp": [
+          "#111212",
+          "#171818",
+          "#222321",
+          "#343534",
+          "#565653",
+          "#7B7A75",
+          "#AAA8A2",
+          "#F4F0E7"
+        ]
+      },
+      "warm-white": {
+        "role": "neutral",
+        "displayName": "Warm White",
+        "canonical": "#F4F0E7",
+        "tonalRamp": [
+          "#111212",
+          "#343534",
+          "#565653",
+          "#7B7A75",
+          "#AAA8A2",
+          "#CFCBC2",
+          "#E5E0D7",
+          "#F4F0E7"
+        ]
+      },
+      "quiet-text": {
+        "role": "neutral",
+        "displayName": "Quiet Metadata",
+        "canonical": "#AAA8A2",
+        "tonalRamp": [
+          "#111212",
+          "#343534",
+          "#565653",
+          "#7B7A75",
+          "#AAA8A2",
+          "#CFCBC2",
+          "#E5E0D7",
+          "#F4F0E7"
+        ]
+      },
+      "signal-amber": {
+        "role": "primary",
+        "displayName": "Signal Amber",
+        "canonical": "#FFB347",
+        "tonalRamp": [
+          "#2F1D08",
+          "#55350D",
+          "#805016",
+          "#A96B22",
+          "#D98D34",
+          "#FFB347",
+          "#FFCE87",
+          "#FFE8C4"
+        ]
+      },
+      "amber-ink": {
+        "role": "secondary",
+        "displayName": "Amber Ink",
+        "canonical": "#17120A",
+        "tonalRamp": [
+          "#17120A",
+          "#2F281A",
+          "#4A4030",
+          "#695D4C",
+          "#8C806E",
+          "#B5A996",
+          "#D9CFBC",
+          "#F5ECDC"
+        ]
+      },
+      "rail-selected": {
+        "role": "neutral",
+        "displayName": "Selected Rail",
+        "canonical": "#262624",
+        "tonalRamp": [
+          "#111212",
+          "#171818",
+          "#191A1A",
+          "#222321",
+          "#262624",
+          "#565653",
+          "#AAA8A2",
+          "#F4F0E7"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Home Display",
+        "purpose": "Primary page heading."
+      },
+      "title": {
+        "displayName": "Shelf Title",
+        "purpose": "Shelf and context-panel headings."
+      },
+      "card-title": {
+        "displayName": "Card Title",
+        "purpose": "Media title in compact card footer."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Explanatory and empty-state copy."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Metadata, compact controls, and category marks."
+      },
+      "nav-label": {
+        "displayName": "Navigation Label",
+        "purpose": "Rail destination label: 500 normally, 700 when selected."
+      },
+      "action-label": {
+        "displayName": "Action Label",
+        "purpose": "Immediate action text."
+      }
+    },
+    "shadows": [
+      {
+        "name": "active-card",
+        "value": "0 8px 16px rgba(0,0,0,0.33)",
+        "purpose": "Only the active media card lifts."
+      }
+    ],
+    "motion": [
+      {
+        "name": "control-focus",
+        "value": "130ms easeOutCubic",
+        "purpose": "Card and compact-control focus/hover transitions."
+      },
+      {
+        "name": "rail-and-scroll",
+        "value": "150ms easeOutCubic",
+        "purpose": "Rail expansion and focused-card visibility."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "narrow-home",
+        "value": "780px",
+        "purpose": "Stack the focused shelf panel above its carousel."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Rail Destination",
+      "kind": "nav",
+      "refersTo": "rail-destination",
+      "description": "Collapsed navigation item with selected fill and a 2 px amber keyboard/remote focus border.",
+      "html": "<button class=\"ds-rail-destination ds-rail-destination--selected\">Home</button>",
+      "css": ".ds-rail-destination{height:48px;padding:0 12px;border:2px solid transparent;border-radius:6px;background:#171818;color:#AAA8A2;font:500 15px 'Segoe UI',sans-serif;cursor:pointer;transition:background 130ms ease-out,color 130ms ease-out,border-color 130ms ease-out}.ds-rail-destination:focus-visible{border-color:#FFB347;outline:0}.ds-rail-destination--selected{background:#262624;color:#F4F0E7;font-weight:700}"
+    },
+    {
+      "name": "Focused Media Card",
+      "kind": "card",
+      "refersTo": "media-card",
+      "description": "Artwork-led fixture card with a compact footer and precise focused lift.",
+      "html": "<article class=\"ds-media-card\"><div class=\"ds-media-art\"></div><div class=\"ds-media-copy\"><strong>Northbound</strong><span>Live</span></div></article>",
+      "css": ".ds-media-card{width:172px;overflow:hidden;border:1px solid #343534;border-radius:7px;background:#222321;color:#F4F0E7;cursor:pointer;transition:transform 130ms ease-out,border-color 130ms ease-out,box-shadow 130ms ease-out}.ds-media-card:hover,.ds-media-card:focus-visible{transform:scale(1.025);border:2px solid #FFB347;box-shadow:0 8px 16px rgba(0,0,0,.33);outline:0}.ds-media-art{height:130px;background:#274A53;border-right:44px solid #83B9B1;box-shadow:inset 0 -26px #15262B}.ds-media-copy{padding:9px 10px 10px;display:grid;gap:3px;font-family:'Segoe UI',sans-serif}.ds-media-copy strong{font-size:18px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ds-media-copy span{font-size:13px;color:#AAA8A2}"
+    },
+    {
+      "name": "Focused Action",
+      "kind": "button",
+      "refersTo": "focused-action",
+      "description": "The one obvious no-source action.",
+      "html": "<button class=\"ds-focused-action\">Add source</button>",
+      "css": ".ds-focused-action{padding:12px 16px;border:0;border-radius:6px;background:#FFB347;color:#17120A;font:700 14px 'Segoe UI',sans-serif;cursor:pointer;transition:transform 130ms ease-out,outline-color 130ms ease-out}.ds-focused-action:hover{transform:translateY(-1px)}.ds-focused-action:focus-visible{outline:2px solid #F4F0E7;outline-offset:2px}.ds-focused-action:active{transform:none}"
+    },
+    {
+      "name": "Direct Entry",
+      "kind": "button",
+      "refersTo": "direct-entry",
+      "description": "No-personalization browse choice: quiet until keyboard/remote focus.",
+      "html": "<button class=\"ds-direct-entry\">Live</button>",
+      "css": ".ds-direct-entry{padding:14px 18px;border:1px solid #343534;border-radius:6px;background:#191A1A;color:#F4F0E7;font:700 17px 'Segoe UI',sans-serif;cursor:pointer;transition:border-color 130ms ease-out,border-width 130ms ease-out}.ds-direct-entry:hover{background:#222321}.ds-direct-entry:focus-visible{border:2px solid #FFB347;outline:0;padding:13px 17px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Quiet Broadcast.",
+    "overview": "Wabbit TV is a calm, local-first launch board for a user-owned viewing library: near-black structure recedes so real provider artwork can carry color. It is an Operate surface for a Windows desk or couch; browsing stays organized, legible, and deliberately unpromotional.",
+    "keyCharacteristics": [
+      "Graphite field, warm-white hierarchy, one precise amber signal.",
+      "Dense, shelf-led browsing rather than a hero or provider storefront.",
+      "Crisp spatial navigation with equal mouse, keyboard, and remote access."
+    ],
+    "rules": [
+      {
+        "name": "The Local Signal Rule",
+        "body": "Signal amber communicates selection, focus, and the one immediate action—not branding wallpaper. Rabbit personality is reserved for the application icon, empty/onboarding moments, and loading; the everyday shell remains restrained.",
+        "section": "colors"
+      },
+      {
+        "name": "The Artwork Boundary Rule",
+        "body": "Runtime provider artwork may be colorful. The geometric palettes visible in the proof are clearly synthetic local fixtures, not a product artwork system or a source of additional UI accents.",
+        "section": "colors"
+      },
+      {
+        "name": "The Shelf-Not-Hero Rule",
+        "body": "Context belongs beside the selected item in the first pinned shelf. It never becomes a promotional banner or reserves invented metadata when there is no item.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Directional Return Rule",
+        "body": "Left on the first content item opens the rail; Escape returns to the rail; leaving the rail restores the last viable content focus. Arrows move predictably within and between shelves, Enter/Select activates, and mouse hover never gates an action.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do preserve the Windows title bar and Segoe UI identity in this Windows-first surface.",
+      "Do use signal amber for focus, selection, and the immediate no-source action.",
+      "Do use real provider art at runtime and identify development art as fixture-only.",
+      "Do separately shape detailed cards, source setup, player controls, PiP, multiview, and non-Windows platform patterns before adding visible UI."
+    ],
+    "donts": [
+      "Don't create a promotional hero, recommendation rail, provider category shelves, gradients, glass, neon bloom, or decorative blobs.",
+      "Don't treat illustrative titles, source labels, connection state, or artwork as product claims.",
+      "Don't add hover-only behavior or allow focus motion to shift the underlying content layout.",
+      "Don't generalize this Home grammar into an app-wide component library without a separately shaped need."
+    ]
+  }
+}

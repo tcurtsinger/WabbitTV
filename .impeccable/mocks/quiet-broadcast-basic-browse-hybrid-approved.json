@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "option": "Hybrid — Compact Thumbnail Directory",
+  "target": "lib/src/features/browse/basic_browse_screen.dart",
+  "mode": "Operate",
+  "direction": "Source Directory List",
+  "prompt": "Native Windows Wabbit TV Phase 1 Live browse comp at 1265x713: Quiet Broadcast shell, compact approximately 228px Categories pane, dominant virtualized approximately 60px title rows with fixed small synthetic/provider thumbnails, one amber focus edge, synthetic titles only, no hero, grid, storefront, search, filters, sort controls, favorites, groups, gradients, glass, or glow.",
+  "approved": true,
+  "approvedAt": "2026-08-16",
+  "generatedAt": "2026-08-16",
+  "derivedFrom": [
+    "quiet-broadcast-basic-browse-b-compact-text-ledger.png",
+    "quiet-broadcast-basic-browse-c-airy-thumbnail-directory.png"
+  ],
+  "selection": "User-approved hybrid: C's small artwork-forward television scanning cue with B's compact text-ledger density, inside the shared two-pane Source Directory List.",
+  "literalCautions": "Synthetic titles, thumbnails, category names, counts, title-bar details, chevrons, and rail icon rendering are compositional evidence rather than product assets or claims. Runtime provider artwork is optional; a fixed Quiet Broadcast placeholder preserves geometry when it is absent or broken. The implementation keeps the existing collapsed overlay rail."
+}
