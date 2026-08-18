@@ -137,6 +137,36 @@ void main() {
       expect(port.scope.sourceId, 'second');
     },
   );
+
+  test(
+    'latest selection failure reconciles the prior successful persisted scope',
+    () async {
+      final port = _GatedSelectionScopePort(
+        sources: [
+          _roster('first', status: 'ready'),
+          _roster('second', status: 'ready'),
+        ],
+      );
+      final controller = CatalogScopeController(port: port);
+      await controller.initialize();
+
+      final first = controller.select(const LibraryScope.source('first'));
+      await Future<void>.delayed(Duration.zero);
+      final second = controller.select(const LibraryScope.source('second'));
+      port.gates['first']!.complete(const LibraryScope.source('first'));
+      await Future<void>.delayed(Duration.zero);
+      expect(port.saveCalls, ['first', 'second']);
+      expect(controller.scope.isAll, isTrue);
+
+      port.gates['second']!.completeError(StateError('fixture save failure'));
+      await Future.wait([first, second]);
+
+      expect(port.scope.sourceId, 'first');
+      expect(controller.scope.sourceId, 'first');
+      expect(controller.error, isNotNull);
+      expect(controller.announcement, 'Could not change source. Try again.');
+    },
+  );
 }
 
 SourceRosterEntry _roster(

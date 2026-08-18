@@ -46,6 +46,7 @@ class CatalogScopeController extends ChangeNotifier {
   final CatalogScopePort port;
   List<SourceRosterEntry> _sources = const [];
   LibraryScope _scope = const LibraryScope.all();
+  LibraryScope? _lastPersistedScope;
   Object? _error;
   String? _announcement;
   Future<void>? _initializing;
@@ -133,6 +134,7 @@ class CatalogScopeController extends ChangeNotifier {
       }
       _sources = enabled;
       _scope = loadedScope;
+      _lastPersistedScope = loadedScope;
       _loading = false;
       _error = null;
       if (!initialLoad &&
@@ -181,6 +183,7 @@ class CatalogScopeController extends ChangeNotifier {
     final desired = canSelect ? requested : const LibraryScope.all();
     try {
       final saved = await port.saveCatalogScope(desired);
+      _lastPersistedScope = saved;
       if (request != _selectionRequest) return;
       _scope = saved;
       _error = null;
@@ -193,6 +196,11 @@ class CatalogScopeController extends ChangeNotifier {
       notifyListeners();
     } catch (_) {
       if (request != _selectionRequest) return;
+      final persisted = _lastPersistedScope;
+      if (persisted != null && persisted.sourceId != _scope.sourceId) {
+        _scope = persisted;
+        _revision++;
+      }
       _error = Object();
       _announcement = 'Could not change source. Try again.';
       notifyListeners();
