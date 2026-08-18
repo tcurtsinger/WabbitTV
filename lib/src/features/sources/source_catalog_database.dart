@@ -481,15 +481,15 @@ void _xtreamRefreshWorker(Map<String, Object?> args) async {
         deadline,
         () => cancelled,
       );
-      if (raw is! List || raw.isEmpty) {
+      if (raw is! List) {
+        throw const SourceImportFailure(SourceImportFailureKind.emptyResponse);
+      }
+      final items = _parseItems(kind, raw.cast<Object?>());
+      if (raw.isNotEmpty && items.isEmpty) {
         throw const SourceImportFailure(SourceImportFailureKind.emptyResponse);
       }
       stages.add(
-        ImportedStage(
-          kind: kind,
-          categories: categories,
-          items: _parseItems(kind, raw.cast<Object?>()),
-        ),
+        ImportedStage(kind: kind, categories: categories, items: items),
       );
     }
     if (cancelled) {
@@ -1157,13 +1157,13 @@ class _InitialImportWorker {
           _itemLimit,
           deadline,
         );
-        if (rawItems is! List || rawItems.isEmpty) {
+        if (rawItems is! List) {
           throw const SourceImportFailure(
             SourceImportFailureKind.emptyResponse,
           );
         }
         final items = _parseItems(kind, rawItems.cast<Object?>());
-        if (items.isEmpty) {
+        if (rawItems.isNotEmpty && items.isEmpty) {
           throw const SourceImportFailure(
             SourceImportFailureKind.emptyResponse,
           );

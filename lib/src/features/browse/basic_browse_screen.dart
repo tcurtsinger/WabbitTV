@@ -398,7 +398,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
       return;
     }
     try {
-      final totalFuture = allSources
+      final totalFuture = allSources || scopeController != null
           ? _scopedData.countLibraryItems(scope: scope, kind: kind)
           : Future<int>.value(source!.counts[kind] ?? 0);
       final categoriesFuture = allSources

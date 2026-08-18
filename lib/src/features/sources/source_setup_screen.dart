@@ -92,7 +92,12 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
 
   Future<void> _loadEditor() async {
     final request = widget.editRequest!;
-    final draft = await _controller.loadEditor(request);
+    SourceEditorDraft? draft;
+    try {
+      draft = await _controller.loadEditor(request);
+    } catch (_) {
+      draft = null;
+    }
     if (!mounted) return;
     setState(() {
       _loadingEditor = false;

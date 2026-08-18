@@ -210,4 +210,57 @@ void main() {
       isNot(contains('password')),
     );
   });
+
+  test(
+    'worker accepts valid empty Xtream stages as zero-count media',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final requests = server.listen((request) async {
+        final action = request.uri.queryParameters['action'];
+        final body = switch (action) {
+          null => '{"user_info":{"auth":1}}',
+          'get_live_categories' ||
+          'get_vod_categories' ||
+          'get_series_categories' => '[]',
+          'get_live_streams' => '[{"stream_id":"live","name":"Live"}]',
+          'get_vod_streams' || 'get_series' => '[]',
+          _ => 'null',
+        };
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(body);
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await server.close(force: true);
+        await requests.cancel();
+      });
+      final temp = await Directory.systemTemp.createTemp(
+        'wabbit-empty-xtream-stage-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final database = SourceCatalogDatabase(
+        databasePath: '${temp.path}${Platform.pathSeparator}catalog.sqlite',
+      );
+      final import = await database.beginInitialImport(
+        SourceDefinition(
+          id: 'live-only',
+          name: 'Live only',
+          serverUrl: 'http://${server.address.address}:${server.port}',
+          username: 'fixture-user',
+          password: 'fixture-password',
+          credentialKey: 'fixture-key',
+        ),
+      );
+
+      final pending = await import.pending.timeout(const Duration(seconds: 3));
+      expect(pending.counts, {
+        SourceMediaKind.live: 1,
+        SourceMediaKind.movies: 0,
+        SourceMediaKind.series: 0,
+      });
+      final ready = await import.activate().timeout(const Duration(seconds: 3));
+      await import.terminal;
+      expect(ready.counts, pending.counts);
+    },
+  );
 }

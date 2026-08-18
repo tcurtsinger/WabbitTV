@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wabbit_tv/main.dart';
 import 'package:wabbit_tv/src/features/sources/credential_store.dart';
+import 'package:wabbit_tv/src/features/sources/source_editor.dart';
 import 'package:wabbit_tv/src/features/sources/source_models.dart';
 import 'package:wabbit_tv/src/features/sources/source_setup_controller.dart';
 import 'package:wabbit_tv/src/features/sources/source_setup_screen.dart';
@@ -354,6 +355,38 @@ void main() {
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'browse Live');
   });
 
+  testWidgets('editor load failure leaves loading for the unavailable state', (
+    tester,
+  ) async {
+    final initialFocus = FocusNode(debugLabel: 'source name');
+    addTearDown(initialFocus.dispose);
+    final controller = _ThrowingEditorController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SourceSetupScreen(
+            initialFocus: initialFocus,
+            onContentFocus: (_) {},
+            onExit: () {},
+            onBrowse: (_) {},
+            controller: controller,
+            editRequest: const SourceEditorRequest(
+              sourceId: 'unavailable',
+              sourceName: 'Unavailable',
+              databaseKind: 'xtream',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Source details are unavailable'), findsOneWidget);
+  });
+
   testWidgets('cancellation acknowledgement returns focus to Source name', (
     tester,
   ) async {
@@ -514,6 +547,19 @@ class _FailingWidgetSourcePort extends _WidgetSourcePort {
       Future<ImportedStage>.error(
         const SourceImportFailure(SourceImportFailureKind.emptyResponse),
       );
+}
+
+class _ThrowingEditorController extends SourceSetupController {
+  _ThrowingEditorController()
+    : super(
+        service: _WidgetSourcePort(),
+        credentialStore: _WidgetCredentialStore(),
+      );
+
+  @override
+  Future<SourceEditorDraft?> loadEditor(SourceEditorRequest request) async {
+    throw StateError('fixture editor load failure');
+  }
 }
 
 class _WidgetSourcePort implements SourceSetupPort {

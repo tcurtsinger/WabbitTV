@@ -540,21 +540,20 @@ void main() {
     },
   );
 
-  testWidgets(
-    'named header uses provider row total, not library identity count',
-    (tester) async {
-      final fixture = _ScopeFixture();
-      fixture.scopedData.namedTotal = 1;
-      await tester.pumpWidget(_scopedScreen(fixture: fixture));
-      await tester.pumpAndSettle();
+  testWidgets('named header uses the visibility-aware local library total', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture();
+    fixture.scopedData.namedTotal = 1;
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pumpAndSettle();
 
-      await fixture.controller.select(const LibraryScope.source('harbor'));
-      await tester.pumpAndSettle();
+    await fixture.controller.select(const LibraryScope.source('harbor'));
+    await tester.pumpAndSettle();
 
-      expect(find.text('3 items · Harbor North'), findsOneWidget);
-      expect(find.text('1 items · Harbor North'), findsNothing);
-    },
-  );
+    expect(find.text('1 items · Harbor North'), findsOneWidget);
+    expect(find.text('3 items · Harbor North'), findsNothing);
+  });
 
   testWidgets('late named-source resolution cannot overwrite a newer scope', (
     tester,

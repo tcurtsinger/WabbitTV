@@ -122,6 +122,84 @@ void main() {
     },
   );
 
+  test(
+    'Xtream refresh accepts empty stages and retires their old items',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        final action = request.uri.queryParameters['action'];
+        request.response.write(switch (action) {
+          'get_live_categories' ||
+          'get_vod_categories' ||
+          'get_series_categories' => '[]',
+          'get_live_streams' => '[{"stream_id":"new-live","name":"New live"}]',
+          'get_vod_streams' || 'get_series' => '[]',
+          _ => '{"user_info":{"auth":1}}',
+        });
+        await request.response.close();
+      });
+      final dir = await Directory.systemTemp.createTemp(
+        'wabbit-xtream-empty-refresh-',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final path = '${dir.path}${Platform.pathSeparator}catalog.sqlite';
+      final database = SourceCatalogDatabase(databasePath: path);
+      final source = SourceDefinition(
+        id: 'live-only-refresh',
+        name: 'Before',
+        serverUrl: 'http://${server.address.address}:${server.port}',
+        username: 'u',
+        password: 'p',
+        credentialKey: 'key',
+      );
+      await database.commitInitialSource(source, [
+        for (final kind in SourceMediaKind.values)
+          ImportedStage(
+            kind: kind,
+            categories: const [],
+            items: [
+              ImportedCatalogItem(
+                providerKey: 'old-${kind.name}',
+                title: 'Old ${kind.label}',
+                categoryKey: null,
+                playbackRef: 'old-${kind.name}',
+              ),
+            ],
+          ),
+      ]);
+      final controller = SourceSetupController(
+        productionService: SourceSetupService(database: database),
+        credentialStore: _Credentials(source.serverUrl),
+      );
+
+      await controller.refreshManagedSource(source.id);
+
+      final db = sqlite3.open(path);
+      addTearDown(db.close);
+      expect(controller.failure, isNull);
+      expect(
+        db
+            .select(
+              '''SELECT kind, COUNT(*) AS count
+           FROM catalog_items
+           WHERE source_id = ? AND available = 1
+           GROUP BY kind''',
+              [source.id],
+            )
+            .map((row) => '${row['kind']}:${row['count']}'),
+        ['live:1'],
+      );
+      expect(
+        db.select(
+          'SELECT refresh_state, last_error FROM sources WHERE id = ?',
+          [source.id],
+        ).single,
+        containsPair('refresh_state', 'ready'),
+      );
+    },
+  );
+
   test('Xtream cancellation remains busy until acknowledgement and retains catalog', () async {
     final requested = Completer<void>();
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
