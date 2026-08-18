@@ -9,6 +9,7 @@ import 'package:wabbit_tv/src/features/playback/playback_transport.dart';
 import 'package:wabbit_tv/src/features/playback/player_screen.dart';
 import 'package:wabbit_tv/src/features/sources/credential_store.dart';
 import 'package:wabbit_tv/src/features/sources/source_catalog_database.dart';
+import 'package:wabbit_tv/src/features/sources/source_models.dart';
 
 void main() {
   test(
@@ -66,6 +67,192 @@ void main() {
       ).path,
       '/movie/user/secret/42.mp4',
     );
+  });
+  testWidgets(
+    'M3U opens its imported URI and headers without reading credentials',
+    (tester) async {
+      final transport = _FakeTransport.ready();
+      final credentials = _CountingCredential();
+      await tester.pumpWidget(
+        _host(
+          handoff: _m3uHandoff(),
+          credentials: credentials,
+          transportFactory: () => transport,
+        ),
+      );
+      await tester.pump();
+
+      expect(credentials.reads, 0);
+      expect(transport.openedUri, Uri.parse('https://stream.example/live'));
+      expect(transport.openedHeaders, {
+        'User-Agent': 'Fixture Player',
+        'Referer': 'https://origin.example',
+      });
+      expect(find.byKey(const ValueKey('player-timeline')), findsNothing);
+    },
+  );
+  testWidgets('M3U retry keeps the imported headers', (tester) async {
+    final second = _FakeTransport.ready();
+    var calls = 0;
+    await tester.pumpWidget(
+      _host(
+        handoff: _m3uHandoff(),
+        transportFactory: () {
+          calls += 1;
+          if (calls == 1) throw StateError('fixture factory failure');
+          return second;
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(calls, 2);
+    expect(second.openedHeaders, {
+      'User-Agent': 'Fixture Player',
+      'Referer': 'https://origin.example',
+    });
+  });
+  testWidgets(
+    'a resolver chooses the result source rather than a stale shell source',
+    (tester) async {
+      final transport = _FakeTransport.ready();
+      final resolverCalls = <String>[];
+      await tester.pumpWidget(
+        _host(
+          handoff: const MoviePlaybackHandoff(
+            sourceId: 'source-b',
+            title: 'Movie',
+            providerItemId: '42',
+            extension: 'mp4',
+          ),
+          source: const PersistedSource(
+            id: 'source-a',
+            name: 'Stale source',
+            credentialKey: 'stale-key',
+            counts: {},
+          ),
+          sourceResolver: (sourceId) {
+            resolverCalls.add(sourceId);
+            return const PersistedSource(
+              id: 'source-b',
+              name: 'Selected source',
+              credentialKey: 'selected-key',
+              counts: {},
+            );
+          },
+          credentials: const _Credential(
+            StoredCredential(
+              username: 'user',
+              password: 'secret',
+              serverUrl: 'https://selected.example',
+            ),
+          ),
+          transportFactory: () => transport,
+        ),
+      );
+      await tester.pump();
+
+      expect(resolverCalls, ['source-b']);
+      expect(transport.openedUri?.host, 'selected.example');
+      expect(transport.openedHeaders, isEmpty);
+    },
+  );
+  testWidgets('a resolver-null M3U result does not open a stale source', (
+    tester,
+  ) async {
+    var transportCalls = 0;
+    final credentials = _CountingCredential();
+    await tester.pumpWidget(
+      _host(
+        handoff: _m3uHandoff(),
+        sourceResolver: (_) => null,
+        credentials: credentials,
+        transportFactory: () {
+          transportCalls += 1;
+          return _FakeTransport.ready();
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(transportCalls, 0);
+    expect(credentials.reads, 0);
+    expect(find.text('Try again'), findsOneWidget);
+  });
+  testWidgets('a resolver-null Xtream result does not open a stale source', (
+    tester,
+  ) async {
+    var transportCalls = 0;
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'missing',
+          title: 'Live',
+          providerItemId: '1',
+          extension: 'ts',
+        ),
+        sourceResolver: (_) => null,
+        transportFactory: () {
+          transportCalls += 1;
+          return _FakeTransport.ready();
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(transportCalls, 0);
+    expect(find.text('Open Settings'), findsOneWidget);
+  });
+  testWidgets('a throwing source resolver stays in bounded recovery', (
+    tester,
+  ) async {
+    var transportCalls = 0;
+    await tester.pumpWidget(
+      _host(
+        handoff: _m3uHandoff(),
+        sourceResolver: (_) => throw StateError('fixture resolver failure'),
+        transportFactory: () {
+          transportCalls += 1;
+          return _FakeTransport.ready();
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(transportCalls, 0);
+    expect(find.text('Try again'), findsOneWidget);
+  });
+  testWidgets('a throwing credential read stays in bounded recovery', (
+    tester,
+  ) async {
+    var transportCalls = 0;
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'source',
+          title: 'Live',
+          providerItemId: '1',
+          extension: 'ts',
+        ),
+        credentials: const _ThrowingCredential(),
+        transportFactory: () {
+          transportCalls += 1;
+          return _FakeTransport.ready();
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(transportCalls, 0);
+    expect(find.text('Try again'), findsOneWidget);
   });
   test(
     'Windows fullscreen hides the native title bar until after exit',
@@ -529,18 +716,23 @@ Widget _host({
   required PlaybackHandoff handoff,
   PlaybackTransportFactory? transportFactory,
   CredentialStore? credentials,
+  PersistedSource? source,
+  FutureOr<PersistedSource?> Function(String sourceId)? sourceResolver,
   FullscreenPort? fullscreen,
   VoidCallback? onExit,
   Duration startupDeadline = productionPlayerStartupDeadline,
 }) => MaterialApp(
   home: PlayerScreen(
     handoff: handoff,
-    source: const PersistedSource(
-      id: 'source',
-      name: 'Source',
-      credentialKey: 'key',
-      counts: {},
-    ),
+    source:
+        source ??
+        const PersistedSource(
+          id: 'source',
+          name: 'Source',
+          credentialKey: 'key',
+          counts: {},
+        ),
+    sourceResolver: sourceResolver,
     credentialStore:
         credentials ??
         const _Credential(
@@ -556,6 +748,20 @@ Widget _host({
     onExit: onExit ?? () {},
   ),
 );
+
+M3uLivePlaybackHandoff _m3uHandoff() {
+  final handoff = playbackHandoffFor(
+    BrowseCatalogItem(
+      id: 'm3u-row',
+      sourceId: 'source',
+      kind: SourceMediaKind.live,
+      title: 'M3U live',
+      artworkLocator: null,
+      playbackRef: '{"url":"https://stream.example/live","headers":{"User-Agent":"Fixture Player","Referer":"https://origin.example"}}',
+    ),
+  );
+  return handoff as M3uLivePlaybackHandoff;
+}
 
 Future<void> _focusPlayerControl(WidgetTester tester, String target) async {
   if (FocusManager.instance.primaryFocus?.debugLabel != 'player back') {
@@ -580,6 +786,47 @@ class _Credential implements CredentialStore {
   Future<void> delete(String key) async {}
   @override
   Future<StoredCredential?> read(String key) async => value;
+  @override
+  Future<void> write({
+    required String key,
+    required String username,
+    required String password,
+    String? serverUrl,
+  }) async {}
+}
+
+class _CountingCredential implements CredentialStore {
+  int reads = 0;
+
+  @override
+  Future<void> delete(String key) async {}
+
+  @override
+  Future<StoredCredential?> read(String key) async {
+    reads += 1;
+    return null;
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String username,
+    required String password,
+    String? serverUrl,
+  }) async {}
+}
+
+class _ThrowingCredential implements CredentialStore {
+  const _ThrowingCredential();
+
+  @override
+  Future<void> delete(String key) async {}
+
+  @override
+  Future<StoredCredential?> read(String key) async {
+    throw StateError('fixture credential read failure');
+  }
+
   @override
   Future<void> write({
     required String key,
@@ -615,6 +862,8 @@ class _FakeTransport implements PlaybackTransport {
   final StreamController<PlaybackTransportState> _controller =
       StreamController<PlaybackTransportState>.broadcast();
   bool disposed = false;
+  Uri? openedUri;
+  Map<String, String>? openedHeaders;
 
   void emit(PlaybackTransportState state) {
     if (!disposed) _controller.add(state);
@@ -634,8 +883,13 @@ class _FakeTransport implements PlaybackTransport {
   }
 
   @override
-  Future<void> open(Uri uri) async {
+  Future<void> open(
+    Uri uri, {
+    Map<String, String> httpHeaders = const {},
+  }) async {
     order.add('$name:open');
+    openedUri = uri;
+    openedHeaders = Map<String, String>.from(httpHeaders);
     if (emitReadyWhenOpened) emitReady();
   }
 

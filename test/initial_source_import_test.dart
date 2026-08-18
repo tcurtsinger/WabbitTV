@@ -10,12 +10,14 @@ import 'package:wabbit_tv/src/features/sources/source_models.dart';
 void main() {
   test('worker cancellation force-closes a stalled local provider and removes pending rows', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(server.close);
     final received = Completer<void>();
-    server.listen((request) async {
+    final requests = server.listen((request) {
       if (!received.isCompleted) received.complete();
       // Deliberately never respond: cancellation must close the worker client.
-      await Completer<void>().future;
+    });
+    addTearDown(() async {
+      await server.close(force: true);
+      await requests.cancel();
     });
     final temp = await Directory.systemTemp.createTemp('wabbit-import-worker-');
     addTearDown(() => temp.delete(recursive: true));
@@ -42,11 +44,13 @@ void main() {
     'forced cancellation cleans a pending row when the worker ignores cancel',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      addTearDown(server.close);
       final received = Completer<void>();
-      server.listen((request) async {
+      final requests = server.listen((request) {
         if (!received.isCompleted) received.complete();
-        await Completer<void>().future;
+      });
+      addTearDown(() async {
+        await server.close(force: true);
+        await requests.cancel();
       });
       final temp = await Directory.systemTemp.createTemp(
         'wabbit-forced-cancel-',
@@ -90,8 +94,7 @@ void main() {
           },
       ]);
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      addTearDown(server.close);
-      server.listen((request) async {
+      final requests = server.listen((request) async {
         final action = request.uri.queryParameters['action'];
         final body = switch (action) {
           null => '{"user_info":{"auth":1}}',
@@ -104,6 +107,10 @@ void main() {
         request.response.headers.contentType = ContentType.json;
         request.response.write(body);
         await request.response.close();
+      });
+      addTearDown(() async {
+        await server.close(force: true);
+        await requests.cancel();
       });
       final temp = await Directory.systemTemp.createTemp(
         'wabbit-import-worker-',
@@ -127,17 +134,18 @@ void main() {
         const Duration(milliseconds: 1),
         (_) => heartbeats++,
       );
+      addTearDown(timer.cancel);
       final pending = await import.pending.timeout(const Duration(seconds: 15));
       timer.cancel();
       expect(pending.counts[SourceMediaKind.live], 50000);
       expect(heartbeats, greaterThan(0));
       await import.activate();
+      await import.terminal;
     },
   );
   test('worker preserves category linkage and activates only after explicit activation', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(server.close);
-    server.listen((request) async {
+    final requests = server.listen((request) async {
       final action = request.uri.queryParameters['action'];
       final body = switch (action) {
         null => '{"user_info":{"auth":1}}',
@@ -154,6 +162,10 @@ void main() {
       request.response.headers.contentType = ContentType.json;
       request.response.write(body);
       await request.response.close();
+    });
+    addTearDown(() async {
+      await server.close(force: true);
+      await requests.cancel();
     });
     final temp = await Directory.systemTemp.createTemp('wabbit-import-worker-');
     addTearDown(() => temp.delete(recursive: true));
@@ -181,6 +193,7 @@ void main() {
     );
     db.close();
     final ready = await import.activate().timeout(const Duration(seconds: 3));
+    await import.terminal;
     expect(ready.counts[SourceMediaKind.series], 1);
     db = sqlite3.open(path);
     addTearDown(db.close);

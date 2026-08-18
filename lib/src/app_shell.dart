@@ -1,17 +1,25 @@
 import 'dart:async';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'features/browse/basic_browse_screen.dart';
+import 'features/browse/catalog_scope_controller.dart';
 import 'features/browse/playback_handoff.dart';
 import 'features/home/home_screen.dart';
 import 'features/playback/player_screen.dart';
+import 'features/search/local_search_screen.dart';
 import 'features/sources/credential_store.dart';
+import 'features/sources/library_visibility_screen.dart';
+import 'features/sources/library_visibility_service.dart';
+import 'features/sources/source_editor.dart';
 import 'features/sources/source_models.dart';
 import 'features/sources/source_catalog_database.dart';
+import 'features/sources/source_management_service.dart';
 import 'features/sources/source_setup_controller.dart';
 import 'features/sources/source_setup_screen.dart';
+import 'features/sources/source_management_screen.dart';
 import 'home_fixture_mode.dart';
 
 const _rail = Color(0xFF171818);
@@ -49,19 +57,35 @@ class WabbitShell extends StatefulWidget {
     super.key,
     required this.fixtureMode,
     this.sourceController,
+    this.sourceManagementController,
     this.browseSource,
     this.browseData,
+    this.scopedBrowseData,
+    this.catalogScopeController,
+    this.localSearchData,
+    this.playbackSourceResolver,
     this.initialDestination,
     this.onPlaybackHandoff,
     this.credentialStore,
     this.playbackTransportFactory,
     this.fullscreenPort,
+    this.m3uFilePicker,
+    this.libraryVisibilityPort,
   });
 
   final HomeFixtureMode fixtureMode;
   final SourceSetupController? sourceController;
+  final SourceManagementController? sourceManagementController;
   final PersistedSource? browseSource;
   final BasicBrowseData? browseData;
+  final ScopedBrowseData? scopedBrowseData;
+  final CatalogScopeController? catalogScopeController;
+  final LocalSearchData? localSearchData;
+
+  /// Optional exact-source resolver for player integration tests. Production
+  /// uses the app-owned catalog scope controller's local database port.
+  final FutureOr<PersistedSource?> Function(String sourceId)?
+  playbackSourceResolver;
   final ShellDestination? initialDestination;
 
   /// Optional test seam; normal app flow opens the shaped production player.
@@ -69,6 +93,13 @@ class WabbitShell extends StatefulWidget {
   final CredentialStore? credentialStore;
   final PlaybackTransportFactory? playbackTransportFactory;
   final FullscreenPort? fullscreenPort;
+
+  /// Test seam for the Windows-native local M3U picker.
+  final M3uFilePicker? m3uFilePicker;
+
+  /// Test seam for the credential-free local visibility ledger. Production
+  /// shares the app-owned catalog database below.
+  final LibraryVisibilityPort? libraryVisibilityPort;
 
   @override
   State<WabbitShell> createState() => _WabbitShellState();
@@ -87,41 +118,95 @@ class _WabbitShellState extends State<WabbitShell> {
   PlaybackHandoff? _playback;
   FocusNode? _playbackOrigin;
   bool _sourceSetupFromHome = false;
+  bool _sourceSetupOpen = false;
+  SourceEditorRequest? _sourceEditorRequest;
+  Completer<void>? _sourceEditorCompletion;
+  bool _restoreSourceManagementSelectedRowFocus = false;
+  bool _restoreSourceManagementVisibilityFocus = false;
+  SourceRosterEntry? _libraryVisibilitySource;
+  bool _libraryVisibilityBusy = false;
   FocusNode? _lastContentFocus;
   final BasicBrowseSession _browseSession = BasicBrowseSession();
+  final LocalSearchSession _searchSession = LocalSearchSession();
+  late final SourceCatalogDatabase _catalogDatabase = SourceCatalogDatabase();
+  late final LibraryVisibilityPort _libraryVisibilityPort =
+      widget.libraryVisibilityPort ??
+      DatabaseLibraryVisibilityPort(_catalogDatabase);
+  late final CatalogScopeController _catalogScopeController =
+      widget.catalogScopeController ??
+      CatalogScopeController(port: DatabaseCatalogScopePort(_catalogDatabase));
+  bool get _ownsCatalogScopeController => widget.catalogScopeController == null;
+  late final ScopedBrowseData _scopedBrowseData =
+      widget.scopedBrowseData ?? DatabaseBasicBrowseData(_catalogDatabase);
+  late final LocalSearchData _localSearchData =
+      widget.localSearchData ?? DatabaseLocalSearchData(_catalogDatabase);
   late final SourceSetupController _sourceController =
       widget.sourceController ?? SourceSetupController();
   bool get _ownsSourceController => widget.sourceController == null;
+  late final SourceManagementService _sourceManagementService =
+      SourceManagementService(
+        sourceController: _sourceController,
+        onEditAndRefresh: _openSourceEditor,
+      );
+  late final SourceManagementController _sourceManagementController =
+      widget.sourceManagementController ??
+      SourceManagementController(port: _sourceManagementService);
+  bool get _ownsSourceManagementController =>
+      widget.sourceManagementController == null;
 
-  bool get _railExpanded => _railHovered || _railFocus.hasFocus;
+  /// Explicit Phase 1 browse seams still exercise the named-source directory.
+  /// Scope-aware integration begins only when a scope controller is supplied.
+  bool get _usesLegacyBrowse =>
+      widget.catalogScopeController == null &&
+      (widget.fixtureMode != HomeFixtureMode.runtime ||
+          widget.browseData != null ||
+          widget.browseSource != null);
+
+  bool get _railExpanded =>
+      _railHovered ||
+      _railFocus.hasFocus ||
+      _navigationFocus.values.any((node) => node.hasFocus);
 
   @override
   void initState() {
     super.initState();
     _destination = widget.initialDestination ?? ShellDestination.home;
-    _railFocus.addListener(_refreshRail);
-    _sourceController.addListener(_refreshRail);
-    if (widget.fixtureMode == HomeFixtureMode.runtime) {
-      unawaited(_sourceController.initialize());
+    _railFocus.addListener(_refreshShell);
+    for (final node in _navigationFocus.values) {
+      node.addListener(_refreshShell);
     }
+    _sourceController.addListener(_refreshShell);
+    unawaited(_initializeRuntimeState());
   }
 
   @override
   void dispose() {
     _railFocus
-      ..removeListener(_refreshRail)
+      ..removeListener(_refreshShell)
       ..dispose();
-    _sourceController.removeListener(_refreshRail);
+    _sourceController.removeListener(_refreshShell);
     if (_ownsSourceController) _sourceController.dispose();
+    if (_ownsSourceManagementController) _sourceManagementController.dispose();
+    if (_ownsCatalogScopeController) _catalogScopeController.dispose();
     _firstContentFocus.dispose();
     for (final node in _navigationFocus.values) {
+      node.removeListener(_refreshShell);
       node.dispose();
     }
     super.dispose();
   }
 
-  void _refreshRail() {
+  void _refreshShell() {
     if (mounted) setState(() {});
+  }
+
+  /// Both controllers touch the same local catalog on a fresh installation.
+  /// Sequence their startup migration work without delaying the first frame.
+  Future<void> _initializeRuntimeState() async {
+    if (!_usesLegacyBrowse) await _catalogScopeController.initialize();
+    if (widget.fixtureMode == HomeFixtureMode.runtime) {
+      await _sourceController.initialize();
+    }
   }
 
   void _openRail() {
@@ -144,10 +229,22 @@ class _WabbitShellState extends State<WabbitShell> {
   }
 
   void _selectDestination(ShellDestination destination) {
+    if (_libraryVisibilitySource != null && _libraryVisibilityBusy) return;
     setState(() {
       _destination = destination;
       _sourceSetupFromHome = false;
+      _sourceSetupOpen = false;
+      _libraryVisibilitySource = null;
+      _libraryVisibilityBusy = false;
+      _restoreSourceManagementSelectedRowFocus = false;
+      _restoreSourceManagementVisibilityFocus = false;
     });
+    if (!_usesLegacyBrowse && _isCatalogDestination(destination)) {
+      // Source operations are durable, not event-streamed into the shell.
+      // Refresh only at a destination boundary so disabled/removed scopes fall
+      // back before the next catalog settles, without requerying on focus.
+      unawaited(_catalogScopeController.refresh());
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       // This shared node is attached to the selected destination's visible
@@ -194,18 +291,155 @@ class _WabbitShellState extends State<WabbitShell> {
     setState(() {
       _destination = ShellDestination.settings;
       _sourceSetupFromHome = true;
+      _sourceSetupOpen = true;
+      _libraryVisibilitySource = null;
+      _libraryVisibilityBusy = false;
+      _restoreSourceManagementSelectedRowFocus = false;
+      _restoreSourceManagementVisibilityFocus = false;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _firstContentFocus.requestFocus();
     });
   }
 
-  void _exitSourceSetup() {
-    if (_sourceSetupFromHome) {
-      _selectDestination(ShellDestination.home);
-    } else {
-      _openRail();
+  void _openSourceSetupFromManagement() {
+    setState(() {
+      _sourceSetupFromHome = false;
+      _sourceSetupOpen = true;
+      _sourceEditorRequest = null;
+      _restoreSourceManagementSelectedRowFocus = false;
+      _restoreSourceManagementVisibilityFocus = false;
+      _libraryVisibilitySource = null;
+      _libraryVisibilityBusy = false;
+    });
+  }
+
+  Future<void> _openSourceEditor(String sourceId) {
+    final entry = _sourceManagementController.entries
+        .where((candidate) => candidate.id == sourceId)
+        .firstOrNull;
+    if (entry == null || _sourceEditorCompletion != null) {
+      return Future<void>.error(StateError('Source editor is unavailable.'));
     }
+    final completion = Completer<void>();
+    _sourceEditorCompletion = completion;
+    setState(() {
+      _sourceSetupFromHome = false;
+      _sourceSetupOpen = true;
+      _sourceEditorRequest = SourceEditorRequest(
+        sourceId: entry.id,
+        sourceName: entry.name,
+        databaseKind: entry.kind,
+      );
+      _restoreSourceManagementSelectedRowFocus = false;
+      _restoreSourceManagementVisibilityFocus = false;
+      _libraryVisibilitySource = null;
+      _libraryVisibilityBusy = false;
+    });
+    return completion.future;
+  }
+
+  void _exitSourceSetup() {
+    unawaited(_closeSourceSetup());
+  }
+
+  Future<void> _closeSourceSetup() async {
+    final wasEditor = _sourceEditorRequest;
+    final completion = _sourceEditorCompletion;
+    _sourceEditorCompletion = null;
+    if (!_sourceSetupOpen) {
+      if (completion != null && !completion.isCompleted) completion.complete();
+      return;
+    }
+    if (_sourceSetupFromHome) {
+      setState(() {
+        _sourceSetupOpen = false;
+        _sourceEditorRequest = null;
+      });
+      if (!_usesLegacyBrowse) unawaited(_catalogScopeController.refresh());
+      _selectDestination(ShellDestination.home);
+      return;
+    }
+
+    // A durable refresh can finish before the Source Ledger exits. Refresh the
+    // directory before rebuilding it, preserving the source id across rename.
+    await _sourceManagementController.initialize();
+    if (wasEditor != null) {
+      _sourceManagementController.select(wasEditor.sourceId);
+    }
+    if (!mounted) {
+      if (completion != null && !completion.isCompleted) completion.complete();
+      return;
+    }
+    setState(() {
+      _sourceSetupOpen = false;
+      _sourceEditorRequest = null;
+      _restoreSourceManagementSelectedRowFocus = true;
+      _restoreSourceManagementVisibilityFocus = false;
+    });
+    if (!_usesLegacyBrowse) unawaited(_catalogScopeController.refresh());
+    if (completion != null && !completion.isCompleted) completion.complete();
+  }
+
+  void _sourceEditorSaved() {
+    unawaited(_closeSourceSetup());
+  }
+
+  void _openLibraryVisibility(SourceRosterEntry source) {
+    if (_libraryVisibilitySource != null) return;
+    setState(() {
+      _libraryVisibilitySource = source;
+      _libraryVisibilityBusy = false;
+      _sourceSetupFromHome = false;
+      _sourceSetupOpen = false;
+      _restoreSourceManagementSelectedRowFocus = false;
+      _restoreSourceManagementVisibilityFocus = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _firstContentFocus.requestFocus();
+    });
+  }
+
+  void _exitLibraryVisibility() {
+    unawaited(_closeLibraryVisibility());
+  }
+
+  void _libraryVisibilityBusyChanged(bool busy) {
+    if (_libraryVisibilitySource == null) return;
+    _libraryVisibilityBusy = busy;
+  }
+
+  Future<void> _closeLibraryVisibility() async {
+    if (_libraryVisibilitySource == null || _libraryVisibilityBusy) return;
+    // Visibility writes are already durable in the ledger. One shared scope
+    // refresh at this continuation boundary invalidates Browse/Search without
+    // reloading the global catalog after every individual toggle.
+    setState(() {
+      _libraryVisibilitySource = null;
+      _libraryVisibilityBusy = false;
+      _restoreSourceManagementSelectedRowFocus = false;
+      _restoreSourceManagementVisibilityFocus = true;
+    });
+    if (!_usesLegacyBrowse) await _catalogScopeController.refresh();
+  }
+
+  bool _isCatalogDestination(ShellDestination destination) =>
+      destination == ShellDestination.live ||
+      destination == ShellDestination.movies ||
+      destination == ShellDestination.series ||
+      destination == ShellDestination.search;
+
+  Future<PersistedSource?> _resolvePlaybackSource(String sourceId) async {
+    final resolver = widget.playbackSourceResolver;
+    if (resolver != null) return await resolver(sourceId);
+    if (!_usesLegacyBrowse) {
+      return await _catalogScopeController.resolveReadySource(sourceId);
+    }
+
+    // Fixtures never enter the production database. Only use this fallback
+    // when it is the exact source carried by the handoff.
+    final fallback = widget.browseSource ?? _sourceController.persisted;
+    return fallback?.id == sourceId ? fallback : null;
   }
 
   @override
@@ -232,12 +466,34 @@ class _WabbitShellState extends State<WabbitShell> {
                   onOpenRail: _openRail,
                   onSelectDestination: _selectDestination,
                   sourceSetupFromHome: _sourceSetupFromHome,
+                  sourceSetupOpen: _sourceSetupOpen,
+                  onOpenSourceSetupFromManagement:
+                      _openSourceSetupFromManagement,
                   onOpenSourceSetupFromHome: _openSourceSetupFromHome,
                   onExitSourceSetup: _exitSourceSetup,
+                  sourceEditorRequest: _sourceEditorRequest,
+                  onSourceEditorSaved: _sourceEditorSaved,
+                  restoreSourceManagementSelectedRowFocus:
+                      _restoreSourceManagementSelectedRowFocus,
+                  restoreSourceManagementVisibilityFocus:
+                      _restoreSourceManagementVisibilityFocus,
+                  libraryVisibilitySource: _libraryVisibilitySource,
+                  libraryVisibilityPort: _libraryVisibilityPort,
+                  onOpenLibraryVisibility: _openLibraryVisibility,
+                  onExitLibraryVisibility: _exitLibraryVisibility,
+                  onLibraryVisibilityBusyChanged: _libraryVisibilityBusyChanged,
+                  m3uFilePicker: widget.m3uFilePicker ?? _pickM3uFile,
                   sourceController: _sourceController,
+                  sourceManagementController: _sourceManagementController,
                   browseSource: widget.browseSource,
                   browseData: widget.browseData,
+                  scopedBrowseData: _scopedBrowseData,
+                  catalogScopeController: _catalogScopeController,
+                  useLegacyBrowse: _usesLegacyBrowse,
+                  localSearchData: _localSearchData,
                   browseSession: _browseSession,
+                  searchSession: _searchSession,
+                  credentialStore: widget.credentialStore,
                   onPlaybackHandoff: _beginPlayback,
                 ),
               ),
@@ -269,6 +525,7 @@ class _WabbitShellState extends State<WabbitShell> {
                     handoff: _playback!,
                     source: widget.browseSource ?? _sourceController.persisted,
                     credentialStore: widget.credentialStore,
+                    sourceResolver: _resolvePlaybackSource,
                     transportFactory: widget.playbackTransportFactory,
                     fullscreenPort: widget.fullscreenPort,
                     onExit: _exitPlayback,
@@ -283,6 +540,17 @@ class _WabbitShellState extends State<WabbitShell> {
   }
 }
 
+Future<String?> _pickM3uFile() async {
+  const playlistType = XTypeGroup(
+    label: 'M3U playlists',
+    extensions: <String>['m3u', 'm3u8'],
+  );
+  final selected = await openFile(
+    acceptedTypeGroups: const <XTypeGroup>[playlistType],
+  );
+  return selected?.path;
+}
+
 class _ShellBody extends StatelessWidget {
   const _ShellBody({
     required this.destination,
@@ -292,12 +560,31 @@ class _ShellBody extends StatelessWidget {
     required this.onOpenRail,
     required this.onSelectDestination,
     required this.sourceSetupFromHome,
+    required this.sourceSetupOpen,
+    required this.onOpenSourceSetupFromManagement,
     required this.onOpenSourceSetupFromHome,
     required this.onExitSourceSetup,
+    required this.sourceEditorRequest,
+    required this.onSourceEditorSaved,
+    required this.restoreSourceManagementSelectedRowFocus,
+    required this.restoreSourceManagementVisibilityFocus,
+    required this.libraryVisibilitySource,
+    required this.libraryVisibilityPort,
+    required this.onOpenLibraryVisibility,
+    required this.onExitLibraryVisibility,
+    required this.onLibraryVisibilityBusyChanged,
+    required this.m3uFilePicker,
     required this.sourceController,
+    required this.sourceManagementController,
     required this.browseSource,
     required this.browseData,
+    required this.scopedBrowseData,
+    required this.catalogScopeController,
+    required this.useLegacyBrowse,
+    required this.localSearchData,
     required this.browseSession,
+    required this.searchSession,
+    required this.credentialStore,
     required this.onPlaybackHandoff,
   });
 
@@ -308,12 +595,31 @@ class _ShellBody extends StatelessWidget {
   final VoidCallback onOpenRail;
   final ValueChanged<ShellDestination> onSelectDestination;
   final bool sourceSetupFromHome;
+  final bool sourceSetupOpen;
+  final VoidCallback onOpenSourceSetupFromManagement;
   final VoidCallback onOpenSourceSetupFromHome;
   final VoidCallback onExitSourceSetup;
+  final SourceEditorRequest? sourceEditorRequest;
+  final VoidCallback onSourceEditorSaved;
+  final bool restoreSourceManagementSelectedRowFocus;
+  final bool restoreSourceManagementVisibilityFocus;
+  final SourceRosterEntry? libraryVisibilitySource;
+  final LibraryVisibilityPort libraryVisibilityPort;
+  final ValueChanged<SourceRosterEntry> onOpenLibraryVisibility;
+  final VoidCallback onExitLibraryVisibility;
+  final ValueChanged<bool> onLibraryVisibilityBusyChanged;
+  final M3uFilePicker m3uFilePicker;
   final SourceSetupController sourceController;
+  final SourceManagementController sourceManagementController;
   final PersistedSource? browseSource;
   final BasicBrowseData? browseData;
+  final ScopedBrowseData scopedBrowseData;
+  final CatalogScopeController catalogScopeController;
+  final bool useLegacyBrowse;
+  final LocalSearchData localSearchData;
   final BasicBrowseSession browseSession;
+  final LocalSearchSession searchSession;
+  final CredentialStore? credentialStore;
   final ValueChanged<PlaybackHandoff>? onPlaybackHandoff;
 
   @override
@@ -337,17 +643,46 @@ class _ShellBody extends StatelessWidget {
       );
     }
 
-    if (destination == ShellDestination.settings) {
+    if (destination == ShellDestination.settings && sourceSetupOpen) {
       return SourceSetupScreen(
         initialFocus: initialContentFocus,
         onContentFocus: onContentFocus,
         onExit: onExitSourceSetup,
         controller: sourceController,
+        editRequest: sourceEditorRequest,
+        onEditorSaved: onSourceEditorSaved,
+        m3uFilePicker: m3uFilePicker,
         onBrowse: (kind) => onSelectDestination(switch (kind) {
           SourceMediaKind.live => ShellDestination.live,
           SourceMediaKind.movies => ShellDestination.movies,
           SourceMediaKind.series => ShellDestination.series,
         }),
+      );
+    }
+
+    final visibilitySource = libraryVisibilitySource;
+    if (destination == ShellDestination.settings && visibilitySource != null) {
+      return LibraryVisibilityScreen(
+        sourceId: visibilitySource.id,
+        sourceName: visibilitySource.name,
+        port: libraryVisibilityPort,
+        initialFocus: initialContentFocus,
+        onContentFocus: onContentFocus,
+        onBack: onExitLibraryVisibility,
+        onBusyChanged: onLibraryVisibilityBusyChanged,
+      );
+    }
+
+    if (destination == ShellDestination.settings) {
+      return SourceManagementScreen(
+        initialFocus: initialContentFocus,
+        onContentFocus: onContentFocus,
+        onOpenRail: onOpenRail,
+        onAddSource: onOpenSourceSetupFromManagement,
+        onManageVisibility: onOpenLibraryVisibility,
+        controller: sourceManagementController,
+        restoreSelectedFocusOnEntry: restoreSourceManagementSelectedRowFocus,
+        restoreVisibilityFocusOnEntry: restoreSourceManagementVisibilityFocus,
       );
     }
 
@@ -361,14 +696,32 @@ class _ShellBody extends StatelessWidget {
           ShellDestination.series => SourceMediaKind.series,
           _ => throw StateError('Not a catalog destination'),
         },
-        source: browseSource ?? sourceController.persisted,
+        source: useLegacyBrowse
+            ? (browseSource ?? sourceController.persisted)
+            : null,
         initialFocus: initialContentFocus,
         onContentFocus: onContentFocus,
         onOpenRail: onOpenRail,
         onOpenSourceSetup: () => onSelectDestination(ShellDestination.settings),
         session: browseSession,
         data: browseData,
+        scopedData: scopedBrowseData,
+        scopeController: useLegacyBrowse ? null : catalogScopeController,
         onPlaybackHandoff: onPlaybackHandoff,
+        credentialStore: credentialStore,
+      );
+    }
+
+    if (destination == ShellDestination.search) {
+      return LocalSearchScreen(
+        scopeController: catalogScopeController,
+        initialFocus: initialContentFocus,
+        onContentFocus: onContentFocus,
+        onOpenRail: onOpenRail,
+        session: searchSession,
+        data: localSearchData,
+        onPlaybackHandoff: onPlaybackHandoff,
+        credentialStore: credentialStore,
       );
     }
 

@@ -35,6 +35,13 @@ const _chromeDuration = Duration(seconds: 4);
 
 typedef PlaybackTransportFactory = PlaybackTransport Function();
 
+class _PlaybackTarget {
+  const _PlaybackTarget(this.uri, this.httpHeaders);
+
+  final Uri uri;
+  final Map<String, String> httpHeaders;
+}
+
 abstract interface class FullscreenPort {
   Future<bool> get isFullscreen;
   Future<void> setFullscreen(bool value);
@@ -98,7 +105,7 @@ extension PlaybackFailureCopy on PlaybackFailureKind {
 /// Nothing returned from this method belongs in logs, diagnostics, or widget
 /// state; callers hold it only long enough to call [PlaybackTransport.open].
 Uri resolveXtreamPlaybackUri({
-  required PlaybackHandoff handoff,
+  required XtreamPlaybackHandoff handoff,
   required StoredCredential credential,
 }) {
   final server = credential.serverUrl?.trim();
@@ -145,6 +152,7 @@ class PlayerScreen extends StatefulWidget {
     required this.onExit,
     this.onOpenSettings,
     this.credentialStore,
+    this.sourceResolver,
     this.transportFactory,
     this.fullscreenPort,
     this.startupDeadline = productionPlayerStartupDeadline,
@@ -155,6 +163,10 @@ class PlayerScreen extends StatefulWidget {
   final FutureOr<void> Function() onExit;
   final FutureOr<void> Function()? onOpenSettings;
   final CredentialStore? credentialStore;
+
+  /// Resolves the handoff's exact source when its result originated outside
+  /// the shell's current source view. When supplied, it is authoritative.
+  final FutureOr<PersistedSource?> Function(String sourceId)? sourceResolver;
   final PlaybackTransportFactory? transportFactory;
   final FullscreenPort? fullscreenPort;
   final Duration startupDeadline;
@@ -197,7 +209,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _generation = 0;
   (int, PlaybackTransport)? _pendingRuntimeError;
 
-  bool get _isLive => widget.handoff is LivePlaybackHandoff;
+  bool get _isLive =>
+      widget.handoff is LivePlaybackHandoff ||
+      widget.handoff is M3uLivePlaybackHandoff;
   bool get _isVod => !_isLive;
   bool get _isStarting => _opening && _failure == null && !_state.hasVideo;
   bool get _isFailure => _failure != null;
@@ -341,22 +355,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<PlaybackFailureKind?> _openOnce(int generation) async {
     await _disposeTransport();
-    final source = widget.source;
-    if (source == null || source.id != widget.handoff.sourceId) {
-      return PlaybackFailureKind.credentialsUnavailable;
-    }
-    final credential = await _credentials.read(source.credentialKey);
-    if (credential == null || _leaving) {
-      return PlaybackFailureKind.credentialsUnavailable;
-    }
-    Uri uri;
+    _PlaybackTarget? target;
     try {
-      uri = resolveXtreamPlaybackUri(
-        handoff: widget.handoff,
-        credential: credential,
-      );
+      target = await _resolvePlaybackTarget();
     } catch (_) {
-      return PlaybackFailureKind.credentialsUnavailable;
+      return PlaybackFailureKind.unavailable;
+    }
+    final resolvedTarget = target;
+    if (resolvedTarget == null || _leaving) {
+      return widget.handoff is M3uLivePlaybackHandoff
+          ? PlaybackFailureKind.unavailable
+          : PlaybackFailureKind.credentialsUnavailable;
     }
     try {
       final transport =
@@ -387,7 +396,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
       unawaited(() async {
         try {
-          await transport.open(uri);
+          await transport.open(
+            resolvedTarget.uri,
+            httpHeaders: resolvedTarget.httpHeaders,
+          );
         } catch (_) {
           if (mounted &&
               _transport == transport &&
@@ -404,6 +416,35 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } catch (_) {
       return PlaybackFailureKind.unavailable;
     }
+  }
+
+  Future<_PlaybackTarget?> _resolvePlaybackTarget() async {
+    final handoff = widget.handoff;
+    final source = await _resolveSource(handoff.sourceId);
+    if (source == null || source.id != handoff.sourceId || _leaving) {
+      return null;
+    }
+    if (handoff is M3uLivePlaybackHandoff) {
+      return _PlaybackTarget(handoff.uri, handoff.httpHeaders);
+    }
+    if (handoff is! XtreamPlaybackHandoff) return null;
+    final credential = await _credentials.read(source.credentialKey);
+    if (credential == null || _leaving) return null;
+    try {
+      return _PlaybackTarget(
+        resolveXtreamPlaybackUri(handoff: handoff, credential: credential),
+        const {},
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<PersistedSource?> _resolveSource(String sourceId) async {
+    final resolver = widget.sourceResolver;
+    if (resolver != null) return await resolver(sourceId);
+    final source = widget.source;
+    return source != null && source.id == sourceId ? source : null;
   }
 
   Future<void> _recoverAfterPlaybackError(
@@ -803,7 +844,7 @@ class _IdentityBand extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Text(
-            handoff is LivePlaybackHandoff
+            handoff is LivePlaybackHandoff || handoff is M3uLivePlaybackHandoff
                 ? 'LIVE'
                 : handoff is MoviePlaybackHandoff
                 ? 'MOVIE'
@@ -1327,7 +1368,7 @@ class _FailureDeck extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(top: 10),
               child: Text(
-                'Category: ${failure.name}\nMedia: ${handoff is LivePlaybackHandoff
+                'Category: ${failure.name}\nMedia: ${handoff is LivePlaybackHandoff || handoff is M3uLivePlaybackHandoff
                     ? 'Live'
                     : handoff is MoviePlaybackHandoff
                     ? 'Movie'

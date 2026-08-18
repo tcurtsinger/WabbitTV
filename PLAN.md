@@ -1,7 +1,7 @@
 # Wabbit TV Master Plan
 
-**Status:** Planning baseline complete; Phase 0 complete; Phase 1 complete  
-**Last updated:** 2026-08-17  
+**Status:** Planning baseline complete; Phases 0–2 complete  
+**Last updated:** 2026-08-18  
 **Product authority:** [`PRODUCT.md`](./PRODUCT.md)  
 **Process authority:** [`ORCHESTRATION.md`](./ORCHESTRATION.md)  
 **License:** AGPL-3.0  
@@ -305,6 +305,8 @@ Every visible work item below begins with the confirmed Shape gate in `ORCHESTRA
 
 ### Phase 2 — Catalog and Source Management
 
+**Status:** Complete — source management, catalog scope, local Search, refresh, and individual/bulk Library Visibility passed automated/package checks; the user confirmed the sole remaining packaged Strong visibility gate
+
 **Objective:** create the durable local library and make sources fully manageable.
 
 **Work**
@@ -318,6 +320,15 @@ Every visible work item below begins with the confirmed Shape gate in `ORCHESTRA
 7. Preserve the last usable catalog on refresh failure.
 8. Mark missing provider items unavailable rather than immediately destroying user references.
 9. Record real Strong import, refresh, search, and browse measurements.
+10. Let the user locally hide and restore provider categories or individual items without deleting imported data.
+
+**Catalog Scope and Local Search checkpoint — 2026-08-17:** Work items 5–6 are implemented through a shared locally persisted All Sources / named-source scope, bounded local-only mixed Live/Movie/Series Search, and exact-source playback handoff for Xtream and M3U entries, including retained M3U headers. Format is clean, `flutter analyze` is clean, and the full serial suite passes 228/228. The Windows debug build passed and produced `build/windows/x64/runner/Debug/wabbit_tv.exe`. Five deterministic, network-free actual-Flutter renders passed and were visually inspected; evidence and its synthetic boundary are recorded in `docs/evidence/phase2-catalog-search/README.md`. Independent Impeccable critique plus bounded polish passed. The generic Flutter source audit initially found three P1 browse races; all three were fixed, and final closure reports no remaining P1/P2 findings.
+
+**Real Strong refresh correction checkpoint — 2026-08-17:** The first packaged refresh exposed a real-scale defect: refresh rebuilt FTS with one equality delete per item against an unindexed identifier, making the write path quadratic, while transient catalog reads could replace usable views with unavailable states. The correction performs one stage-level FTS clear, uses bounded SQLite wait/WAL behavior, preserves the last local roster and catalog on noninitial read failure, and recovers a refresh worker that exits without a terminal event. `flutter analyze`, the full serial 228/228 suite, and the Windows debug build pass; an independent correction audit reports no P0/P1 findings. In the corrected debug build, the existing last-good Strong catalog recovered without reimport, refresh completed successfully in about 20 seconds, and the user confirmed browsing/navigation and the final source state remained good. Sanitized evidence is recorded in `docs/evidence/phase2-source-management/README.md`.
+
+**Library Visibility checkpoint — 2026-08-17:** The explicitly confirmed **A — Source Category Directory + Item Visibility Ledger** is implemented as a local Settings continuation. Schema migration v6 adds durable `hidden` flags to `source_groups` and `catalog_items`; active named-source Browse, All Sources, and local Search each require both the item and its provider category to be included. Refresh upserts retain both preference levels, so restoring a category does not restore individually hidden items. The shell opens the ledger from the selected source and returns focus to its launcher after one shared catalog-scope refresh. Format and `flutter analyze` are clean; the full serial suite passes 268 tests. Independent critique and the generic Flutter native-source audit pass 16/16. Four inspected, synthetic Flutter renders cover desktop mixed state, Hidden only recovery, Uncategorized, and constrained directory. Debug and Release packages built at 2026-08-17 22:30:45 and 22:31:49 respectively: `build/windows/x64/runner/Debug/wabbit_tv.exe` and `build/windows/x64/runner/Release/wabbit_tv.exe`. A sanitized local-copy Strong measurement migrated v5→v6 in 1,629 ms and read category and 100-item pages in 2–98 ms across Live, Movies, and Series; existing local Search measured Spider 14/8/13 ms (first/count/next) and Fox 11/9/11 ms, with the original catalog hash unchanged. Evidence: `docs/evidence/phase2-library-visibility/README.md`.
+
+**Bulk Category Visibility checkpoint — 2026-08-18:** The confirmed directory-toolbar extension is implemented with explicit Hide all and Restore all actions for the selected source and media kind. Each operation is one atomic category update; individual item flags and Uncategorized are untouched, while categories first imported by a future refresh default to Included. Hide all uses an inline confirmation with Cancel initially focused; Restore all is immediate. The shell blocks navigation away while persistence is pending. Failure states distinguish an uncommitted write from a committed save whose local view could not refresh, and refresh retry never repeats the write. `flutter analyze` is clean and the full serial suite passes 283 tests. Independent Impeccable critique passes and the generic Flutter native-source audit passes 16/16. Three synthetic Flutter renders were inspected. Debug and Release builds passed at `build/windows/x64/runner/Debug/wabbit_tv.exe` (2026-08-18 00:31:48 local) and `build/windows/x64/runner/Release/wabbit_tv.exe` (2026-08-18 00:32:32 local). Evidence: `docs/evidence/phase2-bulk-category-visibility/README.md`.
 
 **Acceptance gate**
 
@@ -327,6 +338,9 @@ Every visible work item below begins with the confirmed Shape gate in `ORCHESTRA
 - Disabling one source removes it from active unified results without deleting other source data.
 - Removing a source removes its credentials and active catalog contribution without damaging unrelated sources.
 - Search and scrolling remain responsive with the large fixture and real Strong catalog.
+- A user can hide and restore a provider category or item locally; named Browse, All Sources, and Search reflect the category AND item rule.
+
+**Gate status — PASS (2026-08-18):** Automated evidence covers all three connector forms, consecutive-refresh identity stability, failed-refresh preservation/status, disable, remove, the 50k local search/browse paths, and individual plus bulk Library Visibility rules. The corrected packaged real Strong Search pass was user-confirmed earlier. For the sole remaining gate, the user ran the packaged Release build against Strong and reported `Perfect, pass` after Hide all, restoring the desired Live categories, confirming Browse/Search propagation, and refreshing to confirm retention. This is user-supplied runtime evidence; no screenshot, timing, or provider title was recorded.
 
 **Not in this phase**
 
@@ -543,7 +557,7 @@ Not part of Windows V1:
 | Planning baseline | Complete |
 | 0 — Direction and feasibility | Complete |
 | 1 — Strong end-to-end slice | Complete |
-| 2 — Catalog and source management | Not started |
+| 2 — Catalog and source management | Complete |
 | 3 — App shell and browsing | Not started |
 | 4 — Personal organization | Not started |
 | 5 — Playback, PiP, and multiview | Not started |
@@ -569,3 +583,8 @@ Not part of Windows V1:
 | 2026-08-16 | Closed the Phase 0 gate | Every recorded visual, packaging, database, playback, provider-admission, privacy, and scale criterion passed |
 | 2026-08-17 | Implemented and synthetic-package verified the shaped Phase 1 production player; closed critique, audit, focus, lifecycle, sizing, and Windows fullscreen findings | Phase 1 work item 8 is ready for the remaining real Strong browse-and-play gate without adding advanced playback scope |
 | 2026-08-17 | Closed Phase 1 after the maintainer-local Strong production run imported, browsed, played Live/Movie/Episode, restored focused context, and persisted across restart | All recorded Phase 1 acceptance items now have real-run or bounded synthetic evidence; no advanced playback scope was added |
+| 2026-08-17 | Implemented and bounded-verified Phase 2 Catalog Scope and Local Search, including exact-source Xtream/M3U playback handoff | Automated, render, audit, and Windows build evidence passed; packaged interaction and real Strong measurements remain before the Phase 2 gate can close |
+| 2026-08-17 | Corrected the real-scale Strong refresh path and reran the packaged Windows gate | The prior catalog recovered without reimport; refresh completed in about 20 seconds and browse/navigation remained good. One real Strong Search responsiveness check remains before Phase 2 closes |
+| 2026-08-17 | Implemented Library Visibility after its explicitly confirmed viewport | Schema v6 preserves local category/item choices; synthetic, audit, package, and copy-only Strong-scale evidence pass. Packaged real Strong hide/restore and Browse/Search propagation remain before Phase 2 closes |
+| 2026-08-18 | Implemented the confirmed bulk-category visibility toolbar | Atomic source/kind updates, failure truth, busy-shell containment, 283 tests, audit, renders, and both Windows builds pass. Packaged Strong propagation and refresh retention remain before Phase 2 closes |
+| 2026-08-18 | Closed the Phase 2 gate after the packaged Strong visibility exercise | User reported `Perfect, pass` after Hide all, desired Live-category restoration, Browse/Search propagation, and refresh retention; no screenshots, timings, or provider titles were recorded |

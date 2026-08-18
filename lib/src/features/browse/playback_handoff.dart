@@ -1,29 +1,43 @@
+import 'dart:collection';
 import 'dart:convert';
 
 import '../sources/source_models.dart';
 
-/// A deliberately credential-free instruction for the future playback layer.
+/// A deliberately credential-free instruction for the playback layer.
 ///
-/// Provider item IDs are required to resolve a stream later, but never appear
-/// in its diagnostic/string form.
+/// Provider item IDs and M3U locators are necessary only at the handoff
+/// boundary. They never appear in diagnostic or string form.
 sealed class PlaybackHandoff {
-  const PlaybackHandoff({
-    required this.sourceId,
-    required this.title,
-    required this.providerItemId,
-    required this.extension,
-  });
+  const PlaybackHandoff({required this.sourceId, required this.title});
 
   final String sourceId;
   final String title;
-  final String providerItemId;
-  final String extension;
+
+  /// Legacy catalog code may inspect these after narrowing to an Xtream
+  /// subtype. M3U deliberately exposes no provider identifier or extension.
+  String get providerItemId => '';
+  String get extension => '';
 
   @override
   String toString() => '$runtimeType(redacted)';
 }
 
-final class LivePlaybackHandoff extends PlaybackHandoff {
+/// The common safe shape for an Xtream item which resolves just in time.
+sealed class XtreamPlaybackHandoff extends PlaybackHandoff {
+  const XtreamPlaybackHandoff({
+    required super.sourceId,
+    required super.title,
+    required this.providerItemId,
+    required this.extension,
+  });
+
+  @override
+  final String providerItemId;
+  @override
+  final String extension;
+}
+
+final class LivePlaybackHandoff extends XtreamPlaybackHandoff {
   const LivePlaybackHandoff({
     required super.sourceId,
     required super.title,
@@ -32,7 +46,7 @@ final class LivePlaybackHandoff extends PlaybackHandoff {
   });
 }
 
-final class MoviePlaybackHandoff extends PlaybackHandoff {
+final class MoviePlaybackHandoff extends XtreamPlaybackHandoff {
   const MoviePlaybackHandoff({
     required super.sourceId,
     required super.title,
@@ -41,13 +55,29 @@ final class MoviePlaybackHandoff extends PlaybackHandoff {
   });
 }
 
-final class EpisodePlaybackHandoff extends PlaybackHandoff {
+final class EpisodePlaybackHandoff extends XtreamPlaybackHandoff {
   const EpisodePlaybackHandoff({
     required super.sourceId,
     required super.title,
     required super.providerItemId,
     required super.extension,
   });
+}
+
+/// A parsed M3U live locator plus its per-item HTTP headers.
+///
+/// Construction is private to this file so all values have passed the same
+/// bounded parser before they reach a transport. The public map is immutable.
+final class M3uLivePlaybackHandoff extends PlaybackHandoff {
+  M3uLivePlaybackHandoff._({
+    required super.sourceId,
+    required super.title,
+    required this.uri,
+    required Map<String, String> httpHeaders,
+  }) : httpHeaders = UnmodifiableMapView(Map<String, String>.from(httpHeaders));
+
+  final Uri uri;
+  final Map<String, String> httpHeaders;
 }
 
 /// The opaque Xtream catalog reference after its minimal safe shape is known.
@@ -124,18 +154,53 @@ class ContinuationException implements Exception {
   String toString() => 'ContinuationException(redacted)';
 }
 
-PlaybackHandoff playbackHandoffFor(BrowseCatalogItem item) {
-  final reference = _referenceFor(item);
-  return switch (item.kind) {
-    SourceMediaKind.live => LivePlaybackHandoff(
+PlaybackHandoff playbackHandoffFor(BrowseCatalogItem item) =>
+    _playbackHandoffFor(
       sourceId: item.sourceId,
       title: item.title,
+      kind: item.kind,
+      playbackRef: item.playbackRef,
+    );
+
+/// Builds the same safe playback instruction for a merged library result.
+///
+/// The chosen library variant's [LibraryCatalogItem.sourceId] remains the
+/// handoff source; it is never inferred from the shell's currently open view.
+PlaybackHandoff playbackHandoffForLibrary(LibraryCatalogItem item) =>
+    _playbackHandoffFor(
+      sourceId: item.sourceId,
+      title: item.title,
+      kind: item.kind,
+      playbackRef: item.playbackRef,
+    );
+
+PlaybackHandoff _playbackHandoffFor({
+  required String sourceId,
+  required String title,
+  required SourceMediaKind kind,
+  required String playbackRef,
+}) {
+  if (kind == SourceMediaKind.series) {
+    throw const ContinuationException(ContinuationFailure.invalidReference);
+  }
+  final decoded = _decodedReference(playbackRef);
+  if (decoded.containsKey('url')) {
+    if (kind != SourceMediaKind.live) {
+      throw const ContinuationException(ContinuationFailure.invalidReference);
+    }
+    return _m3uHandoff(sourceId: sourceId, title: title, decoded: decoded);
+  }
+  final reference = _xtreamReference(kind: kind, decoded: decoded);
+  return switch (kind) {
+    SourceMediaKind.live => LivePlaybackHandoff(
+      sourceId: sourceId,
+      title: title,
       providerItemId: reference.providerItemId,
       extension: reference.extension ?? 'ts',
     ),
     SourceMediaKind.movies => MoviePlaybackHandoff(
-      sourceId: item.sourceId,
-      title: item.title,
+      sourceId: sourceId,
+      title: title,
       providerItemId: reference.providerItemId,
       extension: reference.extension ?? 'mp4',
     ),
@@ -145,11 +210,35 @@ PlaybackHandoff playbackHandoffFor(BrowseCatalogItem item) {
   };
 }
 
-SeriesReference seriesReferenceFor(BrowseCatalogItem item) {
-  if (item.kind != SourceMediaKind.series) {
+SeriesReference seriesReferenceFor(BrowseCatalogItem item) =>
+    _seriesReferenceFor(kind: item.kind, playbackRef: item.playbackRef);
+
+SeriesReference seriesReferenceForLibrary(LibraryCatalogItem item) =>
+    _seriesReferenceFor(kind: item.kind, playbackRef: item.playbackRef);
+
+SeriesReference _seriesReferenceFor({
+  required SourceMediaKind kind,
+  required String playbackRef,
+}) {
+  if (kind != SourceMediaKind.series) {
     throw const ContinuationException(ContinuationFailure.invalidReference);
   }
-  return SeriesReference(_referenceFor(item).providerItemId);
+  return SeriesReference(
+    _xtreamReference(
+      kind: kind,
+      decoded: _decodedReference(playbackRef),
+    ).providerItemId,
+  );
+}
+
+Map<String, Object?> _decodedReference(String playbackRef) {
+  try {
+    final decoded = jsonDecode(playbackRef);
+    if (decoded is! Map) throw const FormatException();
+    return decoded.cast<String, Object?>();
+  } catch (_) {
+    throw const ContinuationException(ContinuationFailure.invalidReference);
+  }
 }
 
 class _ImportedReference {
@@ -159,25 +248,78 @@ class _ImportedReference {
   final String? extension;
 }
 
-_ImportedReference _referenceFor(BrowseCatalogItem item) {
-  try {
-    final decoded = jsonDecode(item.playbackRef);
-    if (decoded is! Map) throw const FormatException();
-    final providerId = decoded['providerId'];
-    final kind = decoded['kind'];
-    final extension = decoded['extension'];
-    if (providerId is! String ||
-        providerId.trim().isEmpty ||
-        kind != item.kind.name ||
-        (extension != null &&
-            (extension is! String || extension.trim().isEmpty))) {
-      throw const FormatException();
-    }
-    return _ImportedReference(
-      providerItemId: providerId,
-      extension: extension as String?,
-    );
-  } catch (_) {
+_ImportedReference _xtreamReference({
+  required SourceMediaKind kind,
+  required Map<String, Object?> decoded,
+}) {
+  final providerId = decoded['providerId'];
+  final importedKind = decoded['kind'];
+  final extension = decoded['extension'];
+  if (providerId is! String ||
+      providerId.trim().isEmpty ||
+      importedKind != kind.name ||
+      (extension != null &&
+          (extension is! String || extension.trim().isEmpty))) {
     throw const ContinuationException(ContinuationFailure.invalidReference);
   }
+  return _ImportedReference(
+    providerItemId: providerId,
+    extension: extension as String?,
+  );
+}
+
+const _maxM3uHeaders = 32;
+const _maxM3uHeaderNameLength = 128;
+const _maxM3uHeaderValueLength = 4096;
+const _maxM3uHeaderBytes = 16 * 1024;
+final _safeHeaderName = RegExp(r'^[A-Za-z0-9-]+$');
+
+M3uLivePlaybackHandoff _m3uHandoff({
+  required String sourceId,
+  required String title,
+  required Map<String, Object?> decoded,
+}) {
+  final rawUrl = decoded['url'];
+  final uri = rawUrl is String ? Uri.tryParse(rawUrl.trim()) : null;
+  if (uri == null || !uri.hasScheme || uri.scheme == 'file') {
+    throw const ContinuationException(ContinuationFailure.invalidReference);
+  }
+  final rawHeaders = decoded['headers'];
+  if (rawHeaders != null && rawHeaders is! Map) {
+    throw const ContinuationException(ContinuationFailure.invalidReference);
+  }
+  final headers = <String, String>{};
+  var bytes = 0;
+  if (rawHeaders != null) {
+    final headerMap = rawHeaders as Map;
+    if (headerMap.length > _maxM3uHeaders) {
+      throw const ContinuationException(ContinuationFailure.invalidReference);
+    }
+    for (final entry in headerMap.entries) {
+      final name = entry.key;
+      final value = entry.value;
+      if (name is! String ||
+          value is! String ||
+          name.isEmpty ||
+          name.length > _maxM3uHeaderNameLength ||
+          value.isEmpty ||
+          value.length > _maxM3uHeaderValueLength ||
+          !_safeHeaderName.hasMatch(name)) {
+        throw const ContinuationException(ContinuationFailure.invalidReference);
+      }
+      final typedName = name;
+      final typedValue = value;
+      bytes += typedName.length + typedValue.length;
+      if (bytes > _maxM3uHeaderBytes) {
+        throw const ContinuationException(ContinuationFailure.invalidReference);
+      }
+      headers[typedName] = typedValue;
+    }
+  }
+  return M3uLivePlaybackHandoff._(
+    sourceId: sourceId,
+    title: title,
+    uri: uri,
+    httpHeaders: headers,
+  );
 }

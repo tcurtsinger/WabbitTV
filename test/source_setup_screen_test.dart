@@ -52,7 +52,8 @@ void main() {
         const WabbitApp(fixtureMode: HomeFixtureMode.noSources),
       );
       await tester.tap(find.text('Add source'));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
       final server = tester.widget<TextField>(
         find.byKey(const ValueKey('source-field-Server URL')),
       );
@@ -243,6 +244,10 @@ void main() {
     );
 
     await tester.enterText(
+      find.byKey(const ValueKey('source-field-Source name')),
+      'My IPTV',
+    );
+    await tester.enterText(
       find.byKey(const ValueKey('source-field-Server URL')),
       'https://provider.example',
     );
@@ -422,6 +427,85 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets(
+    'an empty add ledger selects all three supported connector forms',
+    (tester) async {
+      final initialFocus = FocusNode(debugLabel: 'source name');
+      addTearDown(initialFocus.dispose);
+      await tester.binding.setSurfaceSize(const Size(540, 620));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SourceSetupScreen(
+              initialFocus: initialFocus,
+              onContentFocus: (_) {},
+              onExit: () {},
+              onBrowse: (_) {},
+              m3uFilePicker: () async => r'C:\Lists\weekend.m3u',
+              controller: SourceSetupController(
+                service: _WidgetSourcePort(),
+                credentialStore: _WidgetCredentialStore(),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('source-field-Source name')),
+            )
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(
+        find.byKey(const ValueKey('source-field-Server URL')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('source-connector-m3uUrl')));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('source-field-M3U URL')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('source-field-Username')), findsNothing);
+
+      final m3uFile = find.byKey(const ValueKey('source-connector-m3uFile'));
+      await tester.ensureVisible(m3uFile);
+      await tester.tap(m3uFile);
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('source-field-M3U file')),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(find.text('Choose M3U file'));
+      await tester.tap(find.text('Choose M3U file'));
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('source-field-M3U file')),
+            )
+            .controller!
+            .text,
+        r'C:\Lists\weekend.m3u',
+      );
+
+      final xtream = find.byKey(const ValueKey('source-connector-xtream'));
+      await tester.ensureVisible(xtream);
+      await tester.tap(xtream);
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('source-field-Password')),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 class _FailingWidgetSourcePort extends _WidgetSourcePort {
@@ -501,6 +585,10 @@ Future<void> _tapConnect(WidgetTester tester) async {
 }
 
 Future<void> _enterSource(WidgetTester tester) async {
+  await tester.enterText(
+    find.byKey(const ValueKey('source-field-Source name')),
+    'My IPTV',
+  );
   await tester.enterText(
     find.byKey(const ValueKey('source-field-Server URL')),
     'https://provider.example',

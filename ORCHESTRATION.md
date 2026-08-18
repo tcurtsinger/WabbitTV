@@ -2,7 +2,7 @@
 
 **Purpose:** preserve how this project is led, delegated, shaped, verified, and resumed after context compaction.  
 **Process owner:** Primary Codex agent (lead/orchestrator)  
-**Last updated:** 2026-08-16  
+**Last updated:** 2026-08-17  
 
 ## 1. Recovery Rule
 
@@ -205,7 +205,7 @@ Official material reviewed on 2026-08-16:
 
 - Product initialization: complete
 - Master planning baseline: complete
-- Current phase: Phase 1 — Strong End-to-End Slice — **In progress**
+- Current phase: Phase 2 — Catalog and Source Management — **Complete**; Phase 3 has not started
 - App shell Shape: confirmed as **Quiet Broadcast** in `docs\shapes\0-app-shell.md`
 - Home Shape: confirmed as **Personal Shelves** in `docs\shapes\0-home.md`
 - Approved first viewport: composition **B — Focused Shelf** at `.impeccable\mocks\quiet-broadcast-home-b-focused-shelf.png`; its sidecar records user approval and `.impeccable\surfaces\lib-main-dart.md` carries the implementation inventory
@@ -218,5 +218,19 @@ Official material reviewed on 2026-08-16:
 - Playback probe visual evidence: `build\verification\phase0-playback-probe-no-credentials.png`; approved direction remains B — Split Console
 - Plugin build note: standard Flutter plugin builds need Windows Developer Mode; this non-elevated workstation build was proven with generated workspace-local junctions plus process-scoped `TrackFileAccess=false`, without changing system settings
 - Source setup Shape: confirmed as **Source Ledger** in `docs\shapes\1-source-setup.md`; approved composition is **C — Focused Ledger with Three-Stage Dock** at `.impeccable\mocks\quiet-broadcast-source-ledger-c-stage-dock-approved.png`
-- Next task: implement only the confirmed Phase 1 source-setup slice, then verify it before separately shaping Phase 1 browse lists and production playback
+- Phase 1: complete, including the real Strong import, browse, playback, and restart gate recorded in `PLAN.md` and `docs\evidence\phase1-*.md`
+- Source Management Shape: confirmed as **A — Source Directory + Detail Ledger** in `docs\shapes\4-source-management.md`; the approved first viewport is `.impeccable\mocks\quiet-broadcast-source-management-a-directory-detail.png`, including the quiet outlined Add source action and Save-and-refresh edit behavior
+- Source Management implementation: verified through the bounded controller seam, independent critique and generic Flutter native-source audit, synthetic Flutter render evidence, and a packaged Windows debug build; source lifecycle coverage is included in the current 228-test serial suite
+- Catalog Scope Shape: confirmed as **A — Header scope menu** in `docs\shapes\5-catalog-scope.md`; approved composition is `.impeccable\mocks\quiet-broadcast-catalog-scope-a-header-menu.png`
+- Local Search Shape: confirmed as **A — One mixed ledger** with **A — Minimal TV keyboard** in `docs\shapes\6-local-search.md`; approved compositions are `.impeccable\mocks\quiet-broadcast-local-search-a-mixed-ledger.png` and `.impeccable\mocks\quiet-broadcast-local-search-a-tv-keyboard.png`
+- Catalog Scope and Local Search implementation: complete through bounded local-query seams, shared persistent scope, a local-only mixed ledger, and exact-source Xtream/M3U playback handoff with M3U headers. Format and `flutter analyze` are clean, the full serial suite passes 228/228, and the Windows debug build passed at `build\windows\x64\runner\Debug\wabbit_tv.exe`.
+- Catalog Scope and Local Search visual/review evidence: five deterministic network-free actual-Flutter renders passed and were inspected in `docs\evidence\phase2-catalog-search`; independent Impeccable critique plus bounded polish passed. The generic Flutter source audit's three initial P1 browse races were fixed, and final closure reports no remaining P1/P2 findings.
+- Real Strong refresh correction: the first packaged refresh exposed a quadratic per-item FTS delete and transient local-read failure behavior. The corrected path uses one stage-level FTS clear, bounded SQLite wait/WAL behavior, last-local-view preservation, and source-scoped abnormal-worker recovery. Analyze, the serial 228/228 suite, the Windows debug build, and an independent no-P0/P1 audit pass. The corrected build recovered the existing last-good Strong catalog without reimport, refreshed successfully in about 20 seconds, and retained good browse/navigation and final source state.
+- Library Visibility Shape: user-confirmed **A — Source Category Directory + Item Visibility Ledger** in `docs\shapes\7-library-visibility.md`; the approved viewport is `.impeccable\mocks\quiet-broadcast-library-visibility-a-directory-ledger.png`.
+- Library Visibility implementation: migration v6 keeps local `source_groups.hidden` and `catalog_items.hidden` choices across refresh; named Browse, All Sources, and Search share the effective category AND item rule. The Settings continuation restores its launcher focus and refreshes shared scope only on return. Format and `flutter analyze` pass; the serial suite passes 268 tests. Independent critique and generic Flutter native-source audit pass 16/16. Four inspected synthetic renders and sanitized copy-only Strong-scale timings are recorded in `docs\evidence\phase2-library-visibility\README.md`. Debug and Release packages passed at `build\windows\x64\runner\Debug\wabbit_tv.exe` and `build\windows\x64\runner\Release\wabbit_tv.exe`.
+- Bulk Category Visibility Shape: user-confirmed directory-toolbar Hide all/Restore all extension in `docs\shapes\8-bulk-category-visibility.md`; approved composition is `.impeccable\mocks\quiet-broadcast-bulk-category-visibility-a-directory-toolbar.png`.
+- Bulk Category Visibility implementation: one atomic category update is scoped to the selected source and kind; item flags and Uncategorized remain untouched, and new categories default Included. Hide all uses inline confirmation, Restore all is immediate, and the shell prevents exit while persistence is pending. Write failure reports no change; post-commit refresh failure reports the local save and retries only the view refresh. `flutter analyze` is clean, the full serial suite passes 283 tests, independent critique passes, and the generic Flutter native-source audit passes 16/16. Three inspected synthetic renders are recorded in `docs\evidence\phase2-bulk-category-visibility\README.md`. Debug and Release builds passed at `build\windows\x64\runner\Debug\wabbit_tv.exe` (2026-08-18 00:31:48 local) and `build\windows\x64\runner\Release\wabbit_tv.exe` (2026-08-18 00:32:32 local).
+- Packaged Strong Library Visibility gate — **PASS (user-supplied, 2026-08-18):** the user ran the Release build, hid all categories for the active Live scope, restored the desired Live categories, confirmed Browse/Search propagation, refreshed, and reported `Perfect, pass`. No screenshot, timing, or provider title was recorded.
+- Phase 2 gate: **Complete**. Connector/M3U lifecycle behavior remains automated coverage and is not relabeled as a real M3U-provider run.
+- Current invisible foundation: transactional last-good refresh, durable source lifecycle, M3U connectors, and bounded multi-source/search query APIs are implemented without scheduling or a connector framework
 - Application scaffold/code: active

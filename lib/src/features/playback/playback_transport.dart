@@ -9,7 +9,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 abstract interface class PlaybackTransport {
   Stream<PlaybackTransportState> get states;
   Widget buildVideo();
-  Future<void> open(Uri uri);
+  Future<void> open(Uri uri, {Map<String, String> httpHeaders = const {}});
   Future<void> play();
   Future<void> pause();
   Future<void> seek(Duration position);
@@ -135,7 +135,8 @@ class MediaKitPlaybackTransport implements PlaybackTransport {
   );
 
   @override
-  Future<void> open(Uri uri) => _player.open(Media(uri.toString()), play: true);
+  Future<void> open(Uri uri, {Map<String, String> httpHeaders = const {}}) =>
+      _player.open(Media(uri.toString(), httpHeaders: httpHeaders), play: true);
 
   @override
   Future<void> pause() => _player.pause();

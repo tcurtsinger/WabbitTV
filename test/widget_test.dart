@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:wabbit_tv/main.dart';
+import 'package:wabbit_tv/src/features/browse/catalog_scope_controller.dart';
 import 'package:wabbit_tv/src/home_fixture_mode.dart';
 import 'package:wabbit_tv/src/features/sources/credential_store.dart';
 import 'package:wabbit_tv/src/features/sources/source_catalog_database.dart';
@@ -200,10 +201,13 @@ void main() {
     'runtime injected controller initializes Home from no source to no personalization',
     (tester) async {
       final controller = _TrackingController(readyOnInitialize: true);
+      final scope = CatalogScopeController(port: const _ImmediateScopePort());
+      addTearDown(scope.dispose);
       await tester.pumpWidget(
         WabbitApp(
           fixtureMode: HomeFixtureMode.runtime,
           sourceController: controller,
+          catalogScopeController: scope,
         ),
       );
       await tester.pumpAndSettle();
@@ -305,4 +309,20 @@ class _NoopCredentials implements CredentialStore {
     required String password,
     String? serverUrl,
   }) async {}
+}
+
+class _ImmediateScopePort implements CatalogScopePort {
+  const _ImmediateScopePort();
+
+  @override
+  Future<LibraryScope> loadCatalogScope() async => const LibraryScope.all();
+
+  @override
+  Future<PersistedSource?> loadReadySourceById(String sourceId) async => null;
+
+  @override
+  Future<List<SourceRosterEntry>> loadSourceRoster() async => const [];
+
+  @override
+  Future<LibraryScope> saveCatalogScope(LibraryScope scope) async => scope;
 }

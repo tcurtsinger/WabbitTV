@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "option": "A — Source Category Directory + Item Visibility Ledger",
+  "target": "lib/src/features/sources/source_management_screen.dart",
+  "mode": "Operate",
+  "direction": "Quiet Broadcast — Source Category Directory + Item Visibility Ledger",
+  "prompt": "Quiet Broadcast 1265x713 Windows first viewport for Settings > Sources > Strong > Manage visibility. Preserve the native title bar and collapsed 72px rail with Settings selected. Show Manage visibility, Strong · Local visibility only, a quiet Back control, compact Live/Movies/Series selector with Live selected, and an unchecked Hidden only recovery filter. Below, show a dense two-pane directory: synthetic provider categories with counts and Included/Hidden states at left; selected Global Mix category with Hide category action and synthetic Live items with Included/Restore item states at right. Put one crisp 2px signal-amber remote-focus edge around the complete Market One row. Use graphite, warm-white, quiet gray, compact 6–8px geometry, Segoe UI character, thin lines, and no real provider data, credentials, custom groups, favorites, deletion, gradients, glass, hero, storefront, pills, glow, or poster art.",
+  "status": "confirmed",
+  "generatedAt": "2026-08-17",
+  "userDecisions": {
+    "date": "2026-08-17",
+    "scope": "Source-specific category and individual-item visibility",
+    "effectiveVisibility": "Category included AND item included",
+    "activeSurfaces": [
+      "Named-source Browse",
+      "All Sources",
+      "Search"
+    ],
+    "storageBehavior": "Local, reversible, durable across refresh",
+    "restoreBehavior": "Restoring a category does not restore individually hidden items",
+    "organizationBoundary": "Separate from Favorites and Custom Groups"
+  },
+  "visualConfirmation": {
+    "status": "confirmed",
+    "note": "The user explicitly confirmed the 1265x713 first viewport on 2026-08-17."
+  },
+  "fixtureData": {
+    "synthetic": true,
+    "sourceName": "Strong",
+    "mediaKind": "Live",
+    "selectedCategory": "Global Mix",
+    "categoryRows": [
+      {"name": "Local News", "count": 128, "state": "Included"},
+      {"name": "Global Mix", "count": 142, "state": "Included"},
+      {"name": "Language Pack", "count": 386, "state": "Hidden"},
+      {"name": "Sports Extra", "count": 94, "state": "Included"},
+      {"name": "Cinema World", "count": 211, "state": "Hidden"}
+    ],
+    "itemRows": [
+      {"name": "Atlas News", "kind": "LIVE", "state": "Included"},
+      {"name": "Market One", "kind": "LIVE", "state": "Hidden", "focused": true},
+      {"name": "Public View", "kind": "LIVE", "state": "Included"},
+      {"name": "Northline", "kind": "LIVE", "state": "Included"},
+      {"name": "World Desk", "kind": "LIVE", "state": "Hidden"}
+    ]
+  },
+  "literalCautions": "Every category name, item title, count, and state shown is synthetic composition evidence. This surface controls only local source visibility; it does not delete provider data or represent Favorites or Custom Groups.",
+  "assetGeneration": {
+    "tool": "Built-in image generation",
+    "reference": ".impeccable/mocks/quiet-broadcast-source-management-a-directory-detail.png",
+    "finalDimensions": "1265x713",
+    "inspection": "One visual inspection completed; no correction required."
+  }
+}

@@ -156,7 +156,10 @@ class _FixturePlaybackTransport implements PlaybackTransport {
   Future<void> dispose() => _states.close();
 
   @override
-  Future<void> open(Uri uri) async {
+  Future<void> open(
+    Uri uri, {
+    Map<String, String> httpHeaders = const {},
+  }) async {
     // Intentionally ignore the URI: this fixture must make no network call and
     // retain no provider-shaped string.
     _emit();
