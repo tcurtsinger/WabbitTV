@@ -176,6 +176,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
   List<LibraryVisibilityCategory> _categories = const [];
   List<LibraryVisibilityCategory> _allCategories = const [];
   List<LibraryVisibilityItem> _items = const [];
+  final Set<String> _pendingItemWrites = <String>{};
   LibraryVisibilityCategory? _selected;
   _VisibilitySnapshot? _lastUsableSnapshot;
   int _generation = 0;
@@ -912,6 +913,13 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
       _announceBulkWait();
       return;
     }
+    if (!_pendingItemWrites.add(item.catalogItemId)) {
+      _announce('Please wait while item visibility is updated.');
+      return;
+    }
+    final targetHidden = !item.hidden;
+    final generation = _generation;
+    final category = _selected?.ref;
     final previousIndex = _items.indexWhere(
       (current) => current.catalogItemId == item.catalogItemId,
     );
@@ -922,13 +930,15 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
       await widget.port.setItemHidden(
         sourceId: widget.sourceId,
         catalogItemId: item.catalogItemId,
-        hidden: !item.hidden,
+        hidden: targetHidden,
       );
-      if (!mounted) return;
+      if (!mounted || generation != _generation || _selected?.ref != category) {
+        return;
+      }
       _announce(
-        '${item.title} ${item.hidden ? 'restored' : 'hidden'} locally.',
+        '${item.title} ${targetHidden ? 'hidden' : 'restored'} locally.',
       );
-      if (_hiddenOnly && item.hidden) {
+      if (_hiddenOnly && !targetHidden) {
         final result = await _loadDirectory(
           fallbackIndex: previousCategoryIndex,
         );
@@ -943,7 +953,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
                   catalogItemId: current.catalogItemId,
                   title: current.title,
                   kind: current.kind,
-                  hidden: !current.hidden,
+                  hidden: targetHidden,
                 )
               else
                 current,
@@ -953,12 +963,16 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
         _requestItemFocus(item.catalogItemId);
       }
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation || _selected?.ref != category) {
+        return;
+      }
       setState(
         () => _failure =
             'Visibility could not be saved. No local change was made.',
       );
       _requestItemFocus(item.catalogItemId);
+    } finally {
+      _pendingItemWrites.remove(item.catalogItemId);
     }
   }
 

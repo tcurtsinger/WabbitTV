@@ -137,6 +137,30 @@ https://stream.example/later
     expect(fromFile.items.single.title, 'One');
   });
 
+  test('resolves URL playlist entries relative to the playlist location', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    server.listen((request) async {
+      request.response.write(
+        '#EXTINF:-1 tvg-id="relative",Relative\n'
+        '../streams/channel.m3u8?ticket=fixture\n',
+      );
+      await request.response.close();
+    });
+    final base = Uri.parse(
+      'http://${server.address.address}:${server.port}/lists/fixture.m3u',
+    );
+
+    final stage = await connector.importUrl(url: base, sourceId: 'url-source');
+    final ref =
+        jsonDecode(stage.items.single.playbackRef) as Map<String, dynamic>;
+
+    expect(
+      ref['url'],
+      'http://${server.address.address}:${server.port}/streams/channel.m3u8?ticket=fixture',
+    );
+  });
+
   test('bounds, cancellation, and failures are redacted', () async {
     final tooSmall = M3uConnector(maxBytes: 8);
     expect(

@@ -212,6 +212,28 @@ void main() {
     },
   );
 
+  testWidgets(
+    'repeated item activation is coalesced while its write is pending',
+    (tester) async {
+      final port = _ItemGatePort();
+      await tester.pumpWidget(app(port));
+      await tester.pumpAndSettle();
+      final row = find.byKey(const ValueKey('visibility-item-live-1'));
+
+      await tester.tap(row);
+      await tester.pump();
+      await tester.tap(row);
+      await tester.pump();
+
+      expect(port.writeCalls, 1);
+      expect(port.itemChanges, isEmpty);
+      port.pending.complete();
+      await tester.pumpAndSettle();
+      expect(port.itemChanges, [('live-1', true)]);
+      expect(find.text('Hidden'), findsWidgets);
+    },
+  );
+
   testWidgets('Hidden only is a recovery view with its direct return action', (
     tester,
   ) async {
@@ -1561,6 +1583,26 @@ class _BulkGatePort extends _Port {
     required SourceMediaKind kind,
     required bool hidden,
   }) => pending.future;
+}
+
+class _ItemGatePort extends _Port {
+  final pending = Completer<void>();
+  int writeCalls = 0;
+
+  @override
+  Future<void> setItemHidden({
+    required String sourceId,
+    required String catalogItemId,
+    required bool hidden,
+  }) async {
+    writeCalls++;
+    await pending.future;
+    await super.setItemHidden(
+      sourceId: sourceId,
+      catalogItemId: catalogItemId,
+      hidden: hidden,
+    );
+  }
 }
 
 class _CommittingBulkGatePort extends _Port {

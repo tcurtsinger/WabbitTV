@@ -244,6 +244,84 @@ void main() {
     );
   });
 
+  test('refresh omits provider groups with no current items and restores retained preferences when they return', () async {
+    final fixture = await _VisibilityFixture.create();
+    addTearDown(fixture.dispose);
+    await fixture.seed();
+    final sports = (await fixture.database.loadVisibilityCategories(
+      sourceId: 'one',
+      kind: SourceMediaKind.live,
+    )).singleWhere((category) => category.name == 'Sports');
+    await fixture.database.setSourceGroupHidden(
+      sourceId: 'one',
+      kind: SourceMediaKind.live,
+      sourceGroupId: sports.selection.sourceGroupId!,
+      hidden: true,
+    );
+
+    final withoutSports = await fixture.database.beginRefresh('one');
+    await fixture.database.commitRefresh(withoutSports!, [
+      const ImportedStage(
+        kind: SourceMediaKind.live,
+        categories: [ImportedCategory(providerKey: 'world', name: 'World')],
+        items: [
+          ImportedCatalogItem(
+            providerKey: 'fox-world',
+            title: 'Fox World',
+            categoryKey: 'world',
+            playbackRef: 'world-ref',
+          ),
+        ],
+      ),
+    ]);
+
+    expect(
+      (await fixture.database.loadVisibilityCategories(
+        sourceId: 'one',
+        kind: SourceMediaKind.live,
+      )).map((category) => category.name),
+      ['World'],
+    );
+    expect(
+      (await fixture.database.browseCategories(
+        sourceId: 'one',
+        kind: SourceMediaKind.live,
+      )).map((category) => category.name),
+      ['All Live', 'World'],
+    );
+
+    final withSportsAgain = await fixture.database.beginRefresh('one');
+    await fixture.database.commitRefresh(withSportsAgain!, [
+      const ImportedStage(
+        kind: SourceMediaKind.live,
+        categories: [
+          ImportedCategory(providerKey: 'world', name: 'World'),
+          ImportedCategory(providerKey: 'sports', name: 'Sports returned'),
+        ],
+        items: [
+          ImportedCatalogItem(
+            providerKey: 'fox-world',
+            title: 'Fox World',
+            categoryKey: 'world',
+            playbackRef: 'world-ref',
+          ),
+          ImportedCatalogItem(
+            providerKey: 'fox-sports',
+            title: 'Fox Sports',
+            categoryKey: 'sports',
+            playbackRef: 'sports-ref',
+          ),
+        ],
+      ),
+    ]);
+
+    final returned = (await fixture.database.loadVisibilityCategories(
+      sourceId: 'one',
+      kind: SourceMediaKind.live,
+    )).singleWhere((category) => category.name == 'Sports returned');
+    expect(returned.isHidden, isTrue);
+  });
+
   test('visibility ledger pages a large category deterministically', () async {
     final fixture = await _VisibilityFixture.create();
     addTearDown(fixture.dispose);

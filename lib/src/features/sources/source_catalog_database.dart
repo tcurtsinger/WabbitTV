@@ -1525,6 +1525,7 @@ List<SourceVisibilityCategory> _loadVisibilityCategoriesOnWorker(
            ON items.source_group_id = groups.id
           AND items.available = 1
          WHERE groups.source_id = ? AND groups.content_kind = ?
+           AND groups.available = 1
            $hiddenFilter
          GROUP BY groups.id
          ORDER BY groups.sort_key ASC, groups.id ASC
@@ -1706,7 +1707,8 @@ int _setAllCategoriesHiddenOnWorker(
       db.execute(
         '''UPDATE source_groups
            SET hidden = ?
-           WHERE source_id = ? AND content_kind = ? AND hidden <> ?''',
+           WHERE source_id = ? AND content_kind = ?
+             AND available = 1 AND hidden <> ?''',
         [value, sourceId, kind.name, value],
       );
       final changed = db.updatedRows;
@@ -1796,6 +1798,7 @@ List<BrowseCategorySummary> _browseCategoriesOnWorker(
           AND items.hidden = 0
          WHERE groups.source_id = ? AND groups.content_kind = ?
            AND groups.hidden = 0
+           AND groups.available = 1
          GROUP BY groups.id
          ORDER BY groups.sort_key ASC, groups.id ASC''',
       [sourceId, kind.name],
@@ -2324,6 +2327,10 @@ SourceReady _commitRefreshOnWorker(
         [refresh.sourceId, refresh.generation],
       );
       db.execute(
+        'UPDATE source_groups SET available = 0 WHERE source_id = ? AND generation < ?',
+        [refresh.sourceId, refresh.generation],
+      );
+      db.execute(
         "UPDATE sources SET refresh_state = 'ready', last_refresh_at = ?, last_error = NULL WHERE id = ?",
         [DateTime.now().toUtc().toIso8601String(), refresh.sourceId],
       );
@@ -2477,10 +2484,11 @@ void _upsertStage(
   final groupIds = <String, int>{};
   final groupNames = <String, String>{};
   final groups = db.prepare('''INSERT INTO source_groups
-       (source_id, provider_key, content_kind, name, sort_key)
-       VALUES (?, ?, ?, ?, ?)
+       (source_id, provider_key, content_kind, name, sort_key, generation, available)
+       VALUES (?, ?, ?, ?, ?, ?, 1)
        ON CONFLICT(source_id, provider_key, content_kind) DO UPDATE SET
-         name = excluded.name, sort_key = excluded.sort_key''');
+         name = excluded.name, sort_key = excluded.sort_key,
+         generation = excluded.generation, available = 1''');
   try {
     for (final category in categories) {
       groups.execute([
@@ -2489,6 +2497,7 @@ void _upsertStage(
         kind.name,
         category.name,
         category.name.toLowerCase(),
+        generation,
       ]);
       groupIds[category.providerKey] =
           db.select(
@@ -2774,6 +2783,37 @@ void _migrate(Database db) {
         'CREATE INDEX IF NOT EXISTS catalog_items_source_group_available ON catalog_items(source_group_id, available)',
       );
       db.execute('INSERT INTO schema_migrations(version) VALUES (6)');
+      db.execute('COMMIT');
+    } catch (_) {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+  if (version < 7) {
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      // Provider categories remain durable so local hidden preferences survive
+      // a temporary provider omission. Availability determines whether a
+      // group belongs to the current refreshed catalog.
+      if (!_tableHasColumn(db, 'source_groups', 'generation')) {
+        db.execute(
+          'ALTER TABLE source_groups ADD COLUMN generation INTEGER NOT NULL DEFAULT 1',
+        );
+      }
+      if (!_tableHasColumn(db, 'source_groups', 'available')) {
+        db.execute(
+          'ALTER TABLE source_groups ADD COLUMN available INTEGER NOT NULL DEFAULT 1',
+        );
+      }
+      db.execute('''UPDATE source_groups
+           SET generation = COALESCE((
+             SELECT refresh_generation FROM sources
+             WHERE sources.id = source_groups.source_id
+           ), 1), available = 1''');
+      db.execute(
+        'CREATE INDEX IF NOT EXISTS source_groups_active_directory ON source_groups(source_id, content_kind, available, hidden, sort_key, id)',
+      );
+      db.execute('INSERT INTO schema_migrations(version) VALUES (7)');
       db.execute('COMMIT');
     } catch (_) {
       db.execute('ROLLBACK');

@@ -28,10 +28,10 @@ void main() {
         db.select('PRAGMA table_info(sources)').map((row) => row['name']),
         containsAll(['reported_connection_limit', 'connection_limit_override']),
       );
-      expect(db.select('SELECT * FROM schema_migrations').length, 6);
+      expect(db.select('SELECT * FROM schema_migrations').length, 7);
       expect(
         db.select('PRAGMA table_info(source_groups)').map((row) => row['name']),
-        contains('hidden'),
+        containsAll(['hidden', 'generation', 'available']),
       );
       expect(
         db.select('PRAGMA table_info(catalog_items)').map((row) => row['name']),
@@ -69,7 +69,7 @@ void main() {
     expect(roster.single.counts[SourceMediaKind.live], 1);
     final migrated = sqlite3.open(fixture.path);
     addTearDown(migrated.close);
-    expect(migrated.select('SELECT * FROM schema_migrations').length, 6);
+    expect(migrated.select('SELECT * FROM schema_migrations').length, 7);
     expect(
       migrated.select(
         'SELECT library_item_id, title, supporting_text FROM library_fts',
@@ -139,6 +139,7 @@ void main() {
              ON items.source_group_id = groups.id
             AND items.available = 1
            WHERE groups.source_id = ? AND groups.content_kind = ?
+             AND groups.available = 1
            GROUP BY groups.id
            ORDER BY groups.sort_key ASC, groups.id ASC
            LIMIT ?''',
@@ -151,7 +152,14 @@ void main() {
 
     expect(
       itemAccess,
-      contains(contains('USING INDEX catalog_items_source_group_available')),
+      hasLength(1),
+      reason: plan.map((row) => row['detail']).join('\n'),
+    );
+    expect(
+      itemAccess.every(
+        (detail) => detail.contains('catalog_items_source_group_available'),
+      ),
+      isTrue,
       reason: plan.map((row) => row['detail']).join('\n'),
     );
     expect(

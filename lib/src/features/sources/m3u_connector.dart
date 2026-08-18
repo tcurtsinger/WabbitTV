@@ -38,6 +38,7 @@ class M3uConnector {
       return parseBytes(
         await _readBounded(response, isCancelled),
         sourceId: sourceId,
+        baseUri: url,
         isCancelled: isCancelled,
       );
     } on SourceImportFailure {
@@ -89,6 +90,7 @@ class M3uConnector {
   ImportedStage parseBytes(
     List<int> bytes, {
     required String sourceId,
+    Uri? baseUri,
     bool Function()? isCancelled,
   }) {
     _throwIfCancelled(isCancelled);
@@ -121,8 +123,8 @@ class M3uConnector {
       if (pending == null) continue;
       final entry = pending;
       pending = null;
-      final locator = line;
-      if (!_isUsableLocator(locator) || entry.title.isEmpty) continue;
+      final locator = _resolveLocator(line, baseUri);
+      if (locator == null || entry.title.isEmpty) continue;
 
       final categoryName = entry.groupTitle;
       final categoryKey = categoryName == null
@@ -286,9 +288,14 @@ String? _nonEmpty(String? value) {
   return trimmed == null || trimmed.isEmpty ? null : trimmed;
 }
 
-bool _isUsableLocator(String value) {
-  final uri = Uri.tryParse(value);
-  return uri != null && uri.hasScheme && uri.scheme != 'file';
+String? _resolveLocator(String value, Uri? baseUri) {
+  final parsed = Uri.tryParse(value);
+  if (parsed == null) return null;
+  final resolved = parsed.hasScheme ? parsed : baseUri?.resolveUri(parsed);
+  if (resolved == null || !resolved.hasScheme || resolved.scheme == 'file') {
+    return null;
+  }
+  return resolved.toString();
 }
 
 bool _isSafeHeaderName(String value) =>
