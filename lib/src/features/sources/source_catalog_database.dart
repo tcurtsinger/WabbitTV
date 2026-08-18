@@ -416,6 +416,7 @@ class XtreamRefreshImport {
     required String serverUrl,
     required String username,
     required String password,
+    Duration requestLimit = _requestLimit,
   }) async {
     final events = ReceivePort();
     final isolate = await Isolate.spawn<Map<String, Object?>>(
@@ -427,6 +428,7 @@ class XtreamRefreshImport {
         'serverUrl': serverUrl,
         'username': username,
         'password': password,
+        'requestLimitMs': requestLimit.inMilliseconds,
       },
       onError: events.sendPort,
       onExit: events.sendPort,
@@ -457,6 +459,21 @@ void _xtreamRefreshWorker(Map<String, Object?> args) async {
     }
     final endpoint = Uri.parse(args['serverUrl']! as String);
     final deadline = DateTime.now().add(_importLimit);
+    final requestLimit = Duration(milliseconds: args['requestLimitMs']! as int);
+    final account = await _refreshJson(
+      client,
+      endpoint,
+      args['username']! as String,
+      args['password']! as String,
+      null,
+      _accountAndCategoryLimit,
+      deadline,
+      requestLimit,
+      () => cancelled,
+    );
+    if (!_isAuthorized(account)) {
+      throw const SourceImportFailure(SourceImportFailureKind.authentication);
+    }
     final stages = <ImportedStage>[];
     for (final kind in SourceMediaKind.values) {
       final categories = _parseCategories(
@@ -468,6 +485,7 @@ void _xtreamRefreshWorker(Map<String, Object?> args) async {
           kind.categoryAction,
           _accountAndCategoryLimit,
           deadline,
+          requestLimit,
           () => cancelled,
         ),
       );
@@ -479,6 +497,7 @@ void _xtreamRefreshWorker(Map<String, Object?> args) async {
         kind.xtreamAction,
         _itemLimit,
         deadline,
+        requestLimit,
         () => cancelled,
       );
       if (raw is! List) {
@@ -514,6 +533,24 @@ void _xtreamRefreshWorker(Map<String, Object?> args) async {
           : 'failed',
       'failure': error.kind.name,
     });
+  } on TimeoutException {
+    if (refresh != null) {
+      _failRefreshOnWorker(
+        args['path']! as String,
+        refresh,
+        cancelled
+            ? SourceRefreshFailure.cancelled
+            : SourceRefreshFailure.timedOut,
+      );
+    }
+    events.send({
+      'type': cancelled ? 'cancelled' : 'failed',
+      'failure':
+          (cancelled
+                  ? SourceImportFailureKind.cancelled
+                  : SourceImportFailureKind.timedOut)
+              .name,
+    });
   } catch (_) {
     if (refresh != null) {
       _failRefreshOnWorker(
@@ -543,9 +580,10 @@ Future<Object?> _refreshJson(
   Uri endpoint,
   String username,
   String password,
-  String action,
+  String? action,
   int max,
   DateTime deadline,
+  Duration requestLimit,
   bool Function() cancelled,
 ) async {
   if (cancelled()) {
@@ -560,14 +598,16 @@ Future<Object?> _refreshJson(
       ...endpoint.queryParameters,
       'username': username,
       'password': password,
-      'action': action,
+      'action': ?action,
     },
   );
-  final remaining = deadline.difference(DateTime.now());
-  if (remaining <= Duration.zero) throw TimeoutException('refresh-timeout');
-  final response = await (await client.getUrl(uri).timeout(remaining))
-      .close()
-      .timeout(remaining);
+  final requestDeadline = _boundedRefreshDeadline(deadline, requestLimit);
+  final response =
+      await (await client
+              .getUrl(uri)
+              .timeout(_remainingRefreshDeadline(requestDeadline)))
+          .close()
+          .timeout(_remainingRefreshDeadline(requestDeadline));
   if (response.statusCode == 401 || response.statusCode == 403) {
     throw const SourceImportFailure(SourceImportFailureKind.authentication);
   }
@@ -575,20 +615,38 @@ Future<Object?> _refreshJson(
     throw HttpException('request');
   }
   final bytes = BytesBuilder();
-  await for (final chunk in response) {
-    if (cancelled()) {
-      throw const SourceImportFailure(SourceImportFailureKind.cancelled);
+  await (() async {
+    await for (final chunk in response) {
+      if (cancelled()) {
+        throw const SourceImportFailure(SourceImportFailureKind.cancelled);
+      }
+      if (bytes.length + chunk.length > max) {
+        throw const SourceImportFailure(SourceImportFailureKind.tooLarge);
+      }
+      bytes.add(chunk);
     }
-    if (bytes.length + chunk.length > max) {
-      throw const SourceImportFailure(SourceImportFailureKind.tooLarge);
-    }
-    bytes.add(chunk);
-  }
+  })().timeout(_remainingRefreshDeadline(requestDeadline));
   final text = utf8.decode(bytes.takeBytes());
   if (text.trim().isEmpty) {
     throw const SourceImportFailure(SourceImportFailureKind.emptyResponse);
   }
   return jsonDecode(text);
+}
+
+DateTime _boundedRefreshDeadline(
+  DateTime importDeadline,
+  Duration requestLimit,
+) {
+  final requestDeadline = DateTime.now().add(requestLimit);
+  return requestDeadline.isBefore(importDeadline)
+      ? requestDeadline
+      : importDeadline;
+}
+
+Duration _remainingRefreshDeadline(DateTime deadline) {
+  final remaining = deadline.difference(DateTime.now());
+  if (remaining <= Duration.zero) throw TimeoutException('refresh-timeout');
+  return remaining;
 }
 
 void _m3uRefreshWorker(Map<String, Object?> args) async {
@@ -971,12 +1029,14 @@ class SourceCatalogDatabase {
     required String serverUrl,
     required String username,
     required String password,
+    Duration requestLimit = _requestLimit,
   }) async => XtreamRefreshImport.start(
     path: await resolvedPath(),
     sourceId: sourceId,
     serverUrl: serverUrl,
     username: username,
     password: password,
+    requestLimit: requestLimit,
   );
 
   Future<SourceOperationRecord?> loadSourceOperation(String sourceId) async {

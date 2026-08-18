@@ -7,6 +7,7 @@ import 'package:wabbit_tv/src/features/sources/credential_store.dart';
 import 'package:wabbit_tv/src/features/sources/source_catalog_database.dart';
 import 'package:wabbit_tv/src/features/sources/source_models.dart';
 import 'package:wabbit_tv/src/features/sources/source_setup_controller.dart';
+import 'package:wabbit_tv/src/features/sources/xtream_connector.dart';
 
 void main() {
   test('Xtream refresh is idempotent, retires missing rows, and roster rename is local', () async {
@@ -95,7 +96,9 @@ void main() {
         } else {
           final action = request.uri.queryParameters['action'];
           request.response.write(
-            action!.contains('categories')
+            action == null
+                ? '{"user_info":{"auth":1}}'
+                : action.contains('categories')
                 ? '[]'
                 : '[{"stream_id":"one","name":"One"}]',
           );
@@ -121,6 +124,128 @@ void main() {
       expect(source['last_error'], 'authentication');
     },
   );
+
+  test(
+    'Xtream refresh authenticates before accepting empty media stages',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        final action = request.uri.queryParameters['action'];
+        request.response.write(
+          action == null ? '{"user_info":{"auth":0}}' : '[]',
+        );
+        await request.response.close();
+      });
+      final fixture = await _XtreamFixture.create(server, id: 'expired');
+      addTearDown(fixture.dispose);
+
+      await fixture.controller.refreshManagedSource('expired');
+
+      expect(
+        fixture.controller.failure,
+        SourceImportFailureKind.authentication,
+      );
+      expect(
+        fixture.db.select(
+          'SELECT COUNT(*) AS count FROM catalog_items WHERE source_id = ? AND available = 1',
+          ['expired'],
+        ).single['count'],
+        1,
+      );
+      expect(
+        fixture.db.select(
+          'SELECT refresh_state, last_error FROM sources WHERE id = ?',
+          ['expired'],
+        ).single,
+        containsPair('last_error', 'authentication'),
+      );
+    },
+  );
+
+  test('Xtream refresh bounds a stalled response body', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = server.listen((request) {
+      final action = request.uri.queryParameters['action'];
+      if (action == null) {
+        request.response.write('{"user_info":{"auth":1}}');
+        unawaited(request.response.close());
+        return;
+      }
+      if (action == 'get_live_categories') {
+        request.response.write('[');
+        unawaited(request.response.flush());
+        return;
+      }
+      request.response.write('[]');
+      unawaited(request.response.close());
+    });
+    addTearDown(() async {
+      await server.close(force: true);
+      await requests.cancel();
+    });
+    final dir = await Directory.systemTemp.createTemp(
+      'wabbit-xtream-body-deadline-',
+    );
+    addTearDown(() => dir.delete(recursive: true));
+    final path = '${dir.path}${Platform.pathSeparator}catalog.sqlite';
+    final database = SourceCatalogDatabase(databasePath: path);
+    const source = SourceDefinition(
+      id: 'deadline',
+      name: 'Deadline',
+      serverUrl: 'http://placeholder.invalid',
+      username: 'u',
+      password: 'p',
+      credentialKey: 'key',
+    );
+    await database.commitInitialSource(source, [
+      const ImportedStage(
+        kind: SourceMediaKind.live,
+        categories: [],
+        items: [
+          ImportedCatalogItem(
+            providerKey: 'old',
+            title: 'Old',
+            categoryKey: null,
+            playbackRef: 'old',
+          ),
+        ],
+      ),
+    ]);
+    final refresh = await database.beginXtreamRefresh(
+      sourceId: source.id,
+      serverUrl: 'http://${server.address.address}:${server.port}',
+      username: source.username,
+      password: source.password,
+      requestLimit: const Duration(milliseconds: 100),
+    );
+
+    await expectLater(
+      refresh.completed.timeout(const Duration(seconds: 3)),
+      throwsA(
+        isA<SourceImportFailure>().having(
+          (error) => error.kind,
+          'kind',
+          SourceImportFailureKind.timedOut,
+        ),
+      ),
+    );
+    final db = sqlite3.open(path);
+    addTearDown(db.close);
+    expect(
+      db.select(
+        'SELECT COUNT(*) AS count FROM catalog_items WHERE source_id = ? AND available = 1',
+        [source.id],
+      ).single['count'],
+      1,
+    );
+    expect(
+      db.select('SELECT refresh_state, last_error FROM sources WHERE id = ?', [
+        source.id,
+      ]).single,
+      containsPair('last_error', 'timedOut'),
+    );
+  });
 
   test(
     'Xtream refresh accepts empty stages and retires their old items',

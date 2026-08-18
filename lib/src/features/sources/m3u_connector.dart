@@ -38,7 +38,7 @@ class M3uConnector {
       return parseBytes(
         await _readBounded(response, isCancelled),
         sourceId: sourceId,
-        baseUri: url,
+        baseUri: _finalResponseUri(url, response.redirects),
         isCancelled: isCancelled,
       );
     } on SourceImportFailure {
@@ -191,6 +191,14 @@ class M3uConnector {
       throw const SourceImportFailure(SourceImportFailureKind.cancelled);
     }
   }
+}
+
+Uri _finalResponseUri(Uri requested, List<RedirectInfo> redirects) {
+  var current = requested;
+  for (final redirect in redirects) {
+    current = current.resolveUri(redirect.location);
+  }
+  return current;
 }
 
 class _Entry {

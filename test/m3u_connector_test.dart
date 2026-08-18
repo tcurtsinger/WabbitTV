@@ -161,6 +161,42 @@ https://stream.example/later
     );
   });
 
+  test('resolves relative entries against the final redirected URL', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    server.listen((request) async {
+      if (request.uri.path == '/original/fixture.m3u') {
+        request.response
+          ..statusCode = HttpStatus.found
+          ..headers.set(
+            HttpHeaders.locationHeader,
+            '/redirected/lists/fixture.m3u',
+          );
+      } else {
+        request.response.write(
+          '#EXTINF:-1 tvg-id="redirected",Redirected\n'
+          '../streams/channel.m3u8\n',
+        );
+      }
+      await request.response.close();
+    });
+    final original = Uri.parse(
+      'http://${server.address.address}:${server.port}/original/fixture.m3u',
+    );
+
+    final stage = await connector.importUrl(
+      url: original,
+      sourceId: 'redirect-source',
+    );
+    final ref =
+        jsonDecode(stage.items.single.playbackRef) as Map<String, dynamic>;
+
+    expect(
+      ref['url'],
+      'http://${server.address.address}:${server.port}/redirected/streams/channel.m3u8',
+    );
+  });
+
   test('bounds, cancellation, and failures are redacted', () async {
     final tooSmall = M3uConnector(maxBytes: 8);
     expect(
