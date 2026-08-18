@@ -105,6 +105,20 @@ class SourceSetupController extends ChangeNotifier {
       Map.unmodifiable(_stages);
   bool get busy => isImporting || isCancelling;
 
+  /// Starts a new-source presentation without discarding the persisted source
+  /// that still drives Home and the active catalog.
+  bool prepareForAddSource() {
+    if (busy) return false;
+    ++_operation;
+    ready = null;
+    fieldErrors = const {};
+    failure = null;
+    isCancelling = false;
+    _resetStages();
+    _notify();
+    return true;
+  }
+
   /// Shell startup calls this once. A pending DB row cannot survive a crashed
   /// first import, and a ready row drives the production Home state.
   Future<void> initialize() async {

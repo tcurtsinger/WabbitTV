@@ -101,6 +101,49 @@ void main() {
   );
 
   testWidgets(
+    'Add source clears prior ready presentation without clearing persisted truth',
+    (tester) async {
+      final controller = _ShellSourceController()
+        ..ready = const SourceReady(
+          counts: {
+            SourceMediaKind.live: 4,
+            SourceMediaKind.movies: 5,
+            SourceMediaKind.series: 6,
+          },
+        )
+        ..persisted = const PersistedSource(
+          id: 'primary',
+          name: 'Primary',
+          credentialKey: 'primary-key',
+          counts: {
+            SourceMediaKind.live: 4,
+            SourceMediaKind.movies: 5,
+            SourceMediaKind.series: 6,
+          },
+        );
+      addTearDown(controller.dispose);
+      await tester.binding.setSurfaceSize(const Size(1265, 713));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(_shell(controller));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('source-action-Add source')).first,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Source ready'), findsNothing);
+      expect(find.text('Source details'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('source-field-Source name')),
+        findsOneWidget,
+      );
+      expect(controller.ready, isNull);
+      expect(controller.persisted?.id, 'primary');
+    },
+  );
+
+  testWidgets(
     'Edit prefills, saves, returns to the selected row, and cancel never hangs',
     (tester) async {
       final controller = _ShellSourceController();

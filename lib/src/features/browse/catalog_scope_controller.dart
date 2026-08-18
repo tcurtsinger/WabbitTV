@@ -46,10 +46,13 @@ class CatalogScopeController extends ChangeNotifier {
   final CatalogScopePort port;
   List<SourceRosterEntry> _sources = const [];
   LibraryScope _scope = const LibraryScope.all();
+  LibraryScope? _lastPersistedScope;
   Object? _error;
   String? _announcement;
   Future<void>? _initializing;
   Future<void>? _reloading;
+  Future<void> _selectionTail = Future<void>.value();
+  int _selectionRequest = 0;
   bool _loading = true;
   int _revision = 0;
 
@@ -131,6 +134,7 @@ class CatalogScopeController extends ChangeNotifier {
       }
       _sources = enabled;
       _scope = loadedScope;
+      _lastPersistedScope = loadedScope;
       _loading = false;
       _error = null;
       if (!initialLoad &&
@@ -163,13 +167,24 @@ class CatalogScopeController extends ChangeNotifier {
         source.counts.values.any((count) => count > 0);
   }
 
-  Future<void> select(LibraryScope requested) async {
+  Future<void> select(LibraryScope requested) {
+    final request = ++_selectionRequest;
+    final selection = _selectionTail.then(
+      (_) => _saveSelection(requested, request),
+    );
+    _selectionTail = selection;
+    return selection;
+  }
+
+  Future<void> _saveSelection(LibraryScope requested, int request) async {
     final sourceId = requested.sourceId;
     final canSelect =
         sourceId == null || _sources.any((source) => source.id == sourceId);
     final desired = canSelect ? requested : const LibraryScope.all();
     try {
       final saved = await port.saveCatalogScope(desired);
+      _lastPersistedScope = saved;
+      if (request != _selectionRequest) return;
       _scope = saved;
       _error = null;
       if (sourceId != null && saved.sourceId != sourceId) {
@@ -180,6 +195,12 @@ class CatalogScopeController extends ChangeNotifier {
       _revision++;
       notifyListeners();
     } catch (_) {
+      if (request != _selectionRequest) return;
+      final persisted = _lastPersistedScope;
+      if (persisted != null && persisted.sourceId != _scope.sourceId) {
+        _scope = persisted;
+        _revision++;
+      }
       _error = Object();
       _announcement = 'Could not change source. Try again.';
       notifyListeners();

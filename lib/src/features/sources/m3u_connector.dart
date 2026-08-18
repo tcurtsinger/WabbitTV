@@ -26,17 +26,18 @@ class M3uConnector {
     HttpClient? httpClient,
   }) async {
     _throwIfCancelled(isCancelled);
+    final deadline = DateTime.now().add(requestTimeout);
     final client = httpClient ?? HttpClient();
     final ownsClient = httpClient == null;
     try {
-      final request = await client.getUrl(url).timeout(requestTimeout);
+      final request = await client.getUrl(url).timeout(_remaining(deadline));
       _throwIfCancelled(isCancelled);
-      final response = await request.close().timeout(requestTimeout);
+      final response = await request.close().timeout(_remaining(deadline));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw const SourceImportFailure(SourceImportFailureKind.unreachable);
       }
       return parseBytes(
-        await _readBounded(response, isCancelled),
+        await _readBounded(response, isCancelled, deadline: deadline),
         sourceId: sourceId,
         baseUri: _finalResponseUri(url, response.redirects),
         isCancelled: isCancelled,
@@ -68,13 +69,14 @@ class M3uConnector {
     bool Function()? isCancelled,
   }) async {
     _throwIfCancelled(isCancelled);
+    final deadline = DateTime.now().add(requestTimeout);
     try {
       final file = File(path);
-      if (await file.length() > maxBytes) {
+      if (await file.length().timeout(_remaining(deadline)) > maxBytes) {
         throw const SourceImportFailure(SourceImportFailureKind.tooLarge);
       }
       return parseBytes(
-        await _readBounded(file.openRead(), isCancelled),
+        await _readBounded(file.openRead(), isCancelled, deadline: deadline),
         sourceId: sourceId,
         isCancelled: isCancelled,
       );
@@ -165,25 +167,75 @@ class M3uConnector {
 
   Future<Uint8List> _readBounded(
     Stream<List<int>> stream,
-    bool Function()? isCancelled,
-  ) async {
+    bool Function()? isCancelled, {
+    required DateTime deadline,
+  }) async {
     final bytes = BytesBuilder(copy: false);
+    final result = Completer<Uint8List>();
+    StreamSubscription<List<int>>? subscription;
+    Timer? deadlineTimer;
+
+    void fail(Object error, StackTrace stackTrace) {
+      if (result.isCompleted) return;
+      deadlineTimer?.cancel();
+      result.completeError(error, stackTrace);
+      final cancellation = subscription?.cancel();
+      if (cancellation != null) unawaited(cancellation);
+    }
+
     try {
-      await for (final chunk in stream.timeout(requestTimeout)) {
-        _throwIfCancelled(isCancelled);
-        if (bytes.length + chunk.length > maxBytes) {
-          throw const SourceImportFailure(SourceImportFailureKind.tooLarge);
-        }
-        bytes.add(chunk);
+      final remaining = _remaining(deadline);
+      subscription = stream.listen(
+        (chunk) {
+          try {
+            _throwIfCancelled(isCancelled);
+            if (bytes.length + chunk.length > maxBytes) {
+              throw const SourceImportFailure(SourceImportFailureKind.tooLarge);
+            }
+            bytes.add(chunk);
+          } catch (error, stackTrace) {
+            fail(error, stackTrace);
+          }
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          fail(error, stackTrace);
+        },
+        onDone: () {
+          if (result.isCompleted) return;
+          deadlineTimer?.cancel();
+          try {
+            _throwIfCancelled(isCancelled);
+            result.complete(bytes.takeBytes());
+          } catch (error, stackTrace) {
+            fail(error, stackTrace);
+          }
+        },
+      );
+      if (!result.isCompleted) {
+        deadlineTimer = Timer(remaining, () {
+          fail(
+            TimeoutException('M3U acquisition exceeded its deadline.'),
+            StackTrace.current,
+          );
+        });
       }
+      return await result.future;
     } on SourceImportFailure {
       rethrow;
     } on TimeoutException {
       _throwIfCancelled(isCancelled);
       throw const SourceImportFailure(SourceImportFailureKind.timedOut);
+    } finally {
+      deadlineTimer?.cancel();
     }
-    _throwIfCancelled(isCancelled);
-    return bytes.takeBytes();
+  }
+
+  Duration _remaining(DateTime deadline) {
+    final remaining = deadline.difference(DateTime.now());
+    if (remaining <= Duration.zero) {
+      throw TimeoutException('M3U acquisition exceeded its deadline.');
+    }
+    return remaining;
   }
 
   void _throwIfCancelled(bool Function()? isCancelled) {
