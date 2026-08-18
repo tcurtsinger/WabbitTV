@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "option": "A — Source Directory + Detail Ledger",
+  "target": "lib/src/features/sources/source_setup_screen.dart",
+  "mode": "Operate",
+  "direction": "Quiet Broadcast — Source Directory + Detail Ledger",
+  "prompt": "Quiet Broadcast Source Management composition A: 1265x713 Windows landscape with native title bar, collapsed 72px rail, Sources heading with quiet outlined Add source global action, compact source roster at left, selected source detail ledger at right, truthful fixture labels/counts, Refresh/Edit/Disable/Remove actions, and crisp amber Refresh focus. No real provider names or credentials; no gradients, glass, hero, or storefront.",
+  "status": "confirmed",
+  "userDecisions": {
+    "date": "2026-08-17",
+    "topology": "A — Source Directory + Detail Ledger",
+    "editBehavior": "Save and refresh immediately"
+  },
+  "visualConfirmation": {
+    "status": "confirmed",
+    "date": "2026-08-17",
+    "note": "The user explicitly confirmed this first-viewport composition after the quiet outlined Add source action was added."
+  },
+  "fixtureData": {
+    "selectedSourceName": "Home provider",
+    "secondarySourceName": "Weekend playlist",
+    "selectedConnector": "Xtream",
+    "secondaryConnector": "M3U URL",
+    "counts": {
+      "Live": 56712,
+      "Movies": 176792,
+      "Series": 47253
+    }
+  }
+}

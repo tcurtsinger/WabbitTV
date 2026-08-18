@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "option": "A — One mixed Live/Movie/Series ledger",
+  "target": "lib/src/features/search/local_search_screen.dart",
+  "mode": "Operate",
+  "direction": "Quiet Broadcast — Local Mixed Search Ledger",
+  "prompt": "Quiet Broadcast Phase 2 local Search composition at 1265x713: native Windows frame, collapsed 72px rail, shared All sources header scope menu, one clear focused search field with Clear action, one bounded compact ledger mixing Live, Movie, and Series rows, source labels in All sources, small synthetic thumbnails, and no empty-query content dump, tabs, chips, hero, storefront, gradient, glass, or glow.",
+  "status": "confirmed",
+  "generatedAt": "2026-08-17",
+  "userDecisions": {
+    "date": "2026-08-17",
+    "catalogScope": "1A — Header scope menu",
+    "searchResults": "2A — One mixed Live/Movie/Series ledger",
+    "remoteTextEntry": "3A — Minimal in-app TV keyboard"
+  },
+  "visualConfirmation": {
+    "status": "confirmed",
+    "note": "The user explicitly confirmed this first-viewport composition on 2026-08-17."
+  },
+  "fixtureData": {
+    "synthetic": true,
+    "query": "harbor",
+    "scope": "All sources",
+    "sourceNames": [
+      "Harbor North",
+      "Weekend List",
+      "Family Room"
+    ],
+    "resultKinds": [
+      "Live",
+      "Movie",
+      "Series"
+    ],
+    "visibleResultCount": 7
+  },
+  "literalCautions": "Every query, title, source name, thumbnail, count, and result order is synthetic composition evidence. A blank query shows only restrained guidance and never dumps catalog content."
+}

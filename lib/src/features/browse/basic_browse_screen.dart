@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../sources/credential_store.dart';
 import '../sources/source_catalog_database.dart';
 import '../sources/source_models.dart';
+import 'catalog_scope_controller.dart';
 import 'minimal_continuations.dart';
 import 'playback_handoff.dart';
 import 'series_info_loader.dart';
@@ -38,7 +39,23 @@ abstract interface class BasicBrowseData {
   });
 }
 
-class DatabaseBasicBrowseData implements BasicBrowseData {
+/// Bounded unified-library queries used only when the global scope is All
+/// sources. Keeping this separate preserves the Phase 1 named-source seam.
+abstract interface class ScopedBrowseData {
+  Future<LibraryPage> browseLibraryPage({
+    required LibraryScope scope,
+    required SourceMediaKind kind,
+    BrowseCursor? cursor,
+    int limit,
+  });
+
+  Future<int> countLibraryItems({
+    required LibraryScope scope,
+    required SourceMediaKind kind,
+  });
+}
+
+class DatabaseBasicBrowseData implements BasicBrowseData, ScopedBrowseData {
   const DatabaseBasicBrowseData(this.database);
 
   final SourceCatalogDatabase database;
@@ -63,22 +80,49 @@ class DatabaseBasicBrowseData implements BasicBrowseData {
     cursor: cursor,
     limit: limit,
   );
+
+  @override
+  Future<LibraryPage> browseLibraryPage({
+    required LibraryScope scope,
+    required SourceMediaKind kind,
+    BrowseCursor? cursor,
+    int limit = 100,
+  }) => database.browseLibraryPage(
+    scope: scope,
+    kind: kind,
+    cursor: cursor,
+    limit: limit,
+  );
+
+  @override
+  Future<int> countLibraryItems({
+    required LibraryScope scope,
+    required SourceMediaKind kind,
+  }) => database.countLibraryItems(scope: scope, kind: kind);
 }
 
 /// Keeps only practical browse position while the shell changes destinations.
 class BasicBrowseSession {
-  final Map<SourceMediaKind, _BrowseBookmark> _bookmarks = {};
+  final Map<String, _BrowseBookmark> _bookmarks = {};
 
-  _BrowseBookmark _bookmarkFor(SourceMediaKind kind) =>
-      _bookmarks.putIfAbsent(kind, _BrowseBookmark.new);
+  _BrowseBookmark _bookmarkFor(SourceMediaKind kind, LibraryScope scope) {
+    final sourceKey = scope.sourceId ?? 'all';
+    return _bookmarks.putIfAbsent(
+      '${kind.name}:$sourceKey',
+      _BrowseBookmark.new,
+    );
+  }
 }
 
 class _BrowseBookmark {
   BrowseCategorySelection selection = const BrowseCategorySelection.all();
   String? focusedItemId;
   double scrollOffset = 0;
-  String? sourceId;
   List<BrowseCatalogItem> items = const [];
+  Map<String, String> sourceNames = const {};
+  List<BrowseCategorySummary> categories = const [];
+  int? total;
+  int? controllerRevision;
   BrowseCursor? nextCursor;
 }
 
@@ -92,6 +136,8 @@ class BasicBrowseScreen extends StatefulWidget {
     required this.onOpenRail,
     required this.session,
     this.data,
+    this.scopedData,
+    this.scopeController,
     this.onOpenSourceSetup,
     this.onItemActivated,
     this.onPlaybackHandoff,
@@ -106,6 +152,8 @@ class BasicBrowseScreen extends StatefulWidget {
   final VoidCallback onOpenRail;
   final BasicBrowseSession session;
   final BasicBrowseData? data;
+  final ScopedBrowseData? scopedData;
+  final CatalogScopeController? scopeController;
   final VoidCallback? onOpenSourceSetup;
 
   /// Legacy browse notification kept only for the existing shell tests.
@@ -124,10 +172,12 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
   final FocusNode _categoryLauncherFocus = FocusNode(
     debugLabel: 'browse categories launcher',
   );
+  final FocusNode _scopeFocus = FocusNode(debugLabel: 'catalog scope');
   final ScrollController _itemsScroll = ScrollController();
   final ScrollController _categoriesScroll = ScrollController();
   final Map<int, FocusNode> _categoryNodes = {};
   final Map<String, FocusNode> _itemNodes = {};
+  final Map<String, FocusNode> _scopeNodes = {};
   List<BrowseCategorySummary>? _categories;
   List<BrowseCatalogItem> _items = const [];
   BrowseCursor? _nextCursor;
@@ -137,62 +187,151 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
   bool _pageError = false;
   bool _restoringCachedFocus = false;
   bool _categoryOverlay = false;
+  bool _scopeMenu = false;
   int _request = 0;
   int _seriesRequest = 0;
   _BrowseContinuation? _continuation;
   late BasicBrowseData _data;
+  late ScopedBrowseData _scopedData;
   late SeriesInfoLoader _seriesInfoLoader;
   late _BrowseBookmark _bookmark;
+  LibraryScope _activeScope = const LibraryScope.all();
+  PersistedSource? _activeSource;
+  int _scopeRevision = -1;
+  int? _total;
 
   @override
   void initState() {
     super.initState();
     _data =
         widget.data ?? const DatabaseBasicBrowseData(SourceCatalogDatabase());
+    _scopedData =
+        widget.scopedData ??
+        const DatabaseBasicBrowseData(SourceCatalogDatabase());
     _seriesInfoLoader =
         widget.seriesInfoLoader ??
         XtreamSeriesInfoLoader(credentialStore: widget.credentialStore);
-    _bookmark = widget.session._bookmarkFor(widget.kind);
+    _activeScope =
+        widget.scopeController?.scope ??
+        (widget.source == null
+            ? const LibraryScope.all()
+            : LibraryScope.source(widget.source!.id));
+    _activeSource = widget.source;
+    _bookmark = widget.session._bookmarkFor(widget.kind, _activeScope);
     _restoringCachedFocus =
         _bookmark.items.isNotEmpty && _bookmark.focusedItemId != null;
     _itemsScroll.addListener(_maybeLoadMore);
-    _loadCatalog(resetSelection: false);
+    final scopeController = widget.scopeController;
+    if (scopeController == null) {
+      _loadCatalog(resetSelection: false);
+    } else {
+      scopeController.addListener(_onScopeStateChanged);
+      unawaited(scopeController.initialize());
+      if (scopeController.initialized) _onScopeStateChanged();
+    }
   }
 
   @override
   void didUpdateWidget(covariant BasicBrowseScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.scopeController != widget.scopeController) {
+      oldWidget.scopeController?.removeListener(_onScopeStateChanged);
+      widget.scopeController?.addListener(_onScopeStateChanged);
+      unawaited(widget.scopeController?.initialize());
+      _scopeRevision = -1;
+    }
     if (oldWidget.kind != widget.kind ||
-        oldWidget.source?.id != widget.source?.id) {
+        oldWidget.source?.id != widget.source?.id ||
+        oldWidget.scopeController != widget.scopeController) {
+      if (oldWidget.kind != widget.kind) _scopeRevision = -1;
       _cancelSeriesRequest();
       _continuation = null;
       _rememberPosition();
-      _bookmark = widget.session._bookmarkFor(widget.kind);
+      _activeScope =
+          widget.scopeController?.scope ??
+          (widget.source == null
+              ? const LibraryScope.all()
+              : LibraryScope.source(widget.source!.id));
+      _activeSource = widget.source;
+      _bookmark = widget.session._bookmarkFor(widget.kind, _activeScope);
       _items = const [];
       _categories = null;
       _nextCursor = null;
       _error = null;
-      _loadCatalog(resetSelection: false);
+      if (widget.scopeController == null) {
+        _loadCatalog(resetSelection: false);
+      } else {
+        _onScopeStateChanged();
+      }
     }
   }
 
   @override
   void dispose() {
     _cancelSeriesRequest();
+    widget.scopeController?.removeListener(_onScopeStateChanged);
     _rememberPosition();
     _itemsScroll
       ..removeListener(_maybeLoadMore)
       ..dispose();
     _categoriesScroll.dispose();
     _categoryLauncherFocus.dispose();
+    _scopeFocus.dispose();
     for (final node in _categoryNodes.values) {
       node.dispose();
     }
     for (final node in _itemNodes.values) {
       node.dispose();
     }
+    for (final node in _scopeNodes.values) {
+      node.dispose();
+    }
     super.dispose();
   }
+
+  void _onScopeStateChanged() {
+    final controller = widget.scopeController;
+    if (!mounted || controller == null) return;
+    if (!controller.initialized) {
+      setState(() {});
+      return;
+    }
+    if (_scopeRevision == controller.revision &&
+        _sameScope(_activeScope, controller.scope)) {
+      setState(() {});
+      return;
+    }
+    final scopeChanged = !_sameScope(_activeScope, controller.scope);
+    final revisionReload =
+        _scopeRevision >= 0 &&
+        _scopeRevision != controller.revision &&
+        !scopeChanged;
+    final ordinaryScopeNavigation =
+        _scopeRevision >= 0 && scopeChanged && controller.announcement == null;
+    _rememberPosition();
+    _cancelSeriesRequest();
+    _continuation = null;
+    _activeScope = controller.scope;
+    _activeSource = null;
+    _scopeRevision = controller.revision;
+    _bookmark = widget.session._bookmarkFor(widget.kind, _activeScope);
+    // Selecting another scope does not change either scope's catalog data.
+    // Rebase an already-loaded bookmark so ordinary in-session navigation can
+    // restore it, while an older bookmark found on remount still refreshes.
+    if (ordinaryScopeNavigation && _bookmark.items.isNotEmpty) {
+      _bookmark.controllerRevision = controller.revision;
+    }
+    _items = _bookmark.items;
+    _categories = _bookmark.items.isEmpty ? null : _bookmark.categories;
+    _nextCursor = _bookmark.nextCursor;
+    _total = _bookmark.total;
+    _error = null;
+    _restoringCachedFocus =
+        _bookmark.items.isNotEmpty && _bookmark.focusedItemId != null;
+    unawaited(_loadCatalog(resetSelection: false, forceFresh: revisionReload));
+  }
+
+  bool _sameScope(LibraryScope a, LibraryScope b) => a.sourceId == b.sourceId;
 
   void _rememberPosition() {
     if (_itemsScroll.hasClients) {
@@ -200,73 +339,157 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
     }
   }
 
-  Future<void> _loadCatalog({required bool resetSelection}) async {
-    final source = widget.source;
-    if (source == null) {
-      if (mounted) {
-        setState(() {
-          _categories = const [];
-          _items = const [];
-          _error = null;
-          _loading = false;
-        });
-      }
-      return;
-    }
+  Future<void> _loadCatalog({
+    required bool resetSelection,
+    bool forceFresh = false,
+  }) async {
+    final scopeController = widget.scopeController;
+    if (scopeController != null && !scopeController.initialized) return;
     final request = ++_request;
+    final scope = _activeScope;
+    final scopeRevision = scopeController?.revision;
+    final bookmark = _bookmark;
+    final kind = widget.kind;
+    final bookmarkRevisionStale =
+        scopeController != null &&
+        bookmark.items.isNotEmpty &&
+        bookmark.controllerRevision != scopeRevision;
+    final requiresFresh = forceFresh || bookmarkRevisionStale;
+    final allSources = scopeController != null && scope.isAll;
+    var source = scopeController == null ? widget.source : _activeSource;
     setState(() {
       _loading = true;
       _loadingMore = false;
       _pageError = false;
       _error = null;
-    });
-    try {
-      final categories = await _data.browseCategories(
-        sourceId: source.id,
-        kind: widget.kind,
-      );
-      if (!mounted || request != _request) return;
-      if (_bookmark.sourceId != source.id) {
-        _bookmark
-          ..sourceId = source.id
-          ..items = const []
-          ..nextCursor = null
-          ..focusedItemId = null
-          ..scrollOffset = 0
-          ..selection = const BrowseCategorySelection.all();
+      if (requiresFresh) {
+        _items = const [];
+        _categories = null;
+        _nextCursor = null;
+        _total = null;
+        _restoringCachedFocus = false;
       }
-      final selected = _usableSelection(categories, _bookmark.selection);
-      if (resetSelection || selected == null) {
-        _bookmark
+    });
+    if (requiresFresh) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _scopeFocus.requestFocus();
+      });
+    }
+    if (!allSources && source == null && scope.sourceId != null) {
+      source = await scopeController?.resolveReadySource(scope.sourceId!);
+      if (!_catalogRequestIsCurrent(
+        request: request,
+        controller: scopeController,
+        scopeRevision: scopeRevision,
+        scope: scope,
+        bookmark: bookmark,
+      )) {
+        return;
+      }
+      _activeSource = source;
+    }
+    if (!allSources && source == null) {
+      setState(() {
+        _categories = const [];
+        _items = const [];
+        _error = null;
+        _loading = false;
+      });
+      return;
+    }
+    try {
+      final totalFuture = allSources || scopeController != null
+          ? _scopedData.countLibraryItems(scope: scope, kind: kind)
+          : Future<int>.value(source!.counts[kind] ?? 0);
+      final categoriesFuture = allSources
+          ? Future<List<BrowseCategorySummary>>.value(const [])
+          : _data.browseCategories(sourceId: source!.id, kind: kind);
+      final results = await Future.wait<Object>([
+        categoriesFuture,
+        totalFuture,
+      ]);
+      final categories = results[0] as List<BrowseCategorySummary>;
+      final total = results[1] as int;
+      if (!_catalogRequestIsCurrent(
+        request: request,
+        controller: scopeController,
+        scopeRevision: scopeRevision,
+        scope: scope,
+        bookmark: bookmark,
+      )) {
+        return;
+      }
+      bookmark
+        ..categories = categories
+        ..total = total;
+      final selected = allSources
+          ? null
+          : _usableSelection(categories, bookmark.selection);
+      if (!allSources && (resetSelection || selected == null)) {
+        bookmark
           ..selection = const BrowseCategorySelection.all()
           ..items = const []
           ..nextCursor = null
           ..scrollOffset = 0
           ..focusedItemId = null;
-      } else {
-        _bookmark.selection = selected.selection;
+      } else if (selected != null) {
+        bookmark.selection = selected.selection;
       }
-      if (_bookmark.items.isNotEmpty) {
+      if (bookmark.items.isNotEmpty && !requiresFresh) {
         setState(() {
           _categories = categories;
-          _items = _bookmark.items;
-          _nextCursor = _bookmark.nextCursor;
+          _items = bookmark.items;
+          _nextCursor = bookmark.nextCursor;
+          _total = total;
           _loading = false;
         });
-        _restoringCachedFocus = _bookmark.focusedItemId != null;
+        _restoringCachedFocus = bookmark.focusedItemId != null;
         _restoreListPosition(restoreFocus: true);
       } else {
-        setState(() => _categories = categories);
-        await _loadFirstPage(request);
+        setState(() {
+          _categories = categories;
+          _total = total;
+        });
+        await _loadFirstPage(
+          request,
+          controller: scopeController,
+          scopeRevision: scopeRevision,
+          scope: scope,
+          source: source,
+          bookmark: bookmark,
+          kind: kind,
+        );
       }
     } catch (_) {
-      if (!mounted || request != _request) return;
+      if (!_catalogRequestIsCurrent(
+        request: request,
+        controller: scopeController,
+        scopeRevision: scopeRevision,
+        scope: scope,
+        bookmark: bookmark,
+      )) {
+        return;
+      }
       setState(() {
         _loading = false;
         _error = Object();
       });
     }
   }
+
+  bool _catalogRequestIsCurrent({
+    required int request,
+    required CatalogScopeController? controller,
+    required int? scopeRevision,
+    required LibraryScope scope,
+    required _BrowseBookmark bookmark,
+  }) =>
+      mounted &&
+      request == _request &&
+      identical(widget.scopeController, controller) &&
+      identical(_bookmark, bookmark) &&
+      _sameScope(_activeScope, scope) &&
+      (controller == null || controller.revision == scopeRevision);
 
   BrowseCategorySummary? _usableSelection(
     List<BrowseCategorySummary> categories,
@@ -278,29 +501,59 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
     return null;
   }
 
-  Future<void> _loadFirstPage(int request) async {
-    final source = widget.source;
-    if (source == null) return;
+  Future<void> _loadFirstPage(
+    int request, {
+    CatalogScopeController? controller,
+    int? scopeRevision,
+    LibraryScope? scope,
+    PersistedSource? source,
+    _BrowseBookmark? bookmark,
+    SourceMediaKind? kind,
+  }) async {
+    final snapshotScope = scope ?? _activeScope;
+    final snapshotBookmark = bookmark ?? _bookmark;
+    final snapshotKind = kind ?? widget.kind;
+    final snapshotController = controller ?? widget.scopeController;
+    final snapshotRevision = scopeRevision ?? snapshotController?.revision;
+    final snapshotSource = source ?? _activeSource ?? widget.source;
     try {
-      final page = await _data.browsePage(
-        sourceId: source.id,
-        kind: widget.kind,
-        selection: _bookmark.selection,
-        limit: _pageSize,
+      final page = await _readPage(
+        controller: snapshotController,
+        scope: snapshotScope,
+        source: snapshotSource,
+        bookmark: snapshotBookmark,
+        kind: snapshotKind,
       );
-      if (!mounted || request != _request) return;
+      if (!_catalogRequestIsCurrent(
+        request: request,
+        controller: snapshotController,
+        scopeRevision: snapshotRevision,
+        scope: snapshotScope,
+        bookmark: snapshotBookmark,
+      )) {
+        return;
+      }
       setState(() {
         _items = page.items;
         _nextCursor = page.nextCursor;
         _loading = false;
         _pageError = false;
       });
-      _bookmark
+      snapshotBookmark
         ..items = page.items
-        ..nextCursor = page.nextCursor;
+        ..nextCursor = page.nextCursor
+        ..controllerRevision = snapshotRevision;
       _restoreListPosition();
     } catch (_) {
-      if (!mounted || request != _request) return;
+      if (!_catalogRequestIsCurrent(
+        request: request,
+        controller: snapshotController,
+        scopeRevision: snapshotRevision,
+        scope: snapshotScope,
+        bookmark: snapshotBookmark,
+      )) {
+        return;
+      }
       setState(() {
         _loading = false;
         _error = Object();
@@ -315,7 +568,9 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         0.0,
         _itemsScroll.position.maxScrollExtent,
       );
-      if (desired > 0) _itemsScroll.jumpTo(desired);
+      if ((_itemsScroll.offset - desired).abs() > 0.5) {
+        _itemsScroll.jumpTo(desired);
+      }
       if (restoreFocus && _bookmark.focusedItemId != null) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _restoreCachedFocus();
@@ -357,26 +612,37 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
   }
 
   Future<void> _loadMore() async {
-    final source = widget.source;
     final cursor = _nextCursor;
-    if (source == null || cursor == null || _loadingMore) return;
+    if (cursor == null || _loadingMore) return;
     final request = _request;
-    final selection = _bookmark.selection;
+    final controller = widget.scopeController;
+    final scopeRevision = controller?.revision;
+    final scope = _activeScope;
+    final bookmark = _bookmark;
+    final selection = bookmark.selection;
+    final source = _activeSource ?? widget.source;
+    final kind = widget.kind;
     setState(() {
       _loadingMore = true;
       _pageError = false;
     });
     try {
-      final page = await _data.browsePage(
-        sourceId: source.id,
-        kind: widget.kind,
-        selection: _bookmark.selection,
+      final page = await _readPage(
+        controller: controller,
+        scope: scope,
+        source: source,
+        bookmark: bookmark,
+        kind: kind,
         cursor: cursor,
-        limit: _pageSize,
       );
-      if (!mounted ||
-          request != _request ||
-          !_sameSelection(selection, _bookmark.selection)) {
+      if (!_catalogRequestIsCurrent(
+            request: request,
+            controller: controller,
+            scopeRevision: scopeRevision,
+            scope: scope,
+            bookmark: bookmark,
+          ) ||
+          !_sameSelection(selection, bookmark.selection)) {
         return;
       }
       setState(() {
@@ -384,13 +650,19 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         _nextCursor = page.nextCursor;
         _loadingMore = false;
       });
-      _bookmark
+      bookmark
         ..items = _items
-        ..nextCursor = page.nextCursor;
+        ..nextCursor = page.nextCursor
+        ..controllerRevision = scopeRevision;
     } catch (_) {
-      if (!mounted ||
-          request != _request ||
-          !_sameSelection(selection, _bookmark.selection)) {
+      if (!_catalogRequestIsCurrent(
+            request: request,
+            controller: controller,
+            scopeRevision: scopeRevision,
+            scope: scope,
+            bookmark: bookmark,
+          ) ||
+          !_sameSelection(selection, bookmark.selection)) {
         return;
       }
       setState(() {
@@ -398,6 +670,50 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         _pageError = true;
       });
     }
+  }
+
+  Future<BrowsePage> _readPage({
+    required CatalogScopeController? controller,
+    required LibraryScope scope,
+    required PersistedSource? source,
+    required _BrowseBookmark bookmark,
+    required SourceMediaKind kind,
+    BrowseCursor? cursor,
+  }) async {
+    if (controller != null && scope.isAll) {
+      final page = await _scopedData.browseLibraryPage(
+        scope: scope,
+        kind: kind,
+        cursor: cursor,
+        limit: _pageSize,
+      );
+      final names = Map<String, String>.of(bookmark.sourceNames);
+      final items = page.items
+          .map((item) {
+            names[item.libraryItemId] = item.sourceDisplayName;
+            return BrowseCatalogItem(
+              id: item.libraryItemId,
+              sourceId: item.sourceId,
+              kind: item.kind,
+              title: item.title,
+              artworkLocator: item.artworkLocator,
+              playbackRef: item.playbackRef,
+            );
+          })
+          .toList(growable: false);
+      bookmark.sourceNames = Map.unmodifiable(names);
+      return BrowsePage(items: items, nextCursor: page.nextCursor);
+    }
+    if (source == null) {
+      throw StateError('No ready source for named catalog scope.');
+    }
+    return _data.browsePage(
+      sourceId: source.id,
+      kind: kind,
+      selection: bookmark.selection,
+      cursor: cursor,
+      limit: _pageSize,
+    );
   }
 
   Future<void> _chooseCategory(BrowseCategorySummary category) async {
@@ -479,7 +795,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
     _focusVirtualRow(
       controller: _itemsScroll,
       index: index,
-      rowExtent: 60,
+      rowExtent: _itemRowExtent,
       node: _itemFocus(_items[index], index),
     );
   }
@@ -597,9 +913,12 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
   }
 
   Future<void> _loadSeries(BrowseCatalogItem item) async {
-    final source = widget.source;
-    if (source == null) return;
     final request = ++_seriesRequest;
+    var source = _activeSource ?? widget.source;
+    if (source?.id != item.sourceId) {
+      source = await widget.scopeController?.resolveReadySource(item.sourceId);
+    }
+    if (!mounted || request != _seriesRequest || source == null) return;
     setState(() {
       _continuation = _SeriesBrowseContinuation(item: item, loading: true);
     });
@@ -709,12 +1028,86 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
   bool _sameSelection(BrowseCategorySelection a, BrowseCategorySelection b) =>
       a.kind == b.kind && a.sourceGroupId == b.sourceGroupId;
 
+  double get _itemRowExtent {
+    final scaled = MediaQuery.textScalerOf(context).scale(16);
+    return 60 + ((scaled - 16).clamp(0, 16) * 1.25);
+  }
+
+  double get _categoryRowExtent {
+    final scaled = MediaQuery.textScalerOf(context).scale(15);
+    return 48 + ((scaled - 15).clamp(0, 15) * 1.2);
+  }
+
+  FocusNode _scopeOptionFocus(String? sourceId) => _scopeNodes.putIfAbsent(
+    sourceId ?? 'all',
+    () => FocusNode(debugLabel: 'catalog scope ${sourceId ?? 'all'}'),
+  );
+
+  void _openScopeMenu() {
+    final controller = widget.scopeController;
+    if (controller == null || controller.sources.isEmpty || _scopeMenu) return;
+    setState(() => _scopeMenu = true);
+  }
+
+  void _dismissScopeMenu() {
+    if (!_scopeMenu) return;
+    setState(() => _scopeMenu = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _scopeFocus.requestFocus();
+    });
+  }
+
+  Future<void> _chooseScope(LibraryScope scope) async {
+    final controller = widget.scopeController;
+    if (controller == null) return;
+    setState(() => _scopeMenu = false);
+    _scopeFocus.requestFocus();
+    await controller.select(scope);
+    if (mounted) _scopeFocus.requestFocus();
+  }
+
+  void _focusFromScope({required bool narrow}) {
+    if (_activeScope.isAll) {
+      if (_items.isNotEmpty) _focusFirstItem();
+      return;
+    }
+    if (narrow) {
+      _categoryLauncherFocus.requestFocus();
+    } else {
+      _focusSelectedCategory(rowExtent: _categoryRowExtent);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final continuation = _continuation;
     if (continuation != null) return _buildContinuation(continuation);
-    final source = widget.source;
-    if (source == null) {
+    final scopeController = widget.scopeController;
+    if (scopeController != null &&
+        scopeController.loading &&
+        scopeController.sources.isEmpty &&
+        _items.isEmpty) {
+      return _ScopeLoading(kind: widget.kind);
+    }
+    if (scopeController != null &&
+        scopeController.error != null &&
+        scopeController.sources.isEmpty) {
+      return _BrowseMessage(
+        title: 'Catalog unavailable',
+        message: 'Could not load the local source list. Try again.',
+        actionLabel: 'Try again',
+        focusNode: widget.initialFocus,
+        onFocused: widget.onContentFocus,
+        onLeft: widget.onOpenRail,
+        onPressed: () => unawaited(scopeController.refresh()),
+      );
+    }
+    final allSources = scopeController != null && _activeScope.isAll;
+    final source = scopeController == null ? widget.source : _activeSource;
+    final noActiveSources = scopeController != null
+        ? scopeController.sources.isEmpty
+        : source == null;
+    if (noActiveSources) {
       return _BrowseMessage(
         title: 'No source ready',
         message:
@@ -727,7 +1120,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         onPressed: widget.onOpenSourceSetup ?? widget.onOpenRail,
       );
     }
-    if (_error != null) {
+    if (_error != null && _items.isEmpty) {
       return _BrowseMessage(
         title: 'Catalog unavailable',
         message: 'Could not load this local catalog. Try again or check this source in Settings.',
@@ -738,7 +1131,10 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         onPressed: () => _loadCatalog(resetSelection: false),
       );
     }
-    if (_categories != null && _categories!.isEmpty && !_loading) {
+    if (!allSources &&
+        _categories != null &&
+        _categories!.isEmpty &&
+        !_loading) {
       return _BrowseMessage(
         title: 'Catalog not ready',
         message:
@@ -757,6 +1153,13 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
           color: _graphite,
           child: Focus(
             onKeyEvent: (_, event) {
+              if (_scopeMenu &&
+                  event is KeyDownEvent &&
+                  (event.logicalKey == LogicalKeyboardKey.escape ||
+                      event.logicalKey == LogicalKeyboardKey.browserBack)) {
+                _dismissScopeMenu();
+                return KeyEventResult.handled;
+              }
               if (_categoryOverlay &&
                   event is KeyDownEvent &&
                   (event.logicalKey == LogicalKeyboardKey.escape ||
@@ -777,27 +1180,40 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                       children: [
                         _DirectoryHeader(
                           kind: widget.kind,
-                          sourceName: source.name,
-                          total: source.counts[widget.kind] ?? 0,
+                          summary: _headerSummary(
+                            allSources: allSources,
+                            source: source,
+                            controller: scopeController,
+                          ),
                           narrow: narrow,
-                          focusNode: _categoryLauncherFocus,
+                          showCategories: !allSources,
+                          categoryFocusNode: _categoryLauncherFocus,
                           onOpenCategories: () {
                             setState(() => _categoryOverlay = true);
                             WidgetsBinding.instance.addPostFrameCallback((_) {
-                              _focusSelectedCategory(rowExtent: 52);
+                              _focusSelectedCategory(
+                                rowExtent: _categoryRowExtent + 4,
+                              );
                             });
                           },
+                          scopeLabel: scopeController?.scopeLabel,
+                          scopeFocusNode: _scopeFocus,
+                          onOpenScope: _openScopeMenu,
+                          onScopeDown: () => _focusFromScope(narrow: narrow),
                         ),
                         const SizedBox(height: 22),
                         Expanded(
                           child:
                               _categories == null || _loading && _items.isEmpty
-                              ? _DirectorySkeleton(narrow: narrow)
+                              ? _DirectorySkeleton(
+                                  narrow: narrow,
+                                  unified: allSources,
+                                )
                               : Row(
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
                                   children: [
-                                    if (!narrow) ...[
+                                    if (!allSources && !narrow) ...[
                                       SizedBox(
                                         width: 228,
                                         child: _CategoryPane(
@@ -811,8 +1227,13 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                                           onFocusIndex: (index) =>
                                               _focusCategoryAt(
                                                 index,
-                                                rowExtent: 48,
+                                                rowExtent: _categoryRowExtent,
                                               ),
+                                          rowExtent: _categoryRowExtent,
+                                          onUpFromFirst: scopeController == null
+                                              ? null
+                                              : () =>
+                                                    _scopeFocus.requestFocus(),
                                         ),
                                       ),
                                       const SizedBox(width: 20),
@@ -824,7 +1245,10 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                       ],
                     ),
                   ),
-                  if (narrow && _categoryOverlay && _categories != null)
+                  if (!allSources &&
+                      narrow &&
+                      _categoryOverlay &&
+                      _categories != null)
                     Positioned.fill(
                       child: _CategoryOverlay(
                         categories: _categories!,
@@ -834,8 +1258,42 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                         onChoose: _chooseCategory,
                         onDismiss: () =>
                             _dismissCategoryOverlay(toLauncher: true),
-                        onFocusIndex: (index) =>
-                            _focusCategoryAt(index, rowExtent: 52),
+                        onFocusIndex: (index) => _focusCategoryAt(
+                          index,
+                          rowExtent: _categoryRowExtent + 4,
+                        ),
+                        rowExtent: _categoryRowExtent + 4,
+                      ),
+                    ),
+                  if (_scopeMenu && scopeController != null)
+                    Positioned(
+                      top: 74,
+                      right: 32,
+                      width: constraints.maxWidth < 600 ? 220 : 248,
+                      child: _ScopeMenu(
+                        sources: scopeController.sources,
+                        selected: scopeController.scope,
+                        nodes: _scopeOptionFocus,
+                        onChoose: (scope) => unawaited(_chooseScope(scope)),
+                        onDismiss: _dismissScopeMenu,
+                      ),
+                    ),
+                  if (scopeController?.announcement != null)
+                    Positioned(
+                      left: 32,
+                      right: 32,
+                      bottom: 10,
+                      child: Semantics(
+                        liveRegion: true,
+                        label: scopeController!.announcement,
+                        child: Text(
+                          scopeController.announcement!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: _quietText,
+                            fontSize: 13,
+                          ),
+                        ),
                       ),
                     ),
                 ],
@@ -847,7 +1305,21 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
     );
   }
 
+  String _headerSummary({
+    required bool allSources,
+    required PersistedSource? source,
+    required CatalogScopeController? controller,
+  }) {
+    final count = _total == null ? 'Loading' : _formatCount(_total!);
+    if (allSources) {
+      final sourceCount = controller?.sources.length ?? 0;
+      return '$count available across $sourceCount ${sourceCount == 1 ? 'source' : 'sources'}';
+    }
+    return '$count items · ${source?.name ?? controller?.scopeLabel ?? 'Source'}';
+  }
+
   Widget _buildItems() {
+    final allSources = widget.scopeController != null && _activeScope.isAll;
     final selected = _usableSelection(
       _categories ?? const [],
       _bookmark.selection,
@@ -864,6 +1336,16 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         },
       );
     }
+    if (allSources && _items.isEmpty && !_loading) {
+      return _EmptyUnifiedCatalog(
+        kind: widget.kind,
+        focusNode: widget.initialFocus,
+        onFocused: widget.onContentFocus,
+        onLeft: widget.onOpenRail,
+        onChangeScope: _openScopeMenu,
+      );
+    }
+    final itemExtent = _itemRowExtent;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: _surface,
@@ -875,16 +1357,36 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 15, 18, 13),
-            child: Text(
-              selected?.name ?? 'All ${widget.kind.label}',
-              key: const ValueKey('browse-selected-category'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: _warmWhite,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    selected?.name ?? 'All ${widget.kind.label}',
+                    key: const ValueKey('browse-selected-category'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _warmWhite,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (allSources) ...[
+                  const SizedBox(width: 12),
+                  const SizedBox(
+                    width: 170,
+                    child: Text(
+                      'SOURCE',
+                      style: TextStyle(
+                        color: _quietText,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           const Divider(height: 1, color: _line),
@@ -892,7 +1394,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
             child: ListView.builder(
               key: ValueKey('browse-items-${widget.kind.name}'),
               controller: _itemsScroll,
-              itemExtent: 60,
+              itemExtent: itemExtent,
               scrollCacheExtent: const ScrollCacheExtent.pixels(360),
               itemCount: _items.length + (_loadingMore ? 3 : 0),
               itemBuilder: (context, index) {
@@ -920,9 +1422,17 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                     widget.onContentFocus(node);
                   },
                   onLeft: () {
-                    _focusSelectedCategory();
+                    if (allSources) {
+                      widget.onOpenRail();
+                    } else {
+                      _focusSelectedCategory(rowExtent: _categoryRowExtent);
+                    }
                   },
-                  onUp: index == 0 ? null : () => _focusItemAt(index - 1),
+                  onUp: index == 0
+                      ? (widget.scopeController == null
+                            ? null
+                            : () => _scopeFocus.requestFocus())
+                      : () => _focusItemAt(index - 1),
                   onDown: () {
                     if (index + 1 < _items.length) {
                       _focusItemAt(index + 1);
@@ -931,12 +1441,20 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                     }
                   },
                   onActivate: () => _activateItem(item),
+                  sourceName: allSources
+                      ? _bookmark.sourceNames[item.id]
+                      : null,
                 );
               },
             ),
           ),
           if (_pageError)
             _PageErrorFooter(onRetry: () => unawaited(_loadMore())),
+          if (_error != null && _items.isNotEmpty)
+            _PageErrorFooter(
+              label: 'Catalog update failed. Showing the last usable list.',
+              onRetry: () => unawaited(_loadCatalog(resetSelection: false)),
+            ),
         ],
       ),
     );
@@ -976,29 +1494,32 @@ class _FailureContinuation extends _BrowseContinuation {
 class _DirectoryHeader extends StatelessWidget {
   const _DirectoryHeader({
     required this.kind,
-    required this.sourceName,
-    required this.total,
+    required this.summary,
     required this.narrow,
-    required this.focusNode,
+    required this.showCategories,
+    required this.categoryFocusNode,
     required this.onOpenCategories,
+    required this.scopeLabel,
+    required this.scopeFocusNode,
+    required this.onOpenScope,
+    required this.onScopeDown,
   });
 
   final SourceMediaKind kind;
-  final String sourceName;
-  final int total;
+  final String summary;
   final bool narrow;
-  final FocusNode focusNode;
+  final bool showCategories;
+  final FocusNode categoryFocusNode;
   final VoidCallback onOpenCategories;
+  final String? scopeLabel;
+  final FocusNode scopeFocusNode;
+  final VoidCallback onOpenScope;
+  final VoidCallback onScopeDown;
 
   @override
   Widget build(BuildContext context) {
-    final summary = Text(
-      '${_formatCount(total)} items · $sourceName',
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(color: _quietText, fontSize: 14),
-    );
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
           child: Column(
@@ -1006,6 +1527,8 @@ class _DirectoryHeader extends StatelessWidget {
             children: [
               Text(
                 kind.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: _warmWhite,
                   fontSize: 31,
@@ -1014,21 +1537,332 @@ class _DirectoryHeader extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 5),
-              summary,
+              Text(
+                summary,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: _quietText, fontSize: 14),
+              ),
             ],
           ),
         ),
-        if (narrow) ...[
-          const SizedBox(width: 16),
-          _DirectoryButton(
-            label: 'Categories',
-            focusNode: focusNode,
-            onPressed: onOpenCategories,
+        if (scopeLabel != null) ...[
+          SizedBox(width: narrow ? 12 : 16),
+          SizedBox(
+            width: narrow ? 160 : 184,
+            child: _ScopeButton(
+              label: scopeLabel!,
+              focusNode: scopeFocusNode,
+              onPressed: onOpenScope,
+              onDown: onScopeDown,
+            ),
+          ),
+        ],
+        if (narrow && showCategories) ...[
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 108,
+            child: _DirectoryButton(
+              label: 'Categories',
+              focusNode: categoryFocusNode,
+              onPressed: onOpenCategories,
+            ),
           ),
         ],
       ],
     );
   }
+}
+
+class _ScopeButton extends StatefulWidget {
+  const _ScopeButton({
+    required this.label,
+    required this.focusNode,
+    required this.onPressed,
+    required this.onDown,
+  });
+
+  final String label;
+  final FocusNode focusNode;
+  final VoidCallback onPressed;
+  final VoidCallback onDown;
+
+  @override
+  State<_ScopeButton> createState() => _ScopeButtonState();
+}
+
+class _ScopeButtonState extends State<_ScopeButton> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) => Focus(
+    focusNode: widget.focusNode,
+    onFocusChange: (focused) => setState(() => _focused = focused),
+    onKeyEvent: (_, event) {
+      if (event is! KeyDownEvent) return KeyEventResult.ignored;
+      switch (event.logicalKey) {
+        case LogicalKeyboardKey.enter:
+        case LogicalKeyboardKey.select:
+          widget.onPressed();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowDown:
+          widget.onDown();
+          return KeyEventResult.handled;
+        default:
+          return KeyEventResult.ignored;
+      }
+    },
+    child: Semantics(
+      button: true,
+      label: 'Catalog scope, ${widget.label}',
+      child: GestureDetector(
+        onTap: () {
+          widget.focusNode.requestFocus();
+          widget.onPressed();
+        },
+        child: Container(
+          key: const ValueKey('catalog-scope-control'),
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: _surface,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: _focused ? _amber : _line, width: 2),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _warmWhite,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(
+                Icons.keyboard_arrow_down,
+                size: 18,
+                color: _quietText,
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _ScopeMenu extends StatefulWidget {
+  const _ScopeMenu({
+    required this.sources,
+    required this.selected,
+    required this.nodes,
+    required this.onChoose,
+    required this.onDismiss,
+  });
+
+  final List<SourceRosterEntry> sources;
+  final LibraryScope selected;
+  final FocusNode Function(String?) nodes;
+  final ValueChanged<LibraryScope> onChoose;
+  final VoidCallback onDismiss;
+
+  @override
+  State<_ScopeMenu> createState() => _ScopeMenuState();
+}
+
+class _ScopeMenuState extends State<_ScopeMenu> {
+  static const _rowExtent = 48.0;
+  final ScrollController _scrollController = ScrollController();
+
+  List<({LibraryScope scope, String label})> get _choices => [
+    (scope: const LibraryScope.all(), label: 'All sources'),
+    for (final source in widget.sources)
+      (scope: LibraryScope.source(source.id), label: source.name),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final selectedIndex = _choices.indexWhere(
+        (choice) => choice.scope.sourceId == widget.selected.sourceId,
+      );
+      _focusAt(selectedIndex < 0 ? 0 : selectedIndex);
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _focusAt(int index) {
+    final choices = _choices;
+    if (index < 0 || index >= choices.length) return;
+    final node = widget.nodes(choices[index].scope.sourceId);
+
+    void revealThenFocus() {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      final rowStart = 6 + index * _rowExtent;
+      final rowEnd = rowStart + _rowExtent;
+      final visibleStart = _scrollController.offset;
+      final visibleEnd = visibleStart + position.viewportDimension;
+      if (rowStart >= visibleStart && rowEnd <= visibleEnd) {
+        node.requestFocus();
+        return;
+      }
+      final target = (rowStart - (position.viewportDimension - _rowExtent) / 2)
+          .clamp(0.0, position.maxScrollExtent);
+      _scrollController.jumpTo(target);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) node.requestFocus();
+      });
+    }
+
+    if (_scrollController.hasClients) {
+      revealThenFocus();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => revealThenFocus());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final choices = _choices;
+    return Material(
+      key: const ValueKey('catalog-scope-menu'),
+      color: _surface,
+      elevation: 10,
+      shadowColor: Colors.black54,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        constraints: const BoxConstraints(maxHeight: 264),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: _line),
+        ),
+        child: ListView.builder(
+          controller: _scrollController,
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          shrinkWrap: true,
+          itemExtent: 48,
+          itemCount: choices.length,
+          itemBuilder: (context, index) {
+            final choice = choices[index];
+            return _ScopeOptionRow(
+              label: choice.label,
+              selected: widget.selected.sourceId == choice.scope.sourceId,
+              focusNode: widget.nodes(choice.scope.sourceId),
+              onChoose: () => widget.onChoose(choice.scope),
+              onUp: index == 0 ? null : () => _focusAt(index - 1),
+              onDown: index + 1 == choices.length
+                  ? null
+                  : () => _focusAt(index + 1),
+              onDismiss: widget.onDismiss,
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _ScopeOptionRow extends StatefulWidget {
+  const _ScopeOptionRow({
+    required this.label,
+    required this.selected,
+    required this.focusNode,
+    required this.onChoose,
+    required this.onUp,
+    required this.onDown,
+    required this.onDismiss,
+  });
+
+  final String label;
+  final bool selected;
+  final FocusNode focusNode;
+  final VoidCallback onChoose;
+  final VoidCallback? onUp;
+  final VoidCallback? onDown;
+  final VoidCallback onDismiss;
+
+  @override
+  State<_ScopeOptionRow> createState() => _ScopeOptionRowState();
+}
+
+class _ScopeOptionRowState extends State<_ScopeOptionRow> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) => Focus(
+    focusNode: widget.focusNode,
+    onFocusChange: (focused) => setState(() => _focused = focused),
+    onKeyEvent: (_, event) {
+      if (event is! KeyDownEvent) return KeyEventResult.ignored;
+      switch (event.logicalKey) {
+        case LogicalKeyboardKey.arrowUp:
+          widget.onUp?.call();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowDown:
+          widget.onDown?.call();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.enter:
+        case LogicalKeyboardKey.select:
+          widget.onChoose();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.escape:
+        case LogicalKeyboardKey.browserBack:
+          widget.onDismiss();
+          return KeyEventResult.handled;
+        default:
+          return KeyEventResult.ignored;
+      }
+    },
+    child: Semantics(
+      button: true,
+      selected: widget.selected,
+      label: widget.label,
+      child: GestureDetector(
+        onTap: () {
+          widget.focusNode.requestFocus();
+          widget.onChoose();
+        },
+        child: Container(
+          key: ValueKey('catalog-scope-${widget.label}'),
+          margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: widget.selected ? _raised : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: _focused ? _amber : Colors.transparent,
+              width: 2,
+            ),
+          ),
+          alignment: Alignment.centerLeft,
+          child: Text(
+            widget.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: widget.selected ? _warmWhite : _quietText,
+              fontSize: 14,
+              fontWeight: widget.selected ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class _CategoryPane extends StatelessWidget {
@@ -1041,6 +1875,8 @@ class _CategoryPane extends StatelessWidget {
     required this.onOpenRail,
     required this.onRight,
     required this.onFocusIndex,
+    required this.rowExtent,
+    required this.onUpFromFirst,
   });
 
   final List<BrowseCategorySummary> categories;
@@ -1051,6 +1887,8 @@ class _CategoryPane extends StatelessWidget {
   final VoidCallback onOpenRail;
   final VoidCallback onRight;
   final ValueChanged<int> onFocusIndex;
+  final double rowExtent;
+  final VoidCallback? onUpFromFirst;
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
@@ -1074,7 +1912,7 @@ class _CategoryPane extends StatelessWidget {
           child: ListView.builder(
             controller: controller,
             itemCount: categories.length,
-            itemExtent: 48,
+            itemExtent: rowExtent,
             itemBuilder: (context, index) => _CategoryRow(
               category: categories[index],
               selected: _sameCategory(categories[index].selection, selected),
@@ -1082,7 +1920,7 @@ class _CategoryPane extends StatelessWidget {
               onLeft: onOpenRail,
               onRight: onRight,
               onChoose: () => onChoose(categories[index]),
-              onUp: index == 0 ? null : () => onFocusIndex(index - 1),
+              onUp: index == 0 ? onUpFromFirst : () => onFocusIndex(index - 1),
               onDown: index + 1 == categories.length
                   ? null
                   : () => onFocusIndex(index + 1),
@@ -1103,6 +1941,7 @@ class _CategoryOverlay extends StatelessWidget {
     required this.onChoose,
     required this.onDismiss,
     required this.onFocusIndex,
+    required this.rowExtent,
   });
 
   final List<BrowseCategorySummary> categories;
@@ -1112,6 +1951,7 @@ class _CategoryOverlay extends StatelessWidget {
   final ValueChanged<BrowseCategorySummary> onChoose;
   final VoidCallback onDismiss;
   final ValueChanged<int> onFocusIndex;
+  final double rowExtent;
 
   @override
   Widget build(BuildContext context) => Material(
@@ -1166,7 +2006,7 @@ class _CategoryOverlay extends StatelessWidget {
                   child: ListView.builder(
                     controller: controller,
                     itemCount: categories.length,
-                    itemExtent: 52,
+                    itemExtent: rowExtent,
                     itemBuilder: (context, index) => _CategoryRow(
                       category: categories[index],
                       selected: _sameCategory(
@@ -1309,6 +2149,7 @@ class _CatalogRow extends StatefulWidget {
     required this.onUp,
     required this.onDown,
     required this.onActivate,
+    this.sourceName,
   });
   final BrowseCatalogItem item;
   final SourceMediaKind kind;
@@ -1319,6 +2160,7 @@ class _CatalogRow extends StatefulWidget {
   final VoidCallback? onUp;
   final VoidCallback onDown;
   final VoidCallback onActivate;
+  final String? sourceName;
   @override
   State<_CatalogRow> createState() => _CatalogRowState();
 }
@@ -1356,7 +2198,11 @@ class _CatalogRowState extends State<_CatalogRow> {
     },
     child: Semantics(
       button: true,
-      label: '${widget.item.title}, ${widget.kind.label}',
+      label: [
+        widget.item.title,
+        widget.kind.label,
+        if (widget.sourceName != null) widget.sourceName!,
+      ].join(', '),
       child: GestureDetector(
         onTap: () {
           widget.focusNode.requestFocus();
@@ -1390,6 +2236,18 @@ class _CatalogRowState extends State<_CatalogRow> {
                   ),
                 ),
               ),
+              if (widget.sourceName != null) ...[
+                const SizedBox(width: 12),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 170),
+                  child: Text(
+                    widget.sourceName!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: _quietText, fontSize: 13),
+                  ),
+                ),
+              ],
               if (widget.kind != SourceMediaKind.live) ...[
                 const SizedBox(width: 12),
                 const Icon(Icons.chevron_right, size: 19, color: _quietText),
@@ -1430,11 +2288,12 @@ class _Artwork extends StatelessWidget {
 }
 
 class _DirectorySkeleton extends StatelessWidget {
-  const _DirectorySkeleton({required this.narrow});
+  const _DirectorySkeleton({required this.narrow, this.unified = false});
 
   final bool narrow;
+  final bool unified;
   @override
-  Widget build(BuildContext context) => narrow
+  Widget build(BuildContext context) => narrow || unified
       ? const _SkeletonPanel()
       : const Row(
           children: [
@@ -1445,17 +2304,98 @@ class _DirectorySkeleton extends StatelessWidget {
         );
 }
 
+class _ScopeLoading extends StatelessWidget {
+  const _ScopeLoading({required this.kind});
+
+  final SourceMediaKind kind;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: _graphite,
+    child: SafeArea(
+      left: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(32, 22, 32, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        kind.label,
+                        style: const TextStyle(
+                          color: _warmWhite,
+                          fontSize: 31,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.7,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      const Text(
+                        'Loading local catalog',
+                        style: TextStyle(color: _quietText, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Semantics(
+                  liveRegion: true,
+                  label: 'Loading sources',
+                  child: Container(
+                    key: const ValueKey('catalog-scope-loading'),
+                    width: 184,
+                    height: 44,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    alignment: Alignment.centerLeft,
+                    decoration: BoxDecoration(
+                      color: _surface,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: _line),
+                    ),
+                    child: const Text(
+                      'Loading sources…',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: _quietText, fontSize: 14),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 22),
+            const Expanded(
+              child: _DirectorySkeleton(narrow: true, unified: true),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _SkeletonPanel extends StatelessWidget {
   const _SkeletonPanel();
   @override
   Widget build(BuildContext context) => DecoratedBox(
+    key: const ValueKey('browse-skeleton-panel'),
     decoration: BoxDecoration(
       color: _surface,
       border: Border.fromBorderSide(const BorderSide(color: _line)),
       borderRadius: BorderRadius.circular(8),
     ),
-    child: Column(
-      children: [for (var i = 0; i < 7; i++) const _ItemSkeleton()],
+    child: Semantics(
+      label: 'Loading catalog items',
+      child: ListView.builder(
+        physics: const NeverScrollableScrollPhysics(),
+        itemExtent: 60,
+        itemCount: 7,
+        itemBuilder: (_, _) => const _ItemSkeleton(),
+      ),
     ),
   );
 }
@@ -1476,9 +2416,13 @@ class _ItemSkeleton extends StatelessWidget {
 }
 
 class _PageErrorFooter extends StatelessWidget {
-  const _PageErrorFooter({required this.onRetry});
+  const _PageErrorFooter({
+    required this.onRetry,
+    this.label = 'Could not load more items.',
+  });
 
   final VoidCallback onRetry;
+  final String label;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -1489,10 +2433,10 @@ class _PageErrorFooter extends StatelessWidget {
     ),
     child: Row(
       children: [
-        const Expanded(
+        Expanded(
           child: Text(
-            'Could not load more items.',
-            style: TextStyle(color: _quietText, fontSize: 13),
+            label,
+            style: const TextStyle(color: _quietText, fontSize: 13),
           ),
         ),
         TextButton(onPressed: onRetry, child: const Text('Retry')),
@@ -1545,6 +2489,60 @@ class _EmptyCategory extends StatelessWidget {
             onFocused: onFocused,
             onLeft: onLeft,
             onPressed: onReturnToAll,
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _EmptyUnifiedCatalog extends StatelessWidget {
+  const _EmptyUnifiedCatalog({
+    required this.kind,
+    required this.focusNode,
+    required this.onFocused,
+    required this.onLeft,
+    required this.onChangeScope,
+  });
+
+  final SourceMediaKind kind;
+  final FocusNode focusNode;
+  final ValueChanged<FocusNode> onFocused;
+  final VoidCallback onLeft;
+  final VoidCallback onChangeScope;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: _surface,
+      border: Border.all(color: _line),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'No available ${kind.label.toLowerCase()}',
+            style: const TextStyle(
+              color: _warmWhite,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Choose a source to check its provider categories.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: _quietText),
+          ),
+          const SizedBox(height: 18),
+          _DirectoryButton(
+            label: 'Change source',
+            focusNode: focusNode,
+            onFocused: onFocused,
+            onLeft: onLeft,
+            onPressed: onChangeScope,
           ),
         ],
       ),
@@ -1685,6 +2683,8 @@ class _DirectoryButtonState extends State<_DirectoryButton> {
           ),
           child: Text(
             widget.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: widget.primary ? const Color(0xFF17120A) : _warmWhite,
               fontSize: 14,

@@ -133,6 +133,83 @@ class SourceReady {
   final Map<SourceMediaKind, int> counts;
 }
 
+/// A bounded, credential-free summary for source-management callers.
+class SourceRosterEntry {
+  const SourceRosterEntry({
+    required this.id,
+    required this.name,
+    required this.kind,
+    required this.enabled,
+    required this.status,
+    required this.counts,
+  });
+
+  final String id;
+  final String name;
+  final String kind;
+  final bool enabled;
+  final String status;
+  final Map<SourceMediaKind, int> counts;
+}
+
+/// The generation reserved for one in-progress source refresh.
+class SourceRefresh {
+  const SourceRefresh({required this.sourceId, required this.generation});
+
+  final String sourceId;
+  final int generation;
+}
+
+/// Fixed, credential-free reasons allowed in persistent refresh state.
+enum SourceRefreshFailure {
+  authentication,
+  unreachable,
+  emptyResponse,
+  tooLarge,
+  timedOut,
+  cancelled,
+}
+
+/// The library scope is either all active sources or one active source.
+class LibraryScope {
+  const LibraryScope.all() : sourceId = null;
+
+  const LibraryScope.source(this.sourceId);
+
+  final String? sourceId;
+
+  bool get isAll => sourceId == null;
+}
+
+class LibraryCatalogItem {
+  const LibraryCatalogItem({
+    required this.libraryItemId,
+    required this.catalogItemId,
+    required this.sourceId,
+    required this.sourceDisplayName,
+    required this.kind,
+    required this.title,
+    required this.artworkLocator,
+    required this.playbackRef,
+  });
+
+  final String libraryItemId;
+  final String catalogItemId;
+  final String sourceId;
+  final String sourceDisplayName;
+  final SourceMediaKind kind;
+  final String title;
+  final String? artworkLocator;
+  final String playbackRef;
+}
+
+class LibraryPage {
+  const LibraryPage({required this.items, required this.nextCursor});
+
+  final List<LibraryCatalogItem> items;
+  final BrowseCursor? nextCursor;
+}
+
 enum BrowseCategorySelectionKind { all, sourceGroup, uncategorized }
 
 /// The category slice requested from one source and media kind.
@@ -168,7 +245,10 @@ class BrowseCategorySummary {
   final int itemCount;
 }
 
-/// A stable position in a title-ordered catalog page.
+/// A stable position in a title-ordered catalog or library page.
+///
+/// Library queries place the library identity in [id], not the chosen source
+/// variant, so merged identities cannot repeat or be skipped between pages.
 class BrowseCursor {
   const BrowseCursor({required this.normalizedTitle, required this.id});
 
@@ -201,4 +281,99 @@ class BrowsePage {
   final BrowseCursor? nextCursor;
 }
 
+/// A provider category as seen by the local visibility maintenance surface.
+///
+/// [selection] is deliberately the same local category identity that browse
+/// uses.  A null group id therefore represents the truthful Uncategorized
+/// slice; it is not a fabricated provider category.
+class SourceVisibilityCategory {
+  const SourceVisibilityCategory({
+    required this.selection,
+    required this.name,
+    required this.itemCount,
+    required this.hiddenItemCount,
+    required this.isHidden,
+  });
+
+  final BrowseCategorySelection selection;
+  final String name;
+  final int itemCount;
+  final int hiddenItemCount;
+  final bool isHidden;
+}
+
+/// One bounded page of provider visibility categories. The cursor is based on
+/// the same stable sort key and local group id used by the directory query.
+class SourceVisibilityCategoryPage {
+  const SourceVisibilityCategoryPage({
+    required this.categories,
+    required this.nextCursor,
+  });
+
+  final List<SourceVisibilityCategory> categories;
+  final BrowseCursor? nextCursor;
+}
+
+/// One imported item and its source-local visibility preference.
+class SourceVisibilityItem {
+  const SourceVisibilityItem({
+    required this.catalogItemId,
+    required this.kind,
+    required this.title,
+    required this.isHidden,
+  });
+
+  final String catalogItemId;
+  final SourceMediaKind kind;
+  final String title;
+  final bool isHidden;
+}
+
+/// A bounded title-ordered slice of a visibility item ledger.
+class SourceVisibilityPage {
+  const SourceVisibilityPage({required this.items, required this.nextCursor});
+
+  final List<SourceVisibilityItem> items;
+  final BrowseCursor? nextCursor;
+}
+
 String playbackReference(Map<String, Object?> value) => jsonEncode(value);
+
+enum M3uSourceKind { m3uUrl, m3uFile }
+
+class M3uSourceInput {
+  const M3uSourceInput({
+    required this.id,
+    required this.name,
+    required this.kind,
+    required this.locator,
+    required this.credentialKey,
+    required this.displayEndpoint,
+  });
+
+  final String id;
+  final String name;
+  final M3uSourceKind kind;
+
+  /// Opaque URL or full file path. This never enters SQLite.
+  final String locator;
+  final String credentialKey;
+  final String displayEndpoint;
+
+  String get databaseKind => switch (kind) {
+    M3uSourceKind.m3uUrl => 'm3u_url',
+    M3uSourceKind.m3uFile => 'm3u_file',
+  };
+}
+
+/// Private-to-source-management credential routing record; never render it.
+class SourceOperationRecord {
+  const SourceOperationRecord({
+    required this.id,
+    required this.kind,
+    required this.credentialKey,
+  });
+  final String id;
+  final String kind;
+  final String credentialKey;
+}

@@ -1,7 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wabbit_tv/src/features/browse/basic_browse_screen.dart';
+import 'package:wabbit_tv/src/features/browse/catalog_scope_controller.dart';
+import 'package:wabbit_tv/src/features/browse/playback_handoff.dart';
+import 'package:wabbit_tv/src/features/browse/series_info_loader.dart';
 import 'package:wabbit_tv/src/features/sources/source_catalog_database.dart';
 import 'package:wabbit_tv/src/features/sources/source_models.dart';
 
@@ -355,6 +360,741 @@ void main() {
       'browse live live-149',
     );
   });
+
+  testWidgets(
+    'confirmed All sources viewport is full width, counted, and source labeled',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1265, 713));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final fixture = _ScopeFixture(itemCount: 84_129);
+
+      await tester.pumpWidget(_scopedScreen(fixture: fixture));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('catalog-scope-control')),
+        findsOneWidget,
+      );
+      expect(find.text('All sources'), findsOneWidget);
+      expect(find.text('84,129 available across 2 sources'), findsOneWidget);
+      expect(find.text('Categories'), findsNothing);
+      expect(find.text('SOURCE'), findsOneWidget);
+      expect(find.text('Harbor North'), findsAtLeastNWidgets(1));
+      expect(find.text('Weekend List'), findsAtLeastNWidgets(1));
+      expect(fixture.scopedData.pageLimits, everyElement(100));
+    },
+  );
+
+  testWidgets('All-sources loading skeleton is one full-width panel', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture();
+    fixture.scopedData.pageGate = Completer<void>();
+
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('browse-skeleton-panel')), findsOneWidget);
+    expect(find.text('Categories'), findsNothing);
+
+    fixture.scopedData.pageGate!.complete();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('scope menu supports remote traversal, Escape, and mouse', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture();
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('catalog-scope-control')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('catalog-scope-menu')), findsOneWidget);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'catalog scope all');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'catalog scope harbor',
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pumpAndSettle();
+    expect(fixture.controller.scope.sourceId, 'harbor');
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'catalog scope');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('catalog-scope-menu')), findsNothing);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'catalog scope');
+
+    await tester.tap(find.byKey(const ValueKey('catalog-scope-control')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('catalog-scope-All sources')));
+    await tester.pumpAndSettle();
+    expect(fixture.controller.scope.isAll, isTrue);
+  });
+
+  testWidgets('remote scope menu reveals sources beyond one viewport', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 500));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final fixture = _ScopeFixture();
+    fixture.port.sources = [
+      for (var index = 0; index < 14; index++)
+        _scopeRoster('source-$index', 'Source $index'),
+    ];
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pumpAndSettle();
+
+    FocusManager.instance.primaryFocus?.unfocus();
+    final scopeFocus = tester
+        .widget<Focus>(
+          find
+              .ancestor(
+                of: find.byKey(const ValueKey('catalog-scope-control')),
+                matching: find.byType(Focus),
+              )
+              .first,
+        )
+        .focusNode!;
+    scopeFocus.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    for (var index = 0; index < 10; index++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.pump();
+    }
+
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'catalog scope source-9',
+    );
+    final lateOption = tester.getRect(
+      find.byKey(const ValueKey('catalog-scope-Source 9')),
+    );
+    expect(lateOption.top, greaterThanOrEqualTo(0));
+    expect(lateOption.bottom, lessThanOrEqualTo(500));
+  });
+
+  testWidgets('remote moves content to scope, through menu, and back', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final fixture = _ScopeFixture();
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pumpAndSettle();
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'scoped browse initial',
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'catalog scope');
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(fixture.controller.scope.sourceId, 'harbor');
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'catalog scope');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'browse category 0');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'scoped browse initial',
+    );
+  });
+
+  testWidgets(
+    'named scope restores categories while unified source labels disappear',
+    (tester) async {
+      final fixture = _ScopeFixture();
+      await tester.pumpWidget(_scopedScreen(fixture: fixture));
+      await tester.pumpAndSettle();
+      expect(find.text('SOURCE'), findsOneWidget);
+
+      await fixture.controller.select(const LibraryScope.source('harbor'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Categories'), findsOneWidget);
+      expect(find.text('News'), findsOneWidget);
+      expect(find.text('SOURCE'), findsNothing);
+      expect(find.text('3 items · Harbor North'), findsOneWidget);
+      expect(find.text('Harbor North'), findsOneWidget);
+    },
+  );
+
+  testWidgets('named header uses the visibility-aware local library total', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture();
+    fixture.scopedData.namedTotal = 1;
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pumpAndSettle();
+
+    await fixture.controller.select(const LibraryScope.source('harbor'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 items · Harbor North'), findsOneWidget);
+    expect(find.text('3 items · Harbor North'), findsNothing);
+  });
+
+  testWidgets('late named-source resolution cannot overwrite a newer scope', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture(
+      initialScope: const LibraryScope.source('harbor'),
+    );
+    final delayedHarbor = Completer<PersistedSource?>();
+    fixture.port.resolveGates['harbor'] = delayedHarbor;
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pump();
+    await tester.pump();
+    expect(fixture.port.resolveRequests, ['harbor']);
+
+    await fixture.controller.select(const LibraryScope.all());
+    await tester.pumpAndSettle();
+    expect(find.text('150 available across 2 sources'), findsOneWidget);
+    expect(find.text('Unified title 0'), findsOneWidget);
+    expect(find.text('Categories'), findsNothing);
+
+    delayedHarbor.complete(fixture.port.readySource('harbor'));
+    await tester.pumpAndSettle();
+
+    expect(fixture.controller.scope.isAll, isTrue);
+    expect(find.text('150 available across 2 sources'), findsOneWidget);
+    expect(find.text('Unified title 0'), findsOneWidget);
+    expect(find.text('3 items · Harbor North'), findsNothing);
+    expect(find.text('Categories'), findsNothing);
+  });
+
+  testWidgets('disabled selected source falls back and announces', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture(
+      initialScope: const LibraryScope.source('harbor'),
+    );
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pumpAndSettle();
+    expect(find.text('Categories'), findsOneWidget);
+
+    fixture.port
+      ..sources = fixture.port.sources
+          .where((source) => source.id != 'harbor')
+          .toList()
+      ..scope = const LibraryScope.all();
+    await fixture.controller.refresh();
+    await tester.pumpAndSettle();
+
+    expect(fixture.controller.scope.isAll, isTrue);
+    expect(
+      find.text('Source unavailable. Showing All sources.'),
+      findsOneWidget,
+    );
+    expect(find.text('Categories'), findsNothing);
+  });
+
+  testWidgets('All scope refresh replaces cached rows from removed sources', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture();
+    BrowseCatalogItem? activated;
+    await tester.pumpWidget(
+      _scopedScreen(fixture: fixture, onActivated: (item) => activated = item),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Weekend List'), findsAtLeastNWidgets(1));
+    final initialPageCalls = fixture.scopedData.pageLimits.length;
+
+    final refreshPage = Completer<void>();
+    fixture.scopedData.pageGate = refreshPage;
+    fixture.port.sources = fixture.port.sources
+        .where((source) => source.id != 'weekend')
+        .toList();
+    fixture.scopedData.includeWeekend = false;
+    await fixture.controller.refresh();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('browse-skeleton-panel')), findsOneWidget);
+    expect(find.text('Weekend List'), findsNothing);
+    expect(find.byKey(const ValueKey('browse-item-library-1')), findsNothing);
+    expect(activated, isNull);
+
+    refreshPage.complete();
+    await tester.pumpAndSettle();
+
+    expect(fixture.controller.scope.isAll, isTrue);
+    expect(fixture.scopedData.pageLimits.length, greaterThan(initialPageCalls));
+    expect(find.text('Weekend List'), findsNothing);
+    expect(find.text('Harbor North'), findsAtLeastNWidgets(1));
+  });
+
+  testWidgets('remount refreshes a session bookmark from an older revision', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture();
+    final session = BasicBrowseSession();
+    await tester.pumpWidget(_scopedScreen(fixture: fixture, session: session));
+    await tester.pumpAndSettle();
+    expect(find.text('Weekend List'), findsAtLeastNWidgets(1));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    fixture.port.sources = fixture.port.sources
+        .where((source) => source.id != 'weekend')
+        .toList();
+    fixture.scopedData.includeWeekend = false;
+    await fixture.controller.refresh();
+    final remountPage = Completer<void>();
+    fixture.scopedData.pageGate = remountPage;
+
+    await tester.pumpWidget(_scopedScreen(fixture: fixture, session: session));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('browse-skeleton-panel')), findsOneWidget);
+    expect(find.text('Weekend List'), findsNothing);
+
+    remountPage.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Weekend List'), findsNothing);
+    expect(find.text('Harbor North'), findsAtLeastNWidgets(1));
+  });
+
+  testWidgets('same-revision remount restores its scoped session bookmark', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final fixture = _ScopeFixture(itemCount: 150);
+    final session = BasicBrowseSession();
+    await tester.pumpWidget(_scopedScreen(fixture: fixture, session: session));
+    await tester.pumpAndSettle();
+    final lateRow = find.byKey(const ValueKey('browse-item-library-120'));
+    await tester.scrollUntilVisible(
+      lateRow,
+      420,
+      scrollable: find.descendant(
+        of: find.byKey(const ValueKey('browse-items-live')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.tap(lateRow);
+    final pageCalls = fixture.scopedData.pageLimits.length;
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    final unexpectedPage = Completer<void>();
+    fixture.scopedData.pageGate = unexpectedPage;
+    await tester.pumpWidget(_scopedScreen(fixture: fixture, session: session));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(fixture.scopedData.pageLimits.length, pageCalls);
+    expect(lateRow, findsOneWidget);
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'browse live library-120',
+    );
+    unexpectedPage.complete();
+  });
+
+  testWidgets('failed-refresh last-good source remains selectable', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture();
+    fixture.port.sources = [
+      _scopeRoster('harbor', 'Harbor North', status: 'refresh_failed'),
+    ];
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('catalog-scope-control')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('catalog-scope-All sources')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('catalog-scope-Harbor North')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('catalog-scope-Harbor North')));
+    await tester.pumpAndSettle();
+    expect(fixture.controller.scope.sourceId, 'harbor');
+    expect(find.text('Categories'), findsOneWidget);
+  });
+
+  testWidgets('All scope activation carries the selected playable variant', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture();
+    BrowseCatalogItem? activated;
+    await tester.pumpWidget(
+      _scopedScreen(fixture: fixture, onActivated: (item) => activated = item),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('browse-item-library-0')));
+
+    expect(activated?.sourceId, 'harbor');
+    expect(activated?.playbackRef, contains('providerId'));
+  });
+
+  testWidgets('All-sources Series detail resolves the chosen item source', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture();
+    final loader = _CapturingSeriesLoader();
+    await tester.pumpWidget(
+      _scopedScreen(
+        fixture: fixture,
+        kind: SourceMediaKind.series,
+        seriesInfoLoader: loader,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('browse-item-library-0')));
+    await tester.pumpAndSettle();
+
+    expect(loader.sourceId, 'harbor');
+  });
+
+  testWidgets('scope header fits a 480px shell content width and large text', (
+    tester,
+  ) async {
+    // WabbitShell reserves its fixed 72 px rail from a 480 px window.
+    await tester.binding.setSurfaceSize(const Size(408, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final fixture = _ScopeFixture(
+      initialScope: const LibraryScope.source('harbor'),
+      longNames: true,
+    );
+    await tester.pumpWidget(
+      _scopedScreen(fixture: fixture, textScaler: const TextScaler.linear(1.6)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('catalog-scope-control')), findsOneWidget);
+    expect(find.text('Categories'), findsOneWidget);
+    final layoutError = tester.takeException();
+    if (layoutError is FlutterError) {
+      fail(layoutError.toDiagnosticsNode().toStringDeep());
+    }
+    expect(layoutError, isNull);
+    final scopeRect = tester.getRect(
+      find.byKey(const ValueKey('catalog-scope-control')),
+    );
+    expect(scopeRect.right, lessThanOrEqualTo(408));
+  });
+
+  testWidgets('session restores a deep row independently for each scope', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final fixture = _ScopeFixture(itemCount: 150);
+    final session = BasicBrowseSession();
+    await tester.pumpWidget(_scopedScreen(fixture: fixture, session: session));
+    await tester.pumpAndSettle();
+
+    final lateAll = find.byKey(const ValueKey('browse-item-library-120'));
+    await tester.scrollUntilVisible(
+      lateAll,
+      420,
+      scrollable: find.descendant(
+        of: find.byKey(const ValueKey('browse-items-live')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.tap(lateAll);
+
+    await fixture.controller.select(const LibraryScope.source('harbor'));
+    await tester.pumpAndSettle();
+    final namedScrollable = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('browse-items-live')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    expect(namedScrollable.position.pixels, lessThanOrEqualTo(1));
+    await fixture.controller.select(const LibraryScope.all());
+    await tester.pump();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(lateAll, findsOneWidget);
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'browse live library-120',
+    );
+  });
+}
+
+Widget _scopedScreen({
+  required _ScopeFixture fixture,
+  BrowseItemActivated? onActivated,
+  BasicBrowseSession? session,
+  TextScaler textScaler = TextScaler.noScaling,
+  SourceMediaKind kind = SourceMediaKind.live,
+  SeriesInfoLoader? seriesInfoLoader,
+}) {
+  final focus = FocusNode(debugLabel: 'scoped browse initial');
+  return MaterialApp(
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+      child: child!,
+    ),
+    home: Scaffold(
+      body: BasicBrowseScreen(
+        kind: kind,
+        source: null,
+        data: fixture.namedData,
+        scopedData: fixture.scopedData,
+        scopeController: fixture.controller,
+        session: session ?? BasicBrowseSession(),
+        initialFocus: focus,
+        onContentFocus: (_) {},
+        onOpenRail: () {},
+        onOpenSourceSetup: () {},
+        onItemActivated: onActivated,
+        seriesInfoLoader: seriesInfoLoader,
+      ),
+    ),
+  );
+}
+
+class _ScopeFixture {
+  _ScopeFixture({
+    int itemCount = 150,
+    LibraryScope initialScope = const LibraryScope.all(),
+    bool longNames = false,
+  }) : port = _BrowseScopePort(
+         scope: initialScope,
+         sources: [
+           _scopeRoster(
+             'harbor',
+             longNames
+                 ? 'Harbor North ${'Extremely Long Local Source Name ' * 4}'
+                 : 'Harbor North',
+           ),
+           _scopeRoster('weekend', 'Weekend List'),
+         ],
+       ),
+       scopedData = _ScopedData(itemCount),
+       namedData = _NamedScopeData() {
+    controller = CatalogScopeController(port: port);
+  }
+
+  final _BrowseScopePort port;
+  final _ScopedData scopedData;
+  final _NamedScopeData namedData;
+  late final CatalogScopeController controller;
+}
+
+SourceRosterEntry _scopeRoster(
+  String id,
+  String name, {
+  String status = 'ready',
+}) => SourceRosterEntry(
+  id: id,
+  name: name,
+  kind: 'xtream',
+  enabled: true,
+  status: status,
+  counts: const {
+    SourceMediaKind.live: 3,
+    SourceMediaKind.movies: 0,
+    SourceMediaKind.series: 0,
+  },
+);
+
+class _BrowseScopePort implements CatalogScopePort {
+  _BrowseScopePort({required this.sources, required this.scope});
+
+  List<SourceRosterEntry> sources;
+  LibraryScope scope;
+  final Map<String, Completer<PersistedSource?>> resolveGates = {};
+  final List<String> resolveRequests = [];
+
+  @override
+  Future<LibraryScope> loadCatalogScope() async => scope;
+
+  @override
+  Future<PersistedSource?> loadReadySourceById(String sourceId) async {
+    resolveRequests.add(sourceId);
+    final gate = resolveGates[sourceId];
+    if (gate != null) return gate.future;
+    return readySource(sourceId);
+  }
+
+  PersistedSource? readySource(String sourceId) {
+    final matches = sources.where((source) => source.id == sourceId);
+    if (matches.isEmpty) return null;
+    final source = matches.single;
+    return PersistedSource(
+      id: source.id,
+      name: source.name,
+      credentialKey: '${source.id}-key',
+      counts: source.counts,
+    );
+  }
+
+  @override
+  Future<List<SourceRosterEntry>> loadSourceRoster() async => sources;
+
+  @override
+  Future<LibraryScope> saveCatalogScope(LibraryScope requested) async {
+    final sourceId = requested.sourceId;
+    scope = sourceId == null || sources.any((source) => source.id == sourceId)
+        ? requested
+        : const LibraryScope.all();
+    return scope;
+  }
+}
+
+class _ScopedData implements ScopedBrowseData {
+  _ScopedData(this.total);
+
+  final int total;
+  final List<int> pageLimits = [];
+  Completer<void>? pageGate;
+  int namedTotal = 3;
+  bool includeWeekend = true;
+
+  int get materialized => total.clamp(3, 150);
+
+  @override
+  Future<LibraryPage> browseLibraryPage({
+    required LibraryScope scope,
+    required SourceMediaKind kind,
+    BrowseCursor? cursor,
+    int limit = 100,
+  }) async {
+    pageLimits.add(limit);
+    await pageGate?.future;
+    final availableIndexes = [
+      for (var index = 0; index < materialized; index++)
+        if (includeWeekend || index.isEven) index,
+    ];
+    final cursorIndex = cursor == null
+        ? null
+        : int.parse(cursor.id.split('-').last);
+    final start = cursorIndex == null
+        ? 0
+        : availableIndexes.indexWhere((index) => index == cursorIndex) + 1;
+    final end = (start + limit).clamp(0, availableIndexes.length);
+    final items = [
+      for (final index in availableIndexes.sublist(start, end))
+        LibraryCatalogItem(
+          libraryItemId: 'library-$index',
+          catalogItemId: 'catalog-$index',
+          sourceId: index.isEven ? 'harbor' : 'weekend',
+          sourceDisplayName: index.isEven ? 'Harbor North' : 'Weekend List',
+          kind: kind,
+          title: 'Unified title $index',
+          artworkLocator: null,
+          playbackRef: playbackReference({
+            'providerId': '$index',
+            'kind': kind.name,
+          }),
+        ),
+    ];
+    return LibraryPage(
+      items: items,
+      nextCursor: end >= availableIndexes.length
+          ? null
+          : BrowseCursor(
+              normalizedTitle: 'title ${availableIndexes[end - 1]}',
+              id: 'library-${availableIndexes[end - 1]}',
+            ),
+    );
+  }
+
+  @override
+  Future<int> countLibraryItems({
+    required LibraryScope scope,
+    required SourceMediaKind kind,
+  }) async => scope.isAll ? total : namedTotal;
+}
+
+class _NamedScopeData implements BasicBrowseData {
+  @override
+  Future<List<BrowseCategorySummary>> browseCategories({
+    required String sourceId,
+    required SourceMediaKind kind,
+  }) async => [
+    BrowseCategorySummary(
+      selection: const BrowseCategorySelection.all(),
+      name: 'All ${kind.label}',
+      itemCount: 3,
+    ),
+    const BrowseCategorySummary(
+      selection: BrowseCategorySelection.sourceGroup(1),
+      name: 'News',
+      itemCount: 3,
+    ),
+  ];
+
+  @override
+  Future<BrowsePage> browsePage({
+    required String sourceId,
+    required SourceMediaKind kind,
+    required BrowseCategorySelection selection,
+    BrowseCursor? cursor,
+    int limit = 100,
+  }) async => BrowsePage(
+    items: [
+      for (var index = 0; index < 3; index++)
+        BrowseCatalogItem(
+          id: '$sourceId-$index',
+          sourceId: sourceId,
+          kind: kind,
+          title: 'Named title $index',
+          artworkLocator: null,
+          playbackRef: playbackReference({
+            'providerId': '$index',
+            'kind': kind.name,
+          }),
+        ),
+    ],
+    nextCursor: null,
+  );
+}
+
+class _CapturingSeriesLoader implements SeriesInfoLoader {
+  String? sourceId;
+
+  @override
+  void cancel() {}
+
+  @override
+  Future<SeriesInfo> load({
+    required PersistedSource source,
+    required BrowseCatalogItem series,
+  }) async {
+    sourceId = source.id;
+    return const SeriesInfo(seasons: []);
+  }
 }
 
 Widget _screen({

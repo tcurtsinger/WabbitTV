@@ -157,7 +157,20 @@ void main() {
       final db = sqlite3.open(await fixture.database.resolvedPath());
       try {
         db.execute('DROP INDEX catalog_items_browse_all');
-        db.execute('DELETE FROM schema_migrations WHERE version = 3');
+        db.execute('DROP INDEX catalog_items_parent');
+        db.execute('DROP INDEX catalog_items_source_group');
+        db.execute('DROP INDEX catalog_items_available');
+        db.execute('DROP TABLE library_fts');
+        db.execute('DROP TABLE watch_state');
+        db.execute('DROP TABLE custom_group_items');
+        db.execute('DROP TABLE custom_groups');
+        db.execute('DROP TABLE favorites');
+        db.execute('DROP TABLE library_members');
+        db.execute('DROP TABLE library_items');
+        db.execute('DROP TABLE app_settings');
+        db.execute('ALTER TABLE sources DROP COLUMN connection_limit_override');
+        db.execute('ALTER TABLE sources DROP COLUMN reported_connection_limit');
+        db.execute('DELETE FROM schema_migrations WHERE version >= 3');
       } finally {
         db.close();
       }
@@ -179,7 +192,7 @@ void main() {
           upgraded
               .select('SELECT MAX(version) AS version FROM schema_migrations')
               .single['version'],
-          3,
+          7,
         );
       } finally {
         upgraded.close();

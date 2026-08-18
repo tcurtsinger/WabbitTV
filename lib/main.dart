@@ -18,7 +18,10 @@ import 'package:window_manager/window_manager.dart';
 
 import 'src/app_shell.dart';
 import 'src/features/browse/basic_browse_screen.dart';
+import 'src/features/browse/catalog_scope_controller.dart';
+import 'src/features/search/local_search_screen.dart';
 import 'src/features/sources/source_catalog_database.dart';
+import 'src/features/sources/source_editor.dart';
 import 'src/home_fixture_mode.dart';
 import 'src/features/sources/source_setup_controller.dart';
 import 'src/features/sources/source_models.dart';
@@ -101,20 +104,31 @@ class WabbitApp extends StatelessWidget {
     this.sourceController,
     this.browseSource,
     this.browseData,
+    this.scopedBrowseData,
+    this.catalogScopeController,
+    this.localSearchData,
+    this.playbackSourceResolver,
     this.initialDestination,
     this.credentialStore,
     this.playbackTransportFactory,
     this.fullscreenPort,
+    this.m3uFilePicker,
   });
 
   final HomeFixtureMode fixtureMode;
   final SourceSetupController? sourceController;
   final PersistedSource? browseSource;
   final BasicBrowseData? browseData;
+  final ScopedBrowseData? scopedBrowseData;
+  final CatalogScopeController? catalogScopeController;
+  final LocalSearchData? localSearchData;
+  final FutureOr<PersistedSource?> Function(String sourceId)?
+  playbackSourceResolver;
   final ShellDestination? initialDestination;
   final CredentialStore? credentialStore;
   final PlaybackTransportFactory? playbackTransportFactory;
   final FullscreenPort? fullscreenPort;
+  final M3uFilePicker? m3uFilePicker;
 
   @override
   Widget build(BuildContext context) {
@@ -139,10 +153,15 @@ class WabbitApp extends StatelessWidget {
         sourceController: sourceController,
         browseSource: browseSource,
         browseData: browseData,
+        scopedBrowseData: scopedBrowseData,
+        catalogScopeController: catalogScopeController,
+        localSearchData: localSearchData,
+        playbackSourceResolver: playbackSourceResolver,
         initialDestination: initialDestination,
         credentialStore: credentialStore,
         playbackTransportFactory: playbackTransportFactory,
         fullscreenPort: fullscreenPort,
+        m3uFilePicker: m3uFilePicker,
       ),
     );
   }

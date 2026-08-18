@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "option": "A — Minimal in-app TV keyboard",
+  "target": "lib/src/features/search/local_search_screen.dart",
+  "mode": "Operate",
+  "direction": "Quiet Broadcast — Remote Search Keyboard Overlay",
+  "prompt": "Quiet Broadcast Phase 2 remote Search keyboard overlay at 1265x713: compact in-shell modal over the local mixed ledger, one query field, code-native A-Z and 0-9 key grid, Space, Back, Clear, and Done actions, nearest-key directional traversal, crisp 2px amber focus, subdued scrim, and no decoration, prediction, animation gimmick, gradient, glass, or glow.",
+  "status": "confirmed",
+  "generatedAt": "2026-08-17",
+  "userDecisions": {
+    "date": "2026-08-17",
+    "catalogScope": "1A — Header scope menu",
+    "searchResults": "2A — One mixed Live/Movie/Series ledger",
+    "remoteTextEntry": "3A — Minimal in-app TV keyboard"
+  },
+  "visualConfirmation": {
+    "status": "confirmed",
+    "note": "The user explicitly confirmed this first-viewport composition on 2026-08-17."
+  },
+  "fixtureData": {
+    "synthetic": true,
+    "query": "harbor",
+    "focusedKey": "R",
+    "keys": [
+      "A-Z",
+      "0-9",
+      "Space",
+      "Back",
+      "Clear",
+      "Done"
+    ]
+  },
+  "literalCautions": "The query and dimmed result content are synthetic composition evidence. Back deletes one character; Back/Escape at the overlay level closes it while retaining the query."
+}

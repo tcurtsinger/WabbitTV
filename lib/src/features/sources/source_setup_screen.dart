@@ -8,6 +8,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'source_editor.dart';
 import 'source_models.dart';
 import 'source_setup_controller.dart';
 import 'xtream_connector.dart';
@@ -29,6 +30,9 @@ class SourceSetupScreen extends StatefulWidget {
     required this.onExit,
     required this.onBrowse,
     this.controller,
+    this.editRequest,
+    this.onEditorSaved,
+    this.m3uFilePicker,
   });
 
   final FocusNode initialFocus;
@@ -36,6 +40,9 @@ class SourceSetupScreen extends StatefulWidget {
   final VoidCallback onExit;
   final ValueChanged<SourceMediaKind> onBrowse;
   final SourceSetupController? controller;
+  final SourceEditorRequest? editRequest;
+  final VoidCallback? onEditorSaved;
+  final M3uFilePicker? m3uFilePicker;
 
   @override
   State<SourceSetupScreen> createState() => _SourceSetupScreenState();
@@ -49,6 +56,7 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
   final _usernameFocus = FocusNode(debugLabel: 'source username');
   final _passwordFocus = FocusNode(debugLabel: 'source password');
   final _visibilityFocus = FocusNode(debugLabel: 'source password visibility');
+  final _pickerFocus = FocusNode(debugLabel: 'source M3U file picker');
   final _connectFocus = FocusNode(debugLabel: 'source connect and import');
   final _cancelFocus = FocusNode(debugLabel: 'source cancel');
   late final Map<SourceMediaKind, FocusNode> _browseFocus = {
@@ -56,20 +64,55 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
       kind: FocusNode(debugLabel: 'browse ${kind.label}'),
   };
   bool _wasImporting = false;
-  final _name = TextEditingController(text: 'My IPTV');
+  final _name = TextEditingController();
   final _server = TextEditingController();
   final _username = TextEditingController();
   final _password = TextEditingController();
   bool _showPassword = false;
+  SourceEditorKind _kind = SourceEditorKind.xtream;
+  SourceEditorDraft? _editorDraft;
+  bool _loadingEditor = false;
+
+  bool get _editing => widget.editRequest != null;
 
   @override
   void initState() {
     super.initState();
     _controller.addListener(_refresh);
     HardwareKeyboard.instance.addHandler(_handleHardwareKey);
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _applyControllerFocus(),
-    );
+    _loadingEditor = _editing;
+    if (_editing) {
+      _loadEditor();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _applyControllerFocus(),
+      );
+    }
+  }
+
+  Future<void> _loadEditor() async {
+    final request = widget.editRequest!;
+    SourceEditorDraft? draft;
+    try {
+      draft = await _controller.loadEditor(request);
+    } catch (_) {
+      draft = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      _loadingEditor = false;
+      _editorDraft = draft;
+      if (draft != null) {
+        _kind = draft.kind;
+        _name.text = draft.name;
+        _server.text = draft.endpoint;
+        _username.text = draft.username;
+        _password.text = draft.password;
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _applyControllerFocus();
+    });
   }
 
   @override
@@ -81,6 +124,7 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
     _usernameFocus.dispose();
     _passwordFocus.dispose();
     _visibilityFocus.dispose();
+    _pickerFocus.dispose();
     _connectFocus.dispose();
     _cancelFocus.dispose();
     for (final node in _browseFocus.values) {
@@ -104,7 +148,7 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
 
   void _applyControllerFocus() {
     if (!mounted) return;
-    if (_controller.ready != null) {
+    if (!_editing && _controller.ready != null) {
       _browseFocus[SourceMediaKind.live]!.requestFocus();
     } else if (_controller.isImporting) {
       _cancelFocus.requestFocus();
@@ -114,13 +158,50 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
     _wasImporting = _controller.isImporting;
   }
 
-  void _submit() {
-    _controller.connect(
-      name: _name.text,
-      serverUrl: _server.text,
-      username: _username.text,
-      password: _password.text,
-    );
+  Future<void> _submit() async {
+    final draft = _editorDraft;
+    if (draft != null) {
+      final saved = await _controller.saveEditor(
+        draft: draft,
+        name: _name.text,
+        endpoint: _server.text,
+        username: _username.text,
+        password: _password.text,
+      );
+      if (saved && mounted) {
+        (widget.onEditorSaved ?? widget.onExit)();
+      }
+      return;
+    }
+    switch (_kind) {
+      case SourceEditorKind.xtream:
+        await _controller.connect(
+          name: _name.text,
+          serverUrl: _server.text,
+          username: _username.text,
+          password: _password.text,
+        );
+      case SourceEditorKind.m3uUrl:
+        await _controller.connectM3uUrl(name: _name.text, url: _server.text);
+      case SourceEditorKind.m3uFile:
+        await _controller.connectM3uFile(name: _name.text, path: _server.text);
+    }
+  }
+
+  Future<void> _pickM3uFile() async {
+    final path = await widget.m3uFilePicker?.call();
+    if (path != null && mounted) setState(() => _server.text = path);
+  }
+
+  void _selectKind(SourceEditorKind kind) {
+    if (_editing || _kind == kind) return;
+    setState(() {
+      _kind = kind;
+      _server.clear();
+      _username.clear();
+      _password.clear();
+      _controller.dismissFailure();
+    });
   }
 
   void _handleBack() {
@@ -161,7 +242,7 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const _SourceHeader(),
+                    _SourceHeader(editing: _editing),
                     Expanded(
                       child: SingleChildScrollView(
                         padding: const EdgeInsets.symmetric(vertical: 28),
@@ -175,9 +256,15 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
                           child: Center(
                             child: ConstrainedBox(
                               constraints: const BoxConstraints(maxWidth: 648),
-                              child: _controller.ready == null
+                              child: _loadingEditor
+                                  ? const _EditorLoading()
+                                  : _editing && _editorDraft == null
+                                  ? const _EditorUnavailable()
+                                  : _controller.ready == null || _editing
                                   ? _SourceForm(
                                       controller: _controller,
+                                      kind: _kind,
+                                      editing: _editing,
                                       name: _name,
                                       server: _server,
                                       username: _username,
@@ -187,6 +274,7 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
                                       usernameFocus: _usernameFocus,
                                       passwordFocus: _passwordFocus,
                                       visibilityFocus: _visibilityFocus,
+                                      pickerFocus: _pickerFocus,
                                       connectFocus: _connectFocus,
                                       cancelFocus: _cancelFocus,
                                       showPassword: _showPassword,
@@ -195,6 +283,10 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
                                       ),
                                       onFocused: widget.onContentFocus,
                                       onSubmit: _submit,
+                                      onSelectKind: _selectKind,
+                                      onPickM3uFile: _pickM3uFile,
+                                      pickerAvailable:
+                                          widget.m3uFilePicker != null,
                                       onCancel: _controller.isImporting
                                           ? _controller.cancel
                                           : widget.onExit,
@@ -227,15 +319,16 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
 }
 
 class _SourceHeader extends StatelessWidget {
-  const _SourceHeader();
+  const _SourceHeader({required this.editing});
+  final bool editing;
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Add source',
+          editing ? 'Edit source' : 'Add source',
           style: TextStyle(
             color: _warmWhite,
             fontSize: 31,
@@ -243,9 +336,9 @@ class _SourceHeader extends StatelessWidget {
             letterSpacing: -0.7,
           ),
         ),
-        SizedBox(height: 6),
+        const SizedBox(height: 6),
         Text(
-          'Connect an Xtream account to build your local library.',
+          editing ? 'Update this local connector, then refresh its catalog.' : 'Connect an Xtream account or M3U playlist to build your local library.',
           style: TextStyle(color: _quietText, fontSize: 16, height: 1.45),
         ),
       ],
@@ -253,9 +346,101 @@ class _SourceHeader extends StatelessWidget {
   }
 }
 
+class _EditorLoading extends StatelessWidget {
+  const _EditorLoading();
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Semantics(
+      liveRegion: true,
+      label: 'Loading source details',
+      child: CircularProgressIndicator(color: _amber),
+    ),
+  );
+}
+
+class _EditorUnavailable extends StatelessWidget {
+  const _EditorUnavailable();
+
+  @override
+  Widget build(BuildContext context) => const Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Source details are unavailable',
+        style: TextStyle(
+          color: _warmWhite,
+          fontSize: 22,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      SizedBox(height: 8),
+      Text(
+        'The saved connector details could not be opened. Return to Sources and try again.',
+        style: TextStyle(color: _quietText, height: 1.4),
+      ),
+    ],
+  );
+}
+
+class _ConnectorPicker extends StatelessWidget {
+  const _ConnectorPicker({
+    required this.kind,
+    required this.enabled,
+    required this.onSelected,
+  });
+
+  final SourceEditorKind kind;
+  final bool enabled;
+  final ValueChanged<SourceEditorKind> onSelected;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        'Connector type',
+        style: TextStyle(
+          color: _warmWhite,
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: [
+          for (final candidate in SourceEditorKind.values)
+            OutlinedButton(
+              key: ValueKey('source-connector-${candidate.name}'),
+              onPressed: enabled ? () => onSelected(candidate) : null,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: candidate == kind ? _warmWhite : _quietText,
+                backgroundColor: candidate == kind ? _raised : _surface,
+                disabledForegroundColor: candidate == kind
+                    ? _warmWhite
+                    : _quietText,
+                side: const BorderSide(color: _line),
+                minimumSize: const Size(0, 42),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              child: Text(candidate.label),
+            ),
+        ],
+      ),
+    ],
+  );
+}
+
 class _SourceForm extends StatelessWidget {
   const _SourceForm({
     required this.controller,
+    required this.kind,
+    required this.editing,
     required this.name,
     required this.server,
     required this.username,
@@ -265,16 +450,22 @@ class _SourceForm extends StatelessWidget {
     required this.usernameFocus,
     required this.passwordFocus,
     required this.visibilityFocus,
+    required this.pickerFocus,
     required this.connectFocus,
     required this.cancelFocus,
     required this.showPassword,
     required this.onShowPassword,
     required this.onFocused,
     required this.onSubmit,
+    required this.onSelectKind,
+    required this.onPickM3uFile,
+    required this.pickerAvailable,
     required this.onCancel,
   });
 
   final SourceSetupController controller;
+  final SourceEditorKind kind;
+  final bool editing;
   final TextEditingController name;
   final TextEditingController server;
   final TextEditingController username;
@@ -284,12 +475,16 @@ class _SourceForm extends StatelessWidget {
   final FocusNode usernameFocus;
   final FocusNode passwordFocus;
   final FocusNode visibilityFocus;
+  final FocusNode pickerFocus;
   final FocusNode connectFocus;
   final FocusNode cancelFocus;
   final bool showPassword;
   final VoidCallback onShowPassword;
   final ValueChanged<FocusNode> onFocused;
-  final VoidCallback onSubmit;
+  final Future<void> Function() onSubmit;
+  final ValueChanged<SourceEditorKind> onSelectKind;
+  final Future<void> Function() onPickM3uFile;
+  final bool pickerAvailable;
   final VoidCallback onCancel;
 
   @override
@@ -305,7 +500,9 @@ class _SourceForm extends StatelessWidget {
           children: [
             Text(
               controller.isImporting
-                  ? 'Importing your library'
+                  ? (editing
+                        ? 'Saving and refreshing'
+                        : 'Importing your library')
                   : 'Source details',
               style: const TextStyle(
                 color: _warmWhite,
@@ -317,6 +514,8 @@ class _SourceForm extends StatelessWidget {
             Text(
               controller.isImporting
                   ? 'This stays in the foreground until it finishes or you cancel.'
+                  : editing
+                  ? 'Save refreshes this source immediately. Its previous local catalog stays available if refresh fails.'
                   : 'Your account credentials are stored by Windows after the import succeeds.',
               style: const TextStyle(
                 color: _quietText,
@@ -325,59 +524,106 @@ class _SourceForm extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 20),
+            _ConnectorPicker(
+              kind: kind,
+              enabled: !disabled && !editing,
+              onSelected: onSelectKind,
+            ),
+            if (editing) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'Connector type is fixed for this source.',
+                style: TextStyle(color: _quietText, fontSize: 13),
+              ),
+            ],
+            const SizedBox(height: 18),
             _Field(
               label: 'Source name',
               controller: name,
               focusNode: nameFocus,
               errorText: errors['name'],
               enabled: !disabled,
-              autofocus: true,
+              autofocus: !editing,
               onFocused: onFocused,
               textInputAction: TextInputAction.next,
             ),
             const SizedBox(height: 14),
-            _Field(
-              label: 'Server URL',
-              hint: 'https://provider.example:port',
-              controller: server,
-              focusNode: serverFocus,
-              errorText: errors['serverUrl'],
-              enabled: !disabled,
-              onFocused: onFocused,
-              keyboardType: TextInputType.url,
-              textInputAction: TextInputAction.next,
-            ),
-            const SizedBox(height: 14),
-            _Field(
-              label: 'Username',
-              controller: username,
-              focusNode: usernameFocus,
-              errorText: errors['username'],
-              enabled: !disabled,
-              onFocused: onFocused,
-              textInputAction: TextInputAction.next,
-            ),
-            const SizedBox(height: 14),
-            _Field(
-              label: 'Password',
-              controller: password,
-              focusNode: passwordFocus,
-              errorText: errors['password'],
-              enabled: !disabled,
-              onFocused: onFocused,
-              obscureText: !showPassword,
-              textInputAction: TextInputAction.done,
-              suffix: IconButton(
-                focusNode: visibilityFocus,
-                tooltip: showPassword ? 'Hide password' : 'Show password',
-                onPressed: disabled ? null : onShowPassword,
-                icon: Icon(
-                  showPassword
-                      ? Icons.visibility_off_outlined
-                      : Icons.visibility_outlined,
+            if (kind == SourceEditorKind.xtream) ...[
+              _Field(
+                label: 'Server URL',
+                hint: 'https://provider.example:port',
+                controller: server,
+                focusNode: serverFocus,
+                errorText: errors['serverUrl'],
+                enabled: !disabled,
+                onFocused: onFocused,
+                keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 14),
+              _Field(
+                label: 'Username',
+                controller: username,
+                focusNode: usernameFocus,
+                errorText: errors['username'],
+                enabled: !disabled,
+                onFocused: onFocused,
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 14),
+              _Field(
+                label: 'Password',
+                controller: password,
+                focusNode: passwordFocus,
+                errorText: errors['password'],
+                enabled: !disabled,
+                onFocused: onFocused,
+                obscureText: !showPassword,
+                textInputAction: TextInputAction.done,
+                suffix: IconButton(
+                  focusNode: visibilityFocus,
+                  tooltip: showPassword ? 'Hide password' : 'Show password',
+                  onPressed: disabled ? null : onShowPassword,
+                  icon: Icon(
+                    showPassword
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                  ),
                 ),
               ),
-            ),
+            ] else ...[
+              _Field(
+                label: kind == SourceEditorKind.m3uUrl ? 'M3U URL' : 'M3U file',
+                hint: kind == SourceEditorKind.m3uUrl
+                    ? 'https://provider.example/playlist.m3u'
+                    : 'Choose a local .m3u file',
+                controller: server,
+                focusNode: serverFocus,
+                errorText: errors['endpoint'] ?? errors['source'],
+                enabled: !disabled,
+                onFocused: onFocused,
+                keyboardType: kind == SourceEditorKind.m3uUrl
+                    ? TextInputType.url
+                    : TextInputType.text,
+                textInputAction: TextInputAction.done,
+              ),
+              if (kind == SourceEditorKind.m3uFile) ...[
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: _SourceButton(
+                    label: 'Choose M3U file',
+                    focusNode: pickerFocus,
+                    primary: false,
+                    enabled: !disabled && pickerAvailable,
+                    onFocused: onFocused,
+                    onPressed: () {
+                      onPickM3uFile();
+                    },
+                  ),
+                ),
+              ],
+            ],
             if (controller.failure != null) ...[
               const SizedBox(height: 18),
               _FailureNotice(failure: controller.failure!),
@@ -403,12 +649,16 @@ class _SourceForm extends StatelessWidget {
                     child: FocusTraversalOrder(
                       order: const NumericFocusOrder(1),
                       child: _SourceButton(
-                        label: 'Connect and import',
+                        label: editing
+                            ? 'Save and refresh'
+                            : 'Connect and import',
                         focusNode: connectFocus,
                         primary: true,
                         enabled: !disabled,
                         onFocused: onFocused,
-                        onPressed: onSubmit,
+                        onPressed: () {
+                          onSubmit();
+                        },
                       ),
                     ),
                   ),
@@ -572,6 +822,7 @@ class _FailureNotice extends StatelessWidget {
       SourceImportFailureKind.tooLarge =>
         'That provider catalog is too large to import safely.',
       SourceImportFailureKind.timedOut => 'That provider took too long to respond. Check the connection and try again.',
+      SourceImportFailureKind.localPersistence => 'Wabbit TV could not save those source changes. The editor is still open; try again.',
       SourceImportFailureKind.cancelled => 'The import was cancelled.',
     };
     return Semantics(

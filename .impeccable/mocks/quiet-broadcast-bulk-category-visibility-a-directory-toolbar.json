@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "option": "A — Directory-toolbar bulk category visibility",
+  "status": "draft",
+  "mode": "Operate",
+  "direction": "Quiet Broadcast",
+  "extends": "docs/shapes/7-library-visibility.md",
+  "target": "lib/src/features/sources/library_visibility_screen.dart",
+  "prompt": "1265x713 Quiet Broadcast desktop composition extending the existing Manage visibility two-pane surface. Retain Back, Strong local visibility only, Hidden only, Live/Movies/Series with Live selected, the 300px Provider categories pane, and the selected News & local item ledger. Add a compact second row inside only the Provider categories header: muted summary 909 categories · 12 hidden at left; two equal quiet outline buttons Hide all and Restore all at right. Keep the category/item ledger unchanged and show a mixed Included/Hidden category state. No modal, gradients, poster art, provider data, or deletion semantics.",
+  "fixtureData": {
+    "synthetic": true,
+    "sourceName": "Strong",
+    "mediaKind": "Live",
+    "categorySummary": "909 categories · 12 hidden",
+    "bulkActions": ["Hide all", "Restore all"],
+    "state": "mixed"
+  },
+  "visualConfirmation": {
+    "status": "confirmed",
+    "note": "The user approved this viewport on 2026-08-17. It authorizes implementation only; the feature is not implemented or verified."
+  },
+  "assetGeneration": {
+    "tool": "Built-in image generation, proportionally resized without crop",
+    "reference": "docs/evidence/phase2-library-visibility/01-desktop-mixed-1265x713.png",
+    "finalDimensions": "1265x713",
+    "inspection": "Initial inspection found unequal action widths. One correction pass made Hide all and Restore all equal-width; final composition was accepted."
+  },
+  "literalCautions": "All names, category counts, item rows, and states are synthetic. The shown actions are local category visibility controls only, preserve individual item hidden choices, and do not establish a hidden-by-default rule for future new provider categories."
+}

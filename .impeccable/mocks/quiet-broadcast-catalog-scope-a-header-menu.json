@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "option": "A — Header scope menu",
+  "target": "lib/src/features/browse/basic_browse_screen.dart",
+  "mode": "Operate",
+  "direction": "Quiet Broadcast — Header Scope + Contextual Directory",
+  "prompt": "Quiet Broadcast Phase 2 All-sources Live composition at 1265x713: native Windows frame, existing collapsed 72px rail, compact All sources header menu, truthful synthetic total, one full-width virtualized Live ledger with small synthetic thumbnails and per-row source labels, crisp 2px amber row focus, and no provider-category merge, filter strip, hero, storefront, gradient, glass, or glow.",
+  "status": "confirmed",
+  "generatedAt": "2026-08-17",
+  "userDecisions": {
+    "date": "2026-08-17",
+    "catalogScope": "1A — Header scope menu",
+    "searchResults": "2A — One mixed Live/Movie/Series ledger",
+    "remoteTextEntry": "3A — Minimal in-app TV keyboard"
+  },
+  "visualConfirmation": {
+    "status": "confirmed",
+    "note": "The user explicitly confirmed this first-viewport composition on 2026-08-17."
+  },
+  "fixtureData": {
+    "synthetic": true,
+    "scope": "All sources",
+    "sourceNames": [
+      "Harbor North",
+      "Weekend List",
+      "Family Room"
+    ],
+    "resultTotal": 84129,
+    "mediaKind": "Live"
+  },
+  "literalCautions": "Every title, source name, thumbnail, group label, and count is synthetic composition evidence. In All sources the provider-category pane is intentionally absent; single-source scope restores the existing provider category directory."
+}
