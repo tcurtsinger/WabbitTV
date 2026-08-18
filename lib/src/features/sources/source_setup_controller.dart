@@ -703,17 +703,14 @@ class SourceSetupController extends ChangeNotifier {
     final record = await _service.sourceOperation(sourceId);
     if (record == null) return false;
     final prior = await _credentialStore.read(record.credentialKey);
-    if (prior == null) {
-      failure = SourceImportFailureKind.emptyResponse;
-      _notify();
-      return false;
-    }
-    try {
-      await _credentialStore.delete(record.credentialKey);
-    } catch (_) {
-      failure = SourceImportFailureKind.emptyResponse;
-      _notify();
-      return false;
+    if (prior != null) {
+      try {
+        await _credentialStore.delete(record.credentialKey);
+      } catch (_) {
+        failure = SourceImportFailureKind.emptyResponse;
+        _notify();
+        return false;
+      }
     }
     try {
       await _service.removeSource(sourceId);
@@ -721,14 +718,16 @@ class SourceSetupController extends ChangeNotifier {
       _notify();
       return true;
     } catch (_) {
-      try {
-        await _credentialStore.write(
-          key: record.credentialKey,
-          username: prior.username,
-          password: prior.password,
-          serverUrl: prior.serverUrl,
-        );
-      } catch (_) {}
+      if (prior != null) {
+        try {
+          await _credentialStore.write(
+            key: record.credentialKey,
+            username: prior.username,
+            password: prior.password,
+            serverUrl: prior.serverUrl,
+          );
+        } catch (_) {}
+      }
       failure = SourceImportFailureKind.emptyResponse;
       _notify();
       return false;

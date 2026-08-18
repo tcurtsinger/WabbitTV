@@ -156,6 +156,38 @@ void main() {
       expect(controller.rosterLoads, greaterThan(loadsBeforeRestart));
     },
   );
+
+  testWidgets(
+    'rail navigation closes an open editor operation before leaving Sources',
+    (tester) async {
+      final controller = _ShellSourceController();
+      addTearDown(controller.dispose);
+      await tester.binding.setSurfaceSize(const Size(1265, 713));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(_shell(controller));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('source-row-weekend')));
+      await tester.tap(find.text('Edit'));
+      await tester.pumpAndSettle();
+      expect(find.text('Edit source'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.live_tv_outlined).first);
+      await tester.pumpAndSettle();
+      expect(find.text('Edit source'), findsNothing);
+
+      await tester.tap(find.byIcon(Icons.settings_outlined).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Refresh'));
+      await tester.pumpAndSettle();
+
+      expect(controller.refreshes, ['weekend']);
+      expect(
+        find.text('Another source action is already in progress.'),
+        findsNothing,
+      );
+    },
+  );
 }
 
 Widget _shell(_ShellSourceController controller, {M3uFilePicker? picker}) =>

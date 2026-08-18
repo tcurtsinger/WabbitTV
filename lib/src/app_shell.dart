@@ -121,6 +121,7 @@ class _WabbitShellState extends State<WabbitShell> {
   bool _sourceSetupOpen = false;
   SourceEditorRequest? _sourceEditorRequest;
   Completer<void>? _sourceEditorCompletion;
+  Future<void>? _destinationTransition;
   bool _restoreSourceManagementSelectedRowFocus = false;
   bool _restoreSourceManagementVisibilityFocus = false;
   SourceRosterEntry? _libraryVisibilitySource;
@@ -230,6 +231,30 @@ class _WabbitShellState extends State<WabbitShell> {
 
   void _selectDestination(ShellDestination destination) {
     if (_libraryVisibilitySource != null && _libraryVisibilityBusy) return;
+    if (_sourceSetupOpen && _sourceEditorRequest != null) {
+      if (_destinationTransition != null) return;
+      final transition = _closeEditorAndSelectDestination(destination);
+      _destinationTransition = transition;
+      unawaited(
+        transition.whenComplete(() {
+          if (identical(_destinationTransition, transition)) {
+            _destinationTransition = null;
+          }
+        }),
+      );
+      return;
+    }
+    _applyDestination(destination);
+  }
+
+  Future<void> _closeEditorAndSelectDestination(
+    ShellDestination destination,
+  ) async {
+    await _closeSourceSetup();
+    if (mounted) _applyDestination(destination);
+  }
+
+  void _applyDestination(ShellDestination destination) {
     setState(() {
       _destination = destination;
       _sourceSetupFromHome = false;

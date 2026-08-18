@@ -121,6 +121,31 @@ void main() {
   );
 
   test(
+    'targeted remove cleans up a source whose credential is already absent',
+    () async {
+      final fixture = await _RemovalFixture.create();
+      addTearDown(fixture.dispose);
+      fixture.credentials.values.remove('one-key');
+
+      expect(await fixture.controller().removeManagedSource('one'), isTrue);
+
+      final db = sqlite3.open(fixture.path);
+      addTearDown(db.close);
+      expect(
+        db.select('SELECT id FROM sources ORDER BY id').single['id'],
+        'two',
+      );
+      expect(
+        db
+            .select('SELECT source_id FROM catalog_items ORDER BY source_id')
+            .single['source_id'],
+        'two',
+      );
+      expect(fixture.credentials.values.containsKey('two-key'), isTrue);
+    },
+  );
+
+  test(
     'secure delete failure retains selected source, catalog, and credential',
     () async {
       final fixture = await _RemovalFixture.create();
