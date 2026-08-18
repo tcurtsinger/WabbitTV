@@ -313,6 +313,7 @@ class _WabbitShellState extends State<WabbitShell> {
   }
 
   void _openSourceSetupFromHome() {
+    if (!_sourceController.prepareForAddSource()) return;
     setState(() {
       _destination = ShellDestination.settings;
       _sourceSetupFromHome = true;
@@ -328,6 +329,7 @@ class _WabbitShellState extends State<WabbitShell> {
   }
 
   void _openSourceSetupFromManagement() {
+    if (!_sourceController.prepareForAddSource()) return;
     setState(() {
       _sourceSetupFromHome = false;
       _sourceSetupOpen = true;

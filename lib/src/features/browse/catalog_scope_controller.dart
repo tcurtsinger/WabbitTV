@@ -50,6 +50,8 @@ class CatalogScopeController extends ChangeNotifier {
   String? _announcement;
   Future<void>? _initializing;
   Future<void>? _reloading;
+  Future<void> _selectionTail = Future<void>.value();
+  int _selectionRequest = 0;
   bool _loading = true;
   int _revision = 0;
 
@@ -163,13 +165,23 @@ class CatalogScopeController extends ChangeNotifier {
         source.counts.values.any((count) => count > 0);
   }
 
-  Future<void> select(LibraryScope requested) async {
+  Future<void> select(LibraryScope requested) {
+    final request = ++_selectionRequest;
+    final selection = _selectionTail.then(
+      (_) => _saveSelection(requested, request),
+    );
+    _selectionTail = selection;
+    return selection;
+  }
+
+  Future<void> _saveSelection(LibraryScope requested, int request) async {
     final sourceId = requested.sourceId;
     final canSelect =
         sourceId == null || _sources.any((source) => source.id == sourceId);
     final desired = canSelect ? requested : const LibraryScope.all();
     try {
       final saved = await port.saveCatalogScope(desired);
+      if (request != _selectionRequest) return;
       _scope = saved;
       _error = null;
       if (sourceId != null && saved.sourceId != sourceId) {
@@ -180,6 +192,7 @@ class CatalogScopeController extends ChangeNotifier {
       _revision++;
       notifyListeners();
     } catch (_) {
+      if (request != _selectionRequest) return;
       _error = Object();
       _announcement = 'Could not change source. Try again.';
       notifyListeners();

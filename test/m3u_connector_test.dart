@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -196,6 +197,47 @@ https://stream.example/later
       'http://${server.address.address}:${server.port}/redirected/streams/channel.m3u8',
     );
   });
+
+  test(
+    'URL body uses one absolute deadline even while chunks keep arriving',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      Timer? trickle;
+      addTearDown(() => trickle?.cancel());
+      server.listen((request) async {
+        request.response.write('#EXTM3U\n');
+        await request.response.flush();
+        trickle = Timer.periodic(const Duration(milliseconds: 10), (_) {
+          request.response.write('# keep-alive\n');
+          unawaited(request.response.flush());
+        });
+      });
+      const deadlineConnector = M3uConnector(
+        maxBytes: 1024 * 1024,
+        requestTimeout: Duration(milliseconds: 80),
+      );
+
+      final stopwatch = Stopwatch()..start();
+      await expectLater(
+        deadlineConnector.importUrl(
+          url: Uri.parse(
+            'http://${server.address.address}:${server.port}/trickle.m3u',
+          ),
+          sourceId: 'deadline-source',
+        ),
+        throwsA(
+          isA<SourceImportFailure>().having(
+            (error) => error.kind,
+            'kind',
+            SourceImportFailureKind.timedOut,
+          ),
+        ),
+      );
+      stopwatch.stop();
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 1)));
+    },
+  );
 
   test('bounds, cancellation, and failures are redacted', () async {
     final tooSmall = M3uConnector(maxBytes: 8);

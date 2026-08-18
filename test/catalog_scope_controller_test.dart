@@ -107,6 +107,36 @@ void main() {
       );
     },
   );
+
+  test(
+    'rapid selections persist serially and only publish the latest choice',
+    () async {
+      final port = _GatedSelectionScopePort(
+        sources: [
+          _roster('first', status: 'ready'),
+          _roster('second', status: 'ready'),
+        ],
+      );
+      final controller = CatalogScopeController(port: port);
+      await controller.initialize();
+
+      final first = controller.select(const LibraryScope.source('first'));
+      await Future<void>.delayed(Duration.zero);
+      final second = controller.select(const LibraryScope.source('second'));
+      await Future<void>.delayed(Duration.zero);
+      expect(port.saveCalls, ['first']);
+
+      port.gates['first']!.complete(const LibraryScope.source('first'));
+      await Future<void>.delayed(Duration.zero);
+      expect(port.saveCalls, ['first', 'second']);
+      expect(controller.scope.isAll, isTrue);
+
+      port.gates['second']!.complete(const LibraryScope.source('second'));
+      await Future.wait([first, second]);
+      expect(controller.scope.sourceId, 'second');
+      expect(port.scope.sourceId, 'second');
+    },
+  );
 }
 
 SourceRosterEntry _roster(
@@ -184,4 +214,24 @@ class _OrderedScopePort implements CatalogScopePort {
 
   @override
   Future<LibraryScope> saveCatalogScope(LibraryScope scope) async => scope;
+}
+
+class _GatedSelectionScopePort extends _FakeScopePort {
+  _GatedSelectionScopePort({required super.sources});
+
+  final gates = <String, Completer<LibraryScope>>{
+    'first': Completer<LibraryScope>(),
+    'second': Completer<LibraryScope>(),
+  };
+  final saveCalls = <String>[];
+
+  @override
+  Future<LibraryScope> saveCatalogScope(LibraryScope requested) async {
+    final sourceId = requested.sourceId!;
+    saveCalls.add(sourceId);
+    final saved = await gates[sourceId]!.future;
+    scope = saved;
+    savedScope = saved;
+    return saved;
+  }
 }
