@@ -25,9 +25,12 @@ class SourceSetupService {
   SourceSetupService({
     SourceCatalogDatabase? database,
     this.removeSourceForTest,
+    this.renameSourceForTest,
   }) : _database = database ?? const SourceCatalogDatabase();
   final SourceCatalogDatabase _database;
   final Future<void> Function(String sourceId)? removeSourceForTest;
+  final Future<void> Function(String sourceId, String name)?
+  renameSourceForTest;
 
   Future<InitialSourceImport> begin(SourceDefinition source) =>
       _database.beginInitialImport(source);
@@ -63,6 +66,7 @@ class SourceSetupService {
   Future<List<SourceRosterEntry>> loadSourceRoster() =>
       _database.loadSourceRoster();
   Future<void> renameSource(String sourceId, String name) =>
+      renameSourceForTest?.call(sourceId, name) ??
       _database.renameSource(sourceId, name);
 }
 
@@ -492,18 +496,28 @@ class SourceSetupController extends ChangeNotifier {
   Future<void> refreshM3uSource(
     String sourceId, {
     String? replacementLocator,
+  }) => _refreshM3uSource(sourceId, replacementLocator: replacementLocator);
+
+  Future<void> _refreshM3uSource(
+    String sourceId, {
+    String? replacementLocator,
+    bool editorReserved = false,
+    int? operation,
   }) async {
-    if (_service == null || busy) {
+    if (_service == null || (busy && !editorReserved)) {
       return;
     }
     final record = await _service.sourceOperation(sourceId);
+    if (operation != null && operation != _operation) return;
     if (record == null ||
         (record.kind != 'm3u_url' && record.kind != 'm3u_file')) {
       return;
     }
-    final locator =
-        replacementLocator ??
-        (await _credentialStore.read(record.credentialKey))?.serverUrl;
+    final stored = replacementLocator == null
+        ? await _credentialStore.read(record.credentialKey)
+        : null;
+    if (operation != null && operation != _operation) return;
+    final locator = replacementLocator ?? stored?.serverUrl;
     if (locator == null || locator.isEmpty) {
       failure = SourceImportFailureKind.emptyResponse;
       _notify();
@@ -522,6 +536,7 @@ class SourceSetupController extends ChangeNotifier {
           password: '',
           serverUrl: locator,
         );
+        if (operation != null && operation != _operation) return;
       }
       final refresh = await _service.beginM3uRefresh(
         sourceId: sourceId,
@@ -539,7 +554,7 @@ class SourceSetupController extends ChangeNotifier {
           : error.kind;
       _markCurrentStageError();
     } finally {
-      isImporting = false;
+      if (!editorReserved) isImporting = false;
       _notify();
     }
   }
@@ -594,30 +609,65 @@ class SourceSetupController extends ChangeNotifier {
     final normalizedName = name.trim();
     final normalizedEndpoint = endpoint.trim();
     final normalizedUsername = username.trim();
+    final operation = ++_operation;
     fieldErrors = const {};
     failure = null;
-    await _service.renameSource(draft.sourceId, normalizedName);
-    if (draft.kind == SourceEditorKind.xtream) {
-      final normalized = _validate(
-        name: normalizedName,
-        serverUrl: normalizedEndpoint,
-        username: normalizedUsername,
-        password: password,
-      );
-      await _credentialStore.write(
-        key: draft.credentialKey,
-        username: normalized.username!,
-        password: password,
-        serverUrl: normalized.serverUrl,
-      );
-      await refreshManagedSource(draft.sourceId);
-    } else {
-      await refreshM3uSource(
-        draft.sourceId,
-        replacementLocator: normalizedEndpoint,
-      );
+    isImporting = true;
+    isCancelling = false;
+    _resetStages();
+    _notify();
+    try {
+      await _service.renameSource(draft.sourceId, normalizedName);
+      if (operation != _operation) return false;
+      if (draft.kind == SourceEditorKind.xtream) {
+        final normalized = _validate(
+          name: normalizedName,
+          serverUrl: normalizedEndpoint,
+          username: normalizedUsername,
+          password: password,
+        );
+        await _credentialStore.write(
+          key: draft.credentialKey,
+          username: normalized.username!,
+          password: password,
+          serverUrl: normalized.serverUrl,
+        );
+        if (operation != _operation) return false;
+        await _refreshManagedSource(
+          draft.sourceId,
+          editorReserved: true,
+          operation: operation,
+        );
+      } else {
+        await _refreshM3uSource(
+          draft.sourceId,
+          replacementLocator: normalizedEndpoint,
+          editorReserved: true,
+          operation: operation,
+        );
+      }
+      return operation == _operation && failure == null;
+    } on SourceImportFailure catch (error) {
+      if (operation == _operation) {
+        failure = error.kind == SourceImportFailureKind.cancelled
+            ? null
+            : error.kind;
+        _markCurrentStageError();
+      }
+      return false;
+    } catch (_) {
+      if (operation == _operation) {
+        failure = SourceImportFailureKind.localPersistence;
+        _markCurrentStageError();
+      }
+      return false;
+    } finally {
+      if (operation == _operation) {
+        isImporting = false;
+        isCancelling = false;
+        _notify();
+      }
     }
-    return failure == null;
   }
 
   Future<void> renameManagedSource(String sourceId, String name) async {
@@ -656,9 +706,17 @@ class SourceSetupController extends ChangeNotifier {
     return errors;
   }
 
-  Future<void> refreshManagedSource(String sourceId) async {
-    if (_service == null || busy) return;
+  Future<void> refreshManagedSource(String sourceId) =>
+      _refreshManagedSource(sourceId);
+
+  Future<void> _refreshManagedSource(
+    String sourceId, {
+    bool editorReserved = false,
+    int? operation,
+  }) async {
+    if (_service == null || (busy && !editorReserved)) return;
     final record = await _service.sourceOperation(sourceId);
+    if (operation != null && operation != _operation) return;
     if (record == null) return;
     if (record.kind == 'm3u_url' || record.kind == 'm3u_file') {
       await refreshM3uSource(sourceId);
@@ -666,6 +724,7 @@ class SourceSetupController extends ChangeNotifier {
     }
     if (record.kind != 'xtream') return;
     final credential = await _credentialStore.read(record.credentialKey);
+    if (operation != null && operation != _operation) return;
     if (credential == null || credential.serverUrl == null) {
       failure = SourceImportFailureKind.emptyResponse;
       _notify();
@@ -693,7 +752,7 @@ class SourceSetupController extends ChangeNotifier {
       _markCurrentStageError();
     } finally {
       _m3uRefresh = null;
-      isImporting = false;
+      if (!editorReserved) isImporting = false;
       _notify();
     }
   }

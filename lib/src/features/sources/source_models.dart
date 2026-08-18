@@ -302,6 +302,18 @@ class SourceVisibilityCategory {
   final bool isHidden;
 }
 
+/// One bounded page of provider visibility categories. The cursor is based on
+/// the same stable sort key and local group id used by the directory query.
+class SourceVisibilityCategoryPage {
+  const SourceVisibilityCategoryPage({
+    required this.categories,
+    required this.nextCursor,
+  });
+
+  final List<SourceVisibilityCategory> categories;
+  final BrowseCursor? nextCursor;
+}
+
 /// One imported item and its source-local visibility preference.
 class SourceVisibilityItem {
   const SourceVisibilityItem({

@@ -6,6 +6,7 @@ enum SourceImportFailureKind {
   emptyResponse,
   tooLarge,
   timedOut,
+  localPersistence,
   cancelled,
 }
 

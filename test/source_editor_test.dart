@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +8,7 @@ import 'package:wabbit_tv/src/features/sources/source_catalog_database.dart';
 import 'package:wabbit_tv/src/features/sources/source_editor.dart';
 import 'package:wabbit_tv/src/features/sources/source_models.dart';
 import 'package:wabbit_tv/src/features/sources/source_setup_controller.dart';
+import 'package:wabbit_tv/src/features/sources/xtream_connector.dart';
 
 void main() {
   test(
@@ -136,6 +138,138 @@ void main() {
       'Renamed weekend',
     );
   });
+
+  test(
+    'editor reserves one save before its first asynchronous write',
+    () async {
+      final server = await _xtreamServer();
+      addTearDown(() => server.close(force: true));
+      final fixture = await _Fixture.createXtream(server);
+      addTearDown(fixture.dispose);
+      final draft = await fixture.controller.loadEditor(
+        const SourceEditorRequest(
+          sourceId: 'xtream',
+          sourceName: 'Before',
+          databaseKind: 'xtream',
+        ),
+      );
+      final gate = Completer<void>();
+      fixture.credentials.writeGate = gate;
+
+      final first = fixture.controller.saveEditor(
+        draft: draft!,
+        name: 'After',
+        endpoint: draft.endpoint,
+        username: 'new-user',
+        password: 'new-password',
+      );
+      await fixture.credentials.writeStarted.future;
+      expect(fixture.controller.isImporting, isTrue);
+
+      final second = await fixture.controller.saveEditor(
+        draft: draft,
+        name: 'Competing',
+        endpoint: draft.endpoint,
+        username: 'other-user',
+        password: 'other-password',
+      );
+      expect(second, isFalse);
+      expect(fixture.credentials.writeCalls, 1);
+
+      gate.complete();
+      expect(await first, isTrue);
+      expect(fixture.credentials.writeCalls, 1);
+      expect(
+        (await fixture.controller.loadSourceRoster()).single.name,
+        'After',
+      );
+    },
+  );
+
+  test(
+    'editor converts credential persistence exceptions into a local failure',
+    () async {
+      final server = await _xtreamServer();
+      addTearDown(() => server.close(force: true));
+      final fixture = await _Fixture.createXtream(server);
+      addTearDown(fixture.dispose);
+      final draft = await fixture.controller.loadEditor(
+        const SourceEditorRequest(
+          sourceId: 'xtream',
+          sourceName: 'Before',
+          databaseKind: 'xtream',
+        ),
+      );
+      fixture.credentials.writeError = StateError('credential fixture failure');
+
+      final saved = await fixture.controller.saveEditor(
+        draft: draft!,
+        name: 'After',
+        endpoint: draft.endpoint,
+        username: 'new-user',
+        password: 'new-password',
+      );
+
+      expect(saved, isFalse);
+      expect(
+        fixture.controller.failure,
+        SourceImportFailureKind.localPersistence,
+      );
+      expect(fixture.controller.isImporting, isFalse);
+    },
+  );
+
+  test('editor converts rename exceptions into a local failure before credential write', () async {
+    final server = await _xtreamServer();
+    addTearDown(() => server.close(force: true));
+    final fixture = await _Fixture.createXtream(
+      server,
+      renameSourceForTest: (_, _) =>
+          Future<void>.error(StateError('rename fixture failure')),
+    );
+    addTearDown(fixture.dispose);
+    final draft = await fixture.controller.loadEditor(
+      const SourceEditorRequest(
+        sourceId: 'xtream',
+        sourceName: 'Before',
+        databaseKind: 'xtream',
+      ),
+    );
+
+    final saved = await fixture.controller.saveEditor(
+      draft: draft!,
+      name: 'After',
+      endpoint: draft.endpoint,
+      username: 'new-user',
+      password: 'new-password',
+    );
+
+    expect(saved, isFalse);
+    expect(
+      fixture.controller.failure,
+      SourceImportFailureKind.localPersistence,
+    );
+    expect(fixture.credentials.writeCalls, 0);
+    expect((await fixture.controller.loadSourceRoster()).single.name, 'Before');
+  });
+}
+
+Future<HttpServer> _xtreamServer() async {
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  server.listen((request) async {
+    final action = request.uri.queryParameters['action'];
+    request.response.write(switch (action) {
+      'get_live_categories' ||
+      'get_vod_categories' ||
+      'get_series_categories' => '[]',
+      'get_live_streams' => '[{"stream_id":"after","name":"After edit"}]',
+      'get_vod_streams' => '[{"stream_id":"movie","name":"Movie"}]',
+      'get_series' => '[{"series_id":"series","name":"Series"}]',
+      _ => '{"user_info":{"auth":1}}',
+    });
+    await request.response.close();
+  });
+  return server;
 }
 
 class _Fixture {
@@ -151,7 +285,10 @@ class _Fixture {
   final Database db;
   late final File initialFile;
 
-  static Future<_Fixture> createXtream(HttpServer server) async {
+  static Future<_Fixture> createXtream(
+    HttpServer server, {
+    Future<void> Function(String sourceId, String name)? renameSourceForTest,
+  }) async {
     final directory = await Directory.systemTemp.createTemp(
       'wabbit-editor-xtream-',
     );
@@ -181,7 +318,10 @@ class _Fixture {
       database,
       credentials,
       SourceSetupController(
-        productionService: SourceSetupService(database: database),
+        productionService: SourceSetupService(
+          database: database,
+          renameSourceForTest: renameSourceForTest,
+        ),
         credentialStore: credentials,
       ),
     );
@@ -250,6 +390,10 @@ ImportedStage _stage(String title) => ImportedStage(
 
 class _Credentials implements CredentialStore {
   final values = <String, StoredCredential>{};
+  Completer<void>? writeGate;
+  final Completer<void> writeStarted = Completer<void>();
+  Object? writeError;
+  int writeCalls = 0;
 
   @override
   Future<void> delete(String key) async => values.remove(key);
@@ -264,6 +408,11 @@ class _Credentials implements CredentialStore {
     required String password,
     String? serverUrl,
   }) async {
+    writeCalls++;
+    if (!writeStarted.isCompleted) writeStarted.complete();
+    final error = writeError;
+    if (error != null) throw error;
+    await writeGate?.future;
     values[key] = StoredCredential(
       username: username,
       password: password,

@@ -387,6 +387,50 @@ void main() {
     expect(find.text('Source details are unavailable'), findsOneWidget);
   });
 
+  testWidgets(
+    'editor persistence failure stays visible and keeps the editor open',
+    (tester) async {
+      final initialFocus = FocusNode(debugLabel: 'source name');
+      addTearDown(initialFocus.dispose);
+      final controller = _FailingSaveEditorController();
+      addTearDown(controller.dispose);
+      var saved = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SourceSetupScreen(
+              initialFocus: initialFocus,
+              onContentFocus: (_) {},
+              onExit: () {},
+              onBrowse: (_) {},
+              onEditorSaved: () => saved = true,
+              controller: controller,
+              editRequest: const SourceEditorRequest(
+                sourceId: 'source',
+                sourceName: 'Source',
+                databaseKind: 'xtream',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Save and refresh'));
+      await tester.tap(find.text('Save and refresh'));
+      await tester.pump();
+
+      expect(saved, isFalse);
+      expect(find.text('Source details'), findsOneWidget);
+      expect(
+        find.text(
+          'Wabbit TV could not save those source changes. The editor is still open; try again.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('cancellation acknowledgement returns focus to Source name', (
     tester,
   ) async {
@@ -559,6 +603,39 @@ class _ThrowingEditorController extends SourceSetupController {
   @override
   Future<SourceEditorDraft?> loadEditor(SourceEditorRequest request) async {
     throw StateError('fixture editor load failure');
+  }
+}
+
+class _FailingSaveEditorController extends SourceSetupController {
+  _FailingSaveEditorController()
+    : super(
+        service: _WidgetSourcePort(),
+        credentialStore: _WidgetCredentialStore(),
+      );
+
+  @override
+  Future<SourceEditorDraft?> loadEditor(SourceEditorRequest request) async =>
+      const SourceEditorDraft(
+        sourceId: 'source',
+        credentialKey: 'credential',
+        kind: SourceEditorKind.xtream,
+        name: 'Source',
+        endpoint: 'https://provider.example',
+        username: 'user',
+        password: 'password',
+      );
+
+  @override
+  Future<bool> saveEditor({
+    required SourceEditorDraft draft,
+    required String name,
+    required String endpoint,
+    required String username,
+    required String password,
+  }) async {
+    failure = SourceImportFailureKind.localPersistence;
+    notifyListeners();
+    return false;
   }
 }
 

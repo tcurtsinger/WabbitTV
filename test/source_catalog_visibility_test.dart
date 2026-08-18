@@ -366,6 +366,84 @@ void main() {
     );
   });
 
+  test('visibility category directory follows every bounded page', () async {
+    final fixture = await _VisibilityFixture.create();
+    addTearDown(fixture.dispose);
+    await fixture.database.commitInitialSource(_source('many', 'Many'), [
+      ImportedStage(
+        kind: SourceMediaKind.live,
+        categories: [
+          for (var index = 0; index < 1005; index++)
+            ImportedCategory(
+              providerKey: 'group-$index',
+              name: 'Group ${index.toString().padLeft(4, '0')}',
+            ),
+        ],
+        items: [
+          for (var index = 0; index < 1005; index++)
+            ImportedCatalogItem(
+              providerKey: 'item-$index',
+              title: 'Item ${index.toString().padLeft(4, '0')}',
+              categoryKey: 'group-$index',
+              playbackRef: 'ref-$index',
+            ),
+        ],
+      ),
+    ]);
+
+    final first = await fixture.database.loadVisibilityCategoryPage(
+      sourceId: 'many',
+      kind: SourceMediaKind.live,
+      limit: 1000,
+    );
+    final second = await fixture.database.loadVisibilityCategoryPage(
+      sourceId: 'many',
+      kind: SourceMediaKind.live,
+      cursor: first.nextCursor,
+      limit: 1000,
+    );
+    expect(first.categories, hasLength(1000));
+    expect(first.nextCursor, isNotNull);
+    expect(second.categories, hasLength(5));
+    expect(second.nextCursor, isNull);
+
+    await fixture.database.setAllCategoriesHidden(
+      sourceId: 'many',
+      kind: SourceMediaKind.live,
+      hidden: true,
+    );
+    final port = DatabaseLibraryVisibilityPort(fixture.database);
+    final allHidden = await port.loadCategories(
+      sourceId: 'many',
+      kind: SourceMediaKind.live,
+      hiddenOnly: false,
+    );
+    expect(allHidden, hasLength(1005));
+    final last = allHidden.last;
+    await fixture.database.setSourceGroupHidden(
+      sourceId: 'many',
+      kind: SourceMediaKind.live,
+      sourceGroupId: int.parse(last.ref.sourceGroupId!),
+      hidden: false,
+    );
+    final mixed = await port.loadCategories(
+      sourceId: 'many',
+      kind: SourceMediaKind.live,
+      hiddenOnly: false,
+    );
+    expect(mixed, hasLength(1005));
+    expect(mixed.where((category) => category.hidden), hasLength(1004));
+    expect(mixed.last.hidden, isFalse);
+    expect(
+      await port.setAllCategoriesHidden(
+        sourceId: 'many',
+        kind: SourceMediaKind.live,
+        hidden: true,
+      ),
+      1,
+    );
+  });
+
   test('bulk category visibility is source and kind scoped and preserves item state', () async {
     final fixture = await _VisibilityFixture.create();
     addTearDown(fixture.dispose);

@@ -838,22 +838,50 @@ class SourceCatalogDatabase {
     );
   }
 
-  /// Reads a bounded source-local category directory for visibility
-  /// maintenance. Unlike ordinary Browse, hidden categories remain present so
-  /// the user can restore them. `hiddenOnly` is the recovery filter.
+  /// Reads the complete source-local category directory through bounded pages.
+  /// Unlike ordinary Browse, hidden categories remain present so the user can
+  /// restore them. `hiddenOnly` is the recovery filter and [limit] is the page
+  /// size rather than a cap on the returned directory.
   Future<List<SourceVisibilityCategory>> loadVisibilityCategories({
     required String sourceId,
     required SourceMediaKind kind,
     bool hiddenOnly = false,
     int limit = _defaultVisibilityCategoryLimit,
   }) async {
+    final categories = <SourceVisibilityCategory>[];
+    BrowseCursor? cursor;
+    do {
+      final page = await loadVisibilityCategoryPage(
+        sourceId: sourceId,
+        kind: kind,
+        hiddenOnly: hiddenOnly,
+        cursor: cursor,
+        limit: limit,
+      );
+      categories.addAll(page.categories);
+      cursor = page.nextCursor;
+    } while (cursor != null);
+    return List.unmodifiable(categories);
+  }
+
+  /// Reads one bounded visibility-category page. Production normally uses
+  /// [loadVisibilityCategories], which follows every cursor so bulk summaries
+  /// and individual category management cannot be truncated.
+  Future<SourceVisibilityCategoryPage> loadVisibilityCategoryPage({
+    required String sourceId,
+    required SourceMediaKind kind,
+    bool hiddenOnly = false,
+    BrowseCursor? cursor,
+    int limit = _defaultVisibilityCategoryLimit,
+  }) async {
     final path = await resolvedPath();
-    return Isolate.run<List<SourceVisibilityCategory>>(
-      () => _loadVisibilityCategoriesOnWorker(
+    return Isolate.run<SourceVisibilityCategoryPage>(
+      () => _loadVisibilityCategoryPageOnWorker(
         path,
         sourceId,
         kind,
         hiddenOnly,
+        cursor,
         limit.clamp(1, _maximumVisibilityCategoryLimit),
       ),
     );
@@ -1552,21 +1580,29 @@ String _rosterStatus(String refreshState, String? lastError) {
   return isTypedFailure ? 'refresh_failed' : refreshState;
 }
 
-List<SourceVisibilityCategory> _loadVisibilityCategoriesOnWorker(
+SourceVisibilityCategoryPage _loadVisibilityCategoryPageOnWorker(
   String path,
   String sourceId,
   SourceMediaKind kind,
   bool hiddenOnly,
+  BrowseCursor? cursor,
   int limit,
 ) {
-  if (!File(path).existsSync()) return const [];
+  if (!File(path).existsSync()) {
+    return const SourceVisibilityCategoryPage(categories: [], nextCursor: null);
+  }
   final db = _openDatabase(path);
   try {
     final ready = db.select(
       "SELECT id FROM sources WHERE id = ? AND refresh_state IN ('ready', 'refreshing')",
       [sourceId],
     );
-    if (ready.isEmpty) return const [];
+    if (ready.isEmpty) {
+      return const SourceVisibilityCategoryPage(
+        categories: [],
+        nextCursor: null,
+      );
+    }
     final hiddenFilter = hiddenOnly
         ? '''AND (groups.hidden = 1 OR EXISTS (
                SELECT 1 FROM catalog_items AS hidden_items
@@ -1575,8 +1611,21 @@ List<SourceVisibilityCategory> _loadVisibilityCategoriesOnWorker(
                  AND hidden_items.hidden = 1
              ))'''
         : '';
+    final cursorFilter = cursor == null
+        ? ''
+        : '''AND (groups.sort_key > ? OR
+                 (groups.sort_key = ? AND groups.id > ?))''';
+    final arguments = <Object?>[sourceId, kind.name];
+    if (cursor != null) {
+      arguments.addAll([
+        cursor.normalizedTitle,
+        cursor.normalizedTitle,
+        int.parse(cursor.id),
+      ]);
+    }
+    arguments.add(limit + 1);
     final rows = db.select(
-      '''SELECT groups.id, groups.name, groups.hidden,
+      '''SELECT groups.id, groups.name, groups.hidden, groups.sort_key,
                 COUNT(items.id) AS item_count,
                 COALESCE(SUM(CASE WHEN items.hidden = 1 THEN 1 ELSE 0 END), 0)
                   AS hidden_item_count
@@ -1586,13 +1635,16 @@ List<SourceVisibilityCategory> _loadVisibilityCategoriesOnWorker(
           AND items.available = 1
          WHERE groups.source_id = ? AND groups.content_kind = ?
            AND groups.available = 1
+           $cursorFilter
            $hiddenFilter
          GROUP BY groups.id
          ORDER BY groups.sort_key ASC, groups.id ASC
          LIMIT ?''',
-      [sourceId, kind.name, limit],
+      arguments,
     );
-    final categories = rows
+    final hasMore = rows.length > limit;
+    final visibleRows = hasMore ? rows.take(limit) : rows;
+    final categories = visibleRows
         .map(
           (row) => SourceVisibilityCategory(
             selection: BrowseCategorySelection.sourceGroup(row['id']! as int),
@@ -1619,7 +1671,7 @@ List<SourceVisibilityCategory> _loadVisibilityCategoriesOnWorker(
         .single;
     final itemCount = uncategorized['item_count']! as int;
     final hiddenItemCount = uncategorized['hidden_item_count']! as int;
-    if (itemCount > 0 && (!hiddenOnly || hiddenItemCount > 0)) {
+    if (!hasMore && itemCount > 0 && (!hiddenOnly || hiddenItemCount > 0)) {
       categories.add(
         SourceVisibilityCategory(
           selection: const BrowseCategorySelection.uncategorized(),
@@ -1630,7 +1682,16 @@ List<SourceVisibilityCategory> _loadVisibilityCategoriesOnWorker(
         ),
       );
     }
-    return List.unmodifiable(categories);
+    final last = hasMore ? visibleRows.last : null;
+    return SourceVisibilityCategoryPage(
+      categories: List.unmodifiable(categories),
+      nextCursor: last == null
+          ? null
+          : BrowseCursor(
+              normalizedTitle: last['sort_key']! as String,
+              id: (last['id']! as int).toString(),
+            ),
+    );
   } finally {
     db.close();
   }

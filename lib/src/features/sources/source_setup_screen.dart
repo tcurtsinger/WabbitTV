@@ -822,6 +822,7 @@ class _FailureNotice extends StatelessWidget {
       SourceImportFailureKind.tooLarge =>
         'That provider catalog is too large to import safely.',
       SourceImportFailureKind.timedOut => 'That provider took too long to respond. Check the connection and try again.',
+      SourceImportFailureKind.localPersistence => 'Wabbit TV could not save those source changes. The editor is still open; try again.',
       SourceImportFailureKind.cancelled => 'The import was cancelled.',
     };
     return Semantics(
