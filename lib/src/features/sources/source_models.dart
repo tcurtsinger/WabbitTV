@@ -210,6 +210,245 @@ class LibraryPage {
   final BrowseCursor? nextCursor;
 }
 
+/// One locally recorded viewing occurrence and the exact currently playable
+/// source variant selected for that library identity.
+class RecentlyWatchedItem {
+  const RecentlyWatchedItem({required this.item, required this.lastPlayedAt});
+
+  final LibraryCatalogItem item;
+  final DateTime lastPlayedAt;
+}
+
+/// Restart-safe progress for one exact playable Movie or Episode.
+///
+/// [mediaKey] is a caller-owned opaque local key. It distinguishes episodes
+/// inside one stable series identity without persisting a playback locator or
+/// creating any title-derived identity relationship.
+class PlaybackProgress {
+  const PlaybackProgress({
+    required this.libraryItemId,
+    required this.mediaKey,
+    required this.positionMs,
+    required this.durationMs,
+    this.watchedMs = 0,
+    required this.completed,
+    required this.updatedAt,
+  });
+
+  final String libraryItemId;
+  final String mediaKey;
+  final int positionMs;
+  final int durationMs;
+  final int watchedMs;
+  final bool completed;
+  final DateTime updatedAt;
+
+  /// Resume is based on actual watched time, never a seeked position.
+  bool get isResumeEligible =>
+      !completed &&
+      watchedMs >= 30000 &&
+      positionMs > 0 &&
+      durationMs - positionMs >= 60000;
+
+  @override
+  String toString() =>
+      'PlaybackProgress(positionMs: $positionMs, '
+      'durationMs: $durationMs, watchedMs: $watchedMs, '
+      'completed: $completed, updatedAt: ${updatedAt.toUtc().toIso8601String()})';
+}
+
+/// The nonsecret per-source connection allowance used before transport open.
+///
+/// Automatic mode is represented by a null [overrideLimit]. The effective
+/// precedence is local override, provider report, then conservative one.
+class SourceConnectionAllowance {
+  const SourceConnectionAllowance({
+    required this.reportedLimit,
+    required this.overrideLimit,
+  });
+
+  final int? reportedLimit;
+  final int? overrideLimit;
+
+  int get effectiveLimit => overrideLimit ?? reportedLimit ?? 1;
+
+  bool get usesConservativeDefault =>
+      overrideLimit == null && reportedLimit == null;
+
+  @override
+  String toString() =>
+      'SourceConnectionAllowance(reportedLimit: $reportedLimit, '
+      'overrideLimit: $overrideLimit, effectiveLimit: $effectiveLimit)';
+}
+
+enum PersonalLibraryDirectoryKind { favorites, customGroup }
+
+enum PersonalLibraryMoveDirection { up, down }
+
+enum PersonalLibraryMutationOutcome {
+  changed,
+  unchanged,
+  invalidName,
+  duplicateName,
+  limitReached,
+  missingItem,
+  missingGroup,
+}
+
+class PersonalLibraryCollectionRef {
+  const PersonalLibraryCollectionRef.favorites()
+    : kind = PersonalLibraryDirectoryKind.favorites,
+      collectionId = null;
+
+  const PersonalLibraryCollectionRef.customGroup(this.collectionId)
+    : kind = PersonalLibraryDirectoryKind.customGroup;
+
+  final PersonalLibraryDirectoryKind kind;
+  final String? collectionId;
+
+  String get key => kind == PersonalLibraryDirectoryKind.favorites
+      ? 'favorites'
+      : 'group:$collectionId';
+}
+
+/// A bounded, read-only entry in My Library's Favorites/group directory.
+class PersonalLibraryDirectoryEntry {
+  const PersonalLibraryDirectoryEntry({
+    required this.kind,
+    required this.collectionId,
+    required this.name,
+    required this.itemCount,
+    this.directoryOrdinal,
+    this.homeOrdinal,
+  });
+
+  final PersonalLibraryDirectoryKind kind;
+  final String? collectionId;
+  final String name;
+  final int itemCount;
+  final int? directoryOrdinal;
+  final int? homeOrdinal;
+
+  bool get isPinned => homeOrdinal != null;
+
+  PersonalLibraryCollectionRef get reference =>
+      kind == PersonalLibraryDirectoryKind.favorites
+      ? const PersonalLibraryCollectionRef.favorites()
+      : PersonalLibraryCollectionRef.customGroup(collectionId!);
+}
+
+class PersonalLibraryGroupChoice {
+  const PersonalLibraryGroupChoice({
+    required this.groupId,
+    required this.name,
+    required this.selected,
+  });
+
+  final String groupId;
+  final String name;
+  final bool selected;
+}
+
+class PersonalLibraryOrganization {
+  const PersonalLibraryOrganization({
+    required this.libraryItemId,
+    required this.isFavorite,
+    required this.groups,
+  });
+
+  final String libraryItemId;
+  final bool isFavorite;
+  final List<PersonalLibraryGroupChoice> groups;
+}
+
+class PersonalLibraryMutationResult {
+  const PersonalLibraryMutationResult(this.outcome, {this.collection});
+
+  final PersonalLibraryMutationOutcome outcome;
+  final PersonalLibraryDirectoryEntry? collection;
+
+  bool get succeeded =>
+      outcome == PersonalLibraryMutationOutcome.changed ||
+      outcome == PersonalLibraryMutationOutcome.unchanged;
+}
+
+/// A library identity plus its exact currently playable source variant.
+///
+/// Organization membership remains visible when every source variant is
+/// unavailable. In that case the source/playback fields are null and
+/// [isAvailable] is false.
+class PersonalLibraryItem {
+  const PersonalLibraryItem({
+    required this.libraryItemId,
+    required this.kind,
+    required this.title,
+    required this.artworkLocator,
+    required this.catalogItemId,
+    required this.sourceId,
+    required this.sourceDisplayName,
+    required this.playbackRef,
+  });
+
+  final String libraryItemId;
+  final SourceMediaKind kind;
+  final String title;
+  final String? artworkLocator;
+  final String? catalogItemId;
+  final String? sourceId;
+  final String? sourceDisplayName;
+  final String? playbackRef;
+
+  bool get isAvailable => catalogItemId != null;
+
+  LibraryCatalogItem? get playableItem {
+    if (!isAvailable) return null;
+    return LibraryCatalogItem(
+      libraryItemId: libraryItemId,
+      catalogItemId: catalogItemId!,
+      sourceId: sourceId!,
+      sourceDisplayName: sourceDisplayName!,
+      kind: kind,
+      title: title,
+      artworkLocator: artworkLocator,
+      playbackRef: playbackRef!,
+    );
+  }
+}
+
+class FavoritePageCursor {
+  const FavoritePageCursor({
+    required this.createdAt,
+    required this.libraryItemId,
+  });
+
+  final DateTime createdAt;
+  final String libraryItemId;
+}
+
+class FavoriteLibraryPage {
+  const FavoriteLibraryPage({required this.items, required this.nextCursor});
+
+  final List<PersonalLibraryItem> items;
+  final FavoritePageCursor? nextCursor;
+}
+
+class CustomGroupPageCursor {
+  const CustomGroupPageCursor({
+    required this.ordinal,
+    required this.libraryItemId,
+  });
+
+  final int ordinal;
+  final String libraryItemId;
+}
+
+class CustomGroupLibraryPage {
+  const CustomGroupLibraryPage({required this.items, required this.nextCursor});
+
+  final List<PersonalLibraryItem> items;
+  final CustomGroupPageCursor? nextCursor;
+}
+
 enum BrowseCategorySelectionKind { all, sourceGroup, uncategorized }
 
 /// The category slice requested from one source and media kind.
@@ -248,7 +487,9 @@ class BrowseCategorySummary {
 /// A stable position in a title-ordered catalog or library page.
 ///
 /// Library queries place the library identity in [id], not the chosen source
-/// variant, so merged identities cannot repeat or be skipped between pages.
+/// variant. Imported provider items deliberately remain separate identities,
+/// including when their display titles match, so each cursor addresses exactly
+/// one provider-owned item without introducing a merge contract.
 class BrowseCursor {
   const BrowseCursor({required this.normalizedTitle, required this.id});
 
@@ -264,6 +505,7 @@ class BrowseCatalogItem {
     required this.title,
     required this.artworkLocator,
     required this.playbackRef,
+    this.libraryItemId,
   });
 
   final String id;
@@ -272,6 +514,7 @@ class BrowseCatalogItem {
   final String title;
   final String? artworkLocator;
   final String playbackRef;
+  final String? libraryItemId;
 }
 
 class BrowsePage {

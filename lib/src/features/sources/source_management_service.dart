@@ -23,7 +23,8 @@ class SourceManagementFailure implements Exception {
 /// source setup lifecycle. It intentionally adds no connector or database
 /// abstraction: SourceSetupController remains the single owner of refresh,
 /// credential deletion/rollback, and connector dispatch.
-class SourceManagementService implements SourceManagementPort {
+class SourceManagementService
+    implements SourceManagementPort, SourceConnectionAllowancePort {
   SourceManagementService({
     required this.sourceController,
     this.onEditAndRefresh,
@@ -39,6 +40,46 @@ class SourceManagementService implements SourceManagementPort {
   @override
   Future<List<SourceRosterEntry>> loadRoster() =>
       sourceController.loadSourceRoster();
+
+  @override
+  Future<SourceConnectionAllowance> loadSourceConnectionAllowance(
+    String sourceId,
+  ) async {
+    try {
+      final allowance = await sourceController.loadSourceConnectionAllowance(
+        sourceId,
+      );
+      if (allowance == null) {
+        throw const SourceManagementFailure(
+          SourceManagementFailureKind.sourceMissing,
+        );
+      }
+      return allowance;
+    } on SourceManagementFailure {
+      rethrow;
+    } catch (_) {
+      throw const SourceManagementFailure(
+        SourceManagementFailureKind.unavailable,
+      );
+    }
+  }
+
+  @override
+  Future<SourceConnectionAllowance> setSourceConnectionLimitOverride({
+    required String sourceId,
+    required int? overrideLimit,
+  }) => _run(() async {
+    final allowance = await sourceController.setSourceConnectionLimitOverride(
+      sourceId: sourceId,
+      overrideLimit: overrideLimit,
+    );
+    if (allowance == null) {
+      throw const SourceManagementFailure(
+        SourceManagementFailureKind.updateFailed,
+      );
+    }
+    return allowance;
+  });
 
   @override
   Future<void> refresh(String sourceId) => _run(() async {

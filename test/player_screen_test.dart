@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wabbit_tv/src/features/browse/playback_handoff.dart';
+import 'package:wabbit_tv/src/features/playback/playback_manager.dart';
+import 'package:wabbit_tv/src/features/playback/playback_runtime_adapters.dart';
 import 'package:wabbit_tv/src/features/playback/playback_transport.dart';
 import 'package:wabbit_tv/src/features/playback/player_screen.dart';
 import 'package:wabbit_tv/src/features/sources/credential_store.dart';
@@ -159,6 +162,47 @@ void main() {
       expect(transport.openedHeaders, isEmpty);
     },
   );
+  testWidgets(
+    'usable-video callback fires once after video and callback failure is isolated',
+    (tester) async {
+      final transport = _FakeTransport._(name: 'manual', order: <String>[]);
+      var callbacks = 0;
+      await tester.pumpWidget(
+        _host(
+          handoff: const MoviePlaybackHandoff(
+            sourceId: 'source',
+            title: 'Movie',
+            providerItemId: '42',
+            extension: 'mp4',
+            libraryItemId: 'library-42',
+          ),
+          transportFactory: () => transport,
+          onUsableVideo: (handoff) {
+            callbacks += 1;
+            expect(handoff.libraryItemId, 'library-42');
+            throw StateError('local history write failed');
+          },
+        ),
+      );
+      await tester.pump();
+
+      transport.emit(
+        const PlaybackTransportState(isBuffering: true, hasVideo: false),
+      );
+      await tester.pump();
+      expect(callbacks, 0);
+
+      transport.emit(const PlaybackTransportState(hasVideo: true));
+      transport.emit(
+        const PlaybackTransportState(hasVideo: true, isPlaying: true),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(callbacks, 1);
+      expect(find.byKey(const ValueKey('player-video-stage')), findsOneWidget);
+      expect(find.byKey(const ValueKey('player-failure-deck')), findsNothing);
+    },
+  );
   testWidgets('a resolver-null M3U result does not open a stale source', (
     tester,
   ) async {
@@ -180,7 +224,7 @@ void main() {
 
     expect(transportCalls, 0);
     expect(credentials.reads, 0);
-    expect(find.text('Try again'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
   });
   testWidgets('a resolver-null Xtream result does not open a stale source', (
     tester,
@@ -205,7 +249,7 @@ void main() {
     await tester.pump();
 
     expect(transportCalls, 0);
-    expect(find.text('Open Settings'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
   });
   testWidgets('a throwing source resolver stays in bounded recovery', (
     tester,
@@ -226,7 +270,7 @@ void main() {
     await tester.pump();
 
     expect(transportCalls, 0);
-    expect(find.text('Try again'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
   });
   testWidgets('a throwing credential read stays in bounded recovery', (
     tester,
@@ -252,7 +296,7 @@ void main() {
     await tester.pump();
 
     expect(transportCalls, 0);
-    expect(find.text('Try again'), findsOneWidget);
+    expect(find.text('Open Settings'), findsOneWidget);
   });
   test(
     'Windows fullscreen hides the native title bar until after exit',
@@ -364,18 +408,21 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(calls, 2);
-      expect(find.text('Try again'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      expect(find.text('Back'), findsOneWidget);
+      expect(find.text('Technical details'), findsOneWidget);
+      expect(find.textContaining('Try '), findsNothing);
       final recoverySemantics = tester.widget<Semantics>(
         find.descendant(
           of: find.byKey(const ValueKey('player-recovery-primary')),
           matching: find.byWidgetPredicate(
             (widget) =>
-                widget is Semantics && widget.properties.label == 'Try again',
+                widget is Semantics && widget.properties.label == 'Retry',
           ),
         ),
       );
       expect(recoverySemantics.properties.button, isTrue);
-      expect(recoverySemantics.properties.label, 'Try again');
+      expect(recoverySemantics.properties.label, 'Retry');
       expect(recoverySemantics.excludeSemantics, isTrue);
       expect(
         FocusManager.instance.primaryFocus?.debugLabel,
@@ -710,7 +757,229 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
     expect(find.byKey(const ValueKey('player-broadcast-deck')), findsNothing);
   });
+
+  testWidgets(
+    'manager presentation rebuild never creates or disposes a transport',
+    (tester) async {
+      var created = 0;
+      final transport = _FakeTransport.ready();
+      final manager = PlaybackManager(
+        targetResolver: const _ManagerResolver(),
+        transportFactory: () {
+          created += 1;
+          return transport;
+        },
+      );
+      addTearDown(manager.dispose);
+      const handoff = LivePlaybackHandoff(
+        sourceId: 'source',
+        title: 'Managed live',
+        providerItemId: '1',
+        extension: 'ts',
+      );
+      final started = await manager.start(handoff) as PlaybackStarted;
+
+      await tester.pumpWidget(
+        _managedHost(manager, started.sessionId, handoff),
+      );
+      await tester.pump();
+      await tester.pumpWidget(
+        _managedHost(manager, started.sessionId, handoff),
+      );
+      await tester.pump();
+
+      expect(created, 1);
+      expect(transport.disposed, isFalse);
+      expect(manager.sessions, hasLength(1));
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(transport.disposed, isFalse);
+    },
+  );
+
+  testWidgets(
+    'Tracks ledger selects real DTO tracks, Off, and reports failure',
+    (tester) async {
+      final transport = _TrackedTransport();
+      final manager = PlaybackManager(
+        targetResolver: const _ManagerResolver(),
+        transportFactory: () => transport,
+      );
+      addTearDown(manager.dispose);
+      const handoff = LivePlaybackHandoff(
+        sourceId: 'source',
+        title: 'Managed live',
+        providerItemId: '1',
+        extension: 'ts',
+      );
+      final started = await manager.start(handoff) as PlaybackStarted;
+      await tester.pumpWidget(
+        _managedHost(manager, started.sessionId, handoff),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Tracks'));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('player-tracks-ledger')),
+        findsOneWidget,
+      );
+      expect(find.text('Spanish · es'), findsOneWidget);
+      expect(find.text('Off'), findsOneWidget);
+      await tester.tap(find.text('Spanish · es'));
+      await tester.pump();
+      expect(transport.selectedAudio, 'audio-2');
+      await tester.tap(find.text('Off'));
+      await tester.pump();
+      expect(transport.selectedSubtitle, 'no');
+
+      transport.failSelections = true;
+      await tester.tap(find.text('English · en').first);
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('player-track-message')),
+        findsOneWidget,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('player-tracks-ledger')), findsNothing);
+      expect(manager.sessions, hasLength(1));
+    },
+  );
+
+  testWidgets('terminal recovery exposes only returned exact variants', (
+    tester,
+  ) async {
+    final manager = PlaybackManager(
+      targetResolver: const _ManagerResolver(),
+      transportFactory: () => throw StateError('unavailable'),
+    );
+    addTearDown(manager.dispose);
+    const handoff = MoviePlaybackHandoff(
+      sourceId: 'source-a',
+      title: 'Managed movie',
+      providerItemId: '2',
+      extension: 'mp4',
+      libraryItemId: 'library-movie',
+    );
+    final failed = await manager.start(handoff) as PlaybackStartFailed;
+    await tester.pumpWidget(
+      _managedHost(
+        manager,
+        failed.sessionId,
+        handoff,
+        variantPort: const _VariantPort([
+          PlaybackVariantCandidate(
+            label: 'Source B',
+            handoff: MoviePlaybackHandoff(
+              sourceId: 'source-b',
+              title: 'Managed movie',
+              providerItemId: '20',
+              extension: 'mkv',
+              libraryItemId: 'library-movie',
+            ),
+          ),
+        ]),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Back'), findsOneWidget);
+    expect(find.text('Technical details'), findsOneWidget);
+    expect(find.text('Try Source B'), findsOneWidget);
+    expect(find.textContaining('source-b'), findsNothing);
+  });
+
+  testWidgets(
+    'eligible resume is visible and Start over clears exact progress',
+    (tester) async {
+      final progress = _ManagerProgress(
+        loaded: PlaybackCheckpoint(
+          position: const Duration(seconds: 45),
+          duration: const Duration(minutes: 2),
+          watched: const Duration(seconds: 45),
+          updatedAt: DateTime.utc(2026, 8, 19),
+        ),
+      );
+      final transport = _FakeTransport.ready();
+      final manager = PlaybackManager(
+        targetResolver: const _ManagerResolver(),
+        progressPort: progress,
+        transportFactory: () => transport,
+      );
+      addTearDown(manager.dispose);
+      const handoff = MoviePlaybackHandoff(
+        sourceId: 'source',
+        title: 'Managed movie',
+        providerItemId: '2',
+        extension: 'mp4',
+        libraryItemId: 'library-movie',
+      );
+      final started = await manager.start(handoff) as PlaybackStarted;
+      await tester.pumpWidget(
+        _managedHost(manager, started.sessionId, handoff),
+      );
+      await tester.pump();
+
+      expect(find.text('Resumed at 0:00:45.'), findsOneWidget);
+      await tester.tap(find.byTooltip('Start over'));
+      await tester.pump();
+      expect(progress.clears, 1);
+      expect(find.text('Started over.'), findsOneWidget);
+    },
+  );
+
+  testWidgets('progress save failure is truthful without interrupting video', (
+    tester,
+  ) async {
+    final progress = _ManagerProgress(saveResult: false);
+    final transport = _FakeTransport.ready();
+    final manager = PlaybackManager(
+      targetResolver: const _ManagerResolver(),
+      progressPort: progress,
+      transportFactory: () => transport,
+    );
+    addTearDown(manager.dispose);
+    const handoff = MoviePlaybackHandoff(
+      sourceId: 'source',
+      title: 'Managed movie',
+      providerItemId: '2',
+      extension: 'mp4',
+      libraryItemId: 'library-movie',
+    );
+    final started = await manager.start(handoff) as PlaybackStarted;
+    await tester.pumpWidget(_managedHost(manager, started.sessionId, handoff));
+    transport.emit(
+      const PlaybackTransportState(
+        hasVideo: true,
+        isPlaying: true,
+        position: Duration(seconds: 40),
+        duration: Duration(minutes: 2),
+      ),
+    );
+    await manager.pause(started.sessionId);
+    await tester.pump();
+
+    expect(find.text('Progress could not be saved.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-video-stage')), findsOneWidget);
+  });
 }
+
+Widget _managedHost(
+  PlaybackManager manager,
+  PlaybackSessionId sessionId,
+  PlaybackHandoff handoff, {
+  PlaybackExactVariantPort? variantPort,
+}) => MaterialApp(
+  home: PlayerScreen(
+    manager: manager,
+    sessionId: sessionId,
+    handoff: handoff,
+    variantPort: variantPort,
+    onExit: () {},
+  ),
+);
 
 Widget _host({
   required PlaybackHandoff handoff,
@@ -721,6 +990,7 @@ Widget _host({
   FullscreenPort? fullscreen,
   VoidCallback? onExit,
   Duration startupDeadline = productionPlayerStartupDeadline,
+  UsableVideoCallback? onUsableVideo,
 }) => MaterialApp(
   home: PlayerScreen(
     handoff: handoff,
@@ -745,6 +1015,7 @@ Widget _host({
     transportFactory: transportFactory,
     fullscreenPort: fullscreen,
     startupDeadline: startupDeadline,
+    onUsableVideo: onUsableVideo,
     onExit: onExit ?? () {},
   ),
 );
@@ -768,7 +1039,7 @@ Future<void> _focusPlayerControl(WidgetTester tester, String target) async {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await tester.pump();
   }
-  for (var steps = 0; steps < 12; steps++) {
+  for (var steps = 0; steps < 24; steps++) {
     if (FocusManager.instance.primaryFocus?.debugLabel == target) return;
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pump();
@@ -860,7 +1131,7 @@ class _FakeTransport implements PlaybackTransport {
   final List<String> order;
   final bool emitReadyWhenOpened;
   final StreamController<PlaybackTransportState> _controller =
-      StreamController<PlaybackTransportState>.broadcast();
+      StreamController<PlaybackTransportState>.broadcast(sync: true);
   bool disposed = false;
   Uri? openedUri;
   Map<String, String>? openedHeaders;
@@ -876,10 +1147,10 @@ class _FakeTransport implements PlaybackTransport {
   @override
   Widget buildVideo() => const ColoredBox(color: Colors.black);
   @override
-  Future<void> dispose() async {
+  Future<void> dispose() {
     disposed = true;
     order.add('$name:dispose');
-    await _controller.close();
+    return SynchronousFuture<void>(null);
   }
 
   @override
@@ -903,6 +1174,103 @@ class _FakeTransport implements PlaybackTransport {
   Future<void> setMuted(bool muted) async {}
   @override
   Future<void> setVolume(double volume) async {}
+}
+
+class _ManagerResolver implements PlaybackTargetResolverPort {
+  const _ManagerResolver();
+  @override
+  Future<PlaybackResolvedTarget> resolve(PlaybackHandoff handoff) async =>
+      PlaybackResolvedTarget(uri: Uri.parse('https://stream.example/item'));
+}
+
+class _ManagerProgress implements PlaybackProgressPort {
+  _ManagerProgress({this.loaded, this.saveResult = true});
+  final PlaybackCheckpoint? loaded;
+  final bool saveResult;
+  int clears = 0;
+  @override
+  Future<bool> clear(PlaybackProgressIdentity identity) async {
+    clears += 1;
+    return true;
+  }
+
+  @override
+  Future<PlaybackCheckpoint?> load(PlaybackProgressIdentity identity) async =>
+      loaded;
+
+  @override
+  Future<bool> save(
+    PlaybackProgressIdentity identity,
+    PlaybackCheckpoint checkpoint,
+  ) async => saveResult;
+}
+
+class _VariantPort implements PlaybackExactVariantPort {
+  const _VariantPort(this.values);
+  final List<PlaybackVariantCandidate> values;
+
+  @override
+  Future<List<PlaybackVariantCandidate>> loadExactVariants(
+    PlaybackHandoff current,
+  ) async => values;
+}
+
+class _TrackedTransport implements PlaybackTrackTransport {
+  final controller = StreamController<PlaybackTransportState>.broadcast(
+    sync: true,
+  );
+  String? selectedAudio, selectedSubtitle;
+  bool failSelections = false;
+  @override
+  Stream<PlaybackTransportState> get states => controller.stream;
+  @override
+  Widget buildVideo() => const ColoredBox(color: Colors.black);
+  @override
+  Future<void> open(
+    Uri uri, {
+    Map<String, String> httpHeaders = const {},
+  }) async {
+    controller.add(
+      const PlaybackTransportState(
+        hasVideo: true,
+        isPlaying: true,
+        duration: Duration(minutes: 2),
+        audioTracks: [
+          PlaybackMediaTrack(id: 'audio-1', label: 'English', language: 'en'),
+          PlaybackMediaTrack(id: 'audio-2', label: 'Spanish', language: 'es'),
+        ],
+        subtitleTracks: [
+          PlaybackMediaTrack(id: 'sub-1', label: 'English', language: 'en'),
+        ],
+        selectedAudioTrackId: 'audio-1',
+      ),
+    );
+  }
+
+  @override
+  Future<void> selectAudioTrack(String id) async {
+    if (failSelections) throw StateError('selection failed');
+    selectedAudio = id;
+  }
+
+  @override
+  Future<void> selectSubtitleTrack(String id) async {
+    if (failSelections) throw StateError('selection failed');
+    selectedSubtitle = id;
+  }
+
+  @override
+  Future<void> pause() async {}
+  @override
+  Future<void> play() async {}
+  @override
+  Future<void> seek(Duration position) async {}
+  @override
+  Future<void> setMuted(bool muted) async {}
+  @override
+  Future<void> setVolume(double volume) async {}
+  @override
+  Future<void> dispose() => SynchronousFuture<void>(null);
 }
 
 class _FakeFullscreen implements FullscreenPort {

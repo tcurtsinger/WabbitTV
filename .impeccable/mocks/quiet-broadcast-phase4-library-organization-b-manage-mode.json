@@ -1,0 +1,24 @@
+{
+  "status": "Not selected",
+  "approved": false,
+  "phase": "4 — Personal Library Organization",
+  "surface": "My Library organization",
+  "mode": "Operate",
+  "viewport": {
+    "width": 1265,
+    "height": 713
+  },
+  "syntheticEvidence": true,
+  "generatedBy": "built-in image_gen",
+  "decisionDate": "2026-08-18",
+  "references": [
+    ".impeccable/mocks/quiet-broadcast-my-library-a-directory-ledger.png"
+  ],
+  "lockedDecisions": [
+    "Favorites can be pinned to Home and participate in explicit shelf order.",
+    "There is no automatic or manual duplicate merging in Phase 4.",
+    "The organizer supports selecting multiple custom groups in one save."
+  ],
+  "composition": "B — Dedicated manage mode",
+  "prompt": "Create a high-fidelity native Windows Flutter UI composition for Wabbit TV Phase 4, exactly 1265x713 landscape. Extend the referenced approved Quiet Broadcast My Library composition without changing its visual identity. Composition B turns My Library into a dedicated Manage mode with Done, Create group, explicit Move up/down, Pin/Unpin, Rename, Delete, and item Remove controls. Favorites is pinnable to Home but cannot be renamed or deleted. Ordinary browsing remains uncluttered outside this mode. Preserve Quiet Broadcast and explicit non-drag remote controls. No merging, fuzzy matching, poster grid, hero, credentials, URLs, provider logos, gradients, or glow."
+}

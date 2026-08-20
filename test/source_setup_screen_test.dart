@@ -562,7 +562,7 @@ void main() {
       );
       await tester.ensureVisible(find.text('Choose M3U file'));
       await tester.tap(find.text('Choose M3U file'));
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(
         tester
             .widget<TextField>(
@@ -571,6 +571,10 @@ void main() {
             .controller!
             .text,
         r'C:\Lists\weekend.m3u',
+      );
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source M3U file picker',
       );
 
       final xtream = find.byKey(const ValueKey('source-connector-xtream'));
@@ -583,6 +587,280 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'file selection is single-flight and cancel preserves the exact field',
+    (tester) async {
+      final initialFocus = FocusNode(debugLabel: 'source name');
+      addTearDown(initialFocus.dispose);
+      final controller = SourceSetupController(
+        service: _WidgetSourcePort(),
+        credentialStore: _WidgetCredentialStore(),
+      );
+      addTearDown(controller.dispose);
+      final firstSelection = Completer<String?>();
+      var pickerCalls = 0;
+      var exits = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SourceSetupScreen(
+              initialFocus: initialFocus,
+              onContentFocus: (_) {},
+              onExit: () => exits += 1,
+              onBrowse: (_) {},
+              m3uFilePicker: () {
+                pickerCalls += 1;
+                if (pickerCalls == 1) return firstSelection.future;
+                return Future.value(r'C:\Lists\selected.m3u');
+              },
+              controller: controller,
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('source-connector-m3uFile')));
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(const ValueKey('source-field-M3U file')),
+        r'C:\Lists\existing.m3u',
+      );
+      await tester.ensureVisible(find.text('Choose M3U file'));
+      final choose = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, 'Choose M3U file'),
+      );
+      choose.focusNode!.requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump();
+      await tester.pump();
+
+      expect(pickerCalls, 1);
+      expect(
+        find.byKey(const ValueKey('source-m3u-picker-status')),
+        findsOneWidget,
+      );
+      expect(find.text('Opening file picker…'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('source-field-M3U file')),
+            )
+            .enabled,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Opening file picker…'),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      await tester.tap(find.text('Opening file picker…'));
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(pickerCalls, 1);
+      expect(exits, 0);
+
+      firstSelection.complete(null);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('source-field-M3U file')),
+            )
+            .controller!
+            .text,
+        r'C:\Lists\existing.m3u',
+      );
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source M3U file picker',
+      );
+
+      await tester.tap(find.text('Choose M3U file'));
+      await tester.pumpAndSettle();
+      expect(pickerCalls, 2);
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('source-field-M3U file')),
+            )
+            .controller!
+            .text,
+        r'C:\Lists\selected.m3u',
+      );
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source M3U file picker',
+      );
+    },
+  );
+
+  testWidgets('file picker failure is redacted and restores its action', (
+    tester,
+  ) async {
+    final initialFocus = FocusNode(debugLabel: 'source name');
+    addTearDown(initialFocus.dispose);
+    final controller = SourceSetupController(
+      service: _WidgetSourcePort(),
+      credentialStore: _WidgetCredentialStore(),
+    );
+    addTearDown(controller.dispose);
+    var pickerCalls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SourceSetupScreen(
+            initialFocus: initialFocus,
+            onContentFocus: (_) {},
+            onExit: () {},
+            onBrowse: (_) {},
+            m3uFilePicker: () async {
+              pickerCalls += 1;
+              if (pickerCalls == 1) {
+                throw StateError(r'C:\Users\Private\provider-secret.m3u');
+              }
+              return r'C:\Lists\recovered.m3u';
+            },
+            controller: controller,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('source-connector-m3uFile')));
+    await tester.pump();
+    await tester.ensureVisible(find.text('Choose M3U file'));
+    await tester.tap(find.text('Choose M3U file'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('The Windows file picker could not be opened. Try again.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('provider-secret'), findsNothing);
+    expect(find.text('Choose M3U file'), findsOneWidget);
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'source M3U file picker',
+    );
+
+    await tester.tap(find.text('Choose M3U file'));
+    await tester.pumpAndSettle();
+    expect(pickerCalls, 2);
+    expect(
+      find.byKey(const ValueKey('source-m3u-picker-failure')),
+      findsNothing,
+    );
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('source-field-M3U file')),
+          )
+          .controller!
+          .text,
+      r'C:\Lists\recovered.m3u',
+    );
+  });
+
+  testWidgets('picker completion does not steal focus after the user moves', (
+    tester,
+  ) async {
+    final initialFocus = FocusNode(debugLabel: 'source name');
+    final movedFocus = FocusNode(debugLabel: 'outside picker flow');
+    addTearDown(initialFocus.dispose);
+    addTearDown(movedFocus.dispose);
+    final selection = Completer<String?>();
+    final controller = SourceSetupController(
+      service: _WidgetSourcePort(),
+      credentialStore: _WidgetCredentialStore(),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Focus(
+          focusNode: movedFocus,
+          child: Scaffold(
+            body: SourceSetupScreen(
+              initialFocus: initialFocus,
+              onContentFocus: (_) {},
+              onExit: () {},
+              onBrowse: (_) {},
+              m3uFilePicker: () => selection.future,
+              controller: controller,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('source-connector-m3uFile')));
+    await tester.pump();
+    await tester.ensureVisible(find.text('Choose M3U file'));
+    await tester.tap(find.text('Choose M3U file'));
+    await tester.pump();
+    await tester.pump();
+    movedFocus.requestFocus();
+    await tester.pump();
+    expect(movedFocus.hasFocus, isTrue);
+
+    selection.complete(r'C:\Lists\selected-with-focus-away.m3u');
+    await tester.pumpAndSettle();
+    expect(movedFocus.hasFocus, isTrue);
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('source-field-M3U file')),
+          )
+          .controller!
+          .text,
+      r'C:\Lists\selected-with-focus-away.m3u',
+    );
+  });
+
+  testWidgets('pending picker completion is safe after Source Setup disposes', (
+    tester,
+  ) async {
+    final initialFocus = FocusNode(debugLabel: 'source name');
+    addTearDown(initialFocus.dispose);
+    final selection = Completer<String?>();
+    final controller = SourceSetupController(
+      service: _WidgetSourcePort(),
+      credentialStore: _WidgetCredentialStore(),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SourceSetupScreen(
+            initialFocus: initialFocus,
+            onContentFocus: (_) {},
+            onExit: () {},
+            onBrowse: (_) {},
+            m3uFilePicker: () => selection.future,
+            controller: controller,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('source-connector-m3uFile')));
+    await tester.pump();
+    await tester.ensureVisible(find.text('Choose M3U file'));
+    await tester.tap(find.text('Choose M3U file'));
+    await tester.pump();
+    await tester.pump();
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    selection.complete(r'C:\Lists\late.m3u');
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _FailingWidgetSourcePort extends _WidgetSourcePort {

@@ -73,7 +73,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('source-connector-m3uFile')));
       await tester.pump();
       await tester.tap(find.text('Choose M3U file'));
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(pickerCalls, 1);
       expect(
         tester

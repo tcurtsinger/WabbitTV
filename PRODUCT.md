@@ -20,7 +20,7 @@ Wabbit TV is a content-neutral IPTV player. Users connect their own providers an
 
 ## Positioning
 
-Wabbit TV's differentiator is user-owned organization: sources remain manageable, provider catalogs can be viewed separately or together, genuine duplicates can share one library identity, and users can create ordered custom groups that mix channels, movies, and series and pin them to Home.
+Wabbit TV's differentiator is user-owned organization: sources remain manageable, provider catalogs can be viewed separately or together, and users can create ordered custom groups that mix channels, movies, and series and pin them to Home.
 
 ## Operating Context
 
@@ -36,14 +36,17 @@ Wabbit TV's differentiator is user-owned organization: sources remain manageable
 - Public, noncommercial, open-source project licensed AGPL-3.0.
 - Initial library includes Live, Movies, and Series.
 - Multiple sources can be viewed independently or in a unified catalog.
-- High-confidence duplicates may merge while preserving their underlying source variants; ambiguous matches must remain separate.
+- Imported source items remain separate local library identities. Wabbit does not automatically merge duplicates or expose manual merge controls.
 - Favorites and ordered custom groups are first-class. A custom group can mix channels, movies, and series and can be pinned to Home.
 - Required playback features include picture-in-picture and multiview.
+- The final planned implementation phase combines the Windows daily-driver gate with a Live Guide sourced only from provider EPG data exposed by active Xtream sources. It includes Now/Next and a simple remote-friendly timeline; M3U XMLTV URL/file guide input is not supported.
+- The Guide does not include recording, reminders, catch-up, DVR, archival behavior, or elaborate customization.
 - Startup behavior is user-selectable: Home, the previous screen, or the last channel.
 - Everything is local. The application makes no network calls except to sources explicitly configured by the user.
 - The simultaneous-stream allowance of the current Strong account is unknown. Wabbit should use a provider-reported limit when available and otherwise behave conservatively while allowing an explicit local override.
 - Preserve a path to Android TV, Fire TV, and macOS, but do not implement or validate those platforms during the Windows-first phases unless the plan explicitly reaches them.
 - Do not build commercial licensing, payments, cloud accounts, telemetry, a plugin platform, or distribution infrastructure.
+- After the Windows V1 gate, UI/UX polish remains ongoing maintenance rather than another numbered implementation phase. Future-platform work stays deferred and unscheduled.
 - Engineering must be proportional: make supported workflows correct and maintainable, protect credentials from obvious leakage, and handle realistic failures. Do not add speculative abstractions, security theater, or a web of defensive branches for hypothetical edge cases.
 
 ## Brand Commitments

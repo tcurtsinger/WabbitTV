@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../artwork/artwork_loader.dart';
+import '../artwork/source_artwork.dart';
+import '../sources/source_models.dart';
 import 'playback_handoff.dart';
 
 const _graphite = Color(0xFF111212);
@@ -50,11 +53,6 @@ class ContinuationFailureView extends StatelessWidget {
               autofocus: true,
               onPressed: onRetry,
             ),
-            _ContinuationAction(
-              key: const ValueKey('continuation-back'),
-              label: 'Back',
-              onPressed: onBack,
-            ),
           ],
         ),
       ],
@@ -68,22 +66,43 @@ class MovieContinuation extends StatelessWidget {
     required this.title,
     required this.onPlay,
     required this.onBack,
+    this.artworkLocator,
+    this.artworkLoader,
+    this.onOrganize,
   });
   final String title;
   final VoidCallback onPlay;
   final VoidCallback onBack;
+  final String? artworkLocator;
+  final ArtworkProvider? artworkLoader;
+  final VoidCallback? onOrganize;
 
   @override
   Widget build(BuildContext context) => _ContinuationFrame(
     title: title,
     icon: Icons.movie_outlined,
+    artwork: SourceArtwork(
+      key: const ValueKey('movie-continuation-artwork'),
+      locator: artworkLocator,
+      kind: SourceMediaKind.movies,
+      loader: artworkLoader,
+      explicitlyActivated: true,
+      width: 120,
+      height: 84,
+    ),
     onBack: onBack,
-    child: _ContinuationAction(
-      key: const ValueKey('movie-play'),
-      label: 'Play',
-      primary: true,
-      autofocus: true,
-      onPressed: onPlay,
+    onOrganize: onOrganize,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ContinuationAction(
+          key: const ValueKey('movie-play'),
+          label: 'Play',
+          primary: true,
+          autofocus: true,
+          onPressed: onPlay,
+        ),
+      ],
     ),
   );
 }
@@ -98,6 +117,9 @@ class SeriesContinuation extends StatefulWidget {
     required this.onRetry,
     required this.onBack,
     required this.onEpisodeActivated,
+    this.artworkLocator,
+    this.artworkLoader,
+    this.onOrganize,
   });
   final String title;
   final bool loading;
@@ -106,6 +128,9 @@ class SeriesContinuation extends StatefulWidget {
   final VoidCallback onRetry;
   final VoidCallback onBack;
   final ValueChanged<SeriesEpisode> onEpisodeActivated;
+  final String? artworkLocator;
+  final ArtworkProvider? artworkLoader;
+  final VoidCallback? onOrganize;
 
   @override
   State<SeriesContinuation> createState() => _SeriesContinuationState();
@@ -115,14 +140,29 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
   int _season = 0;
   final _episodesScroll = ScrollController();
   final Map<int, FocusNode> _seasonNodes = {};
-  final Map<int, FocusNode> _episodeNodes = {};
+  final Map<int, FocusNode> _mountedEpisodeNodes = {};
   FocusNode _seasonFocus(int index) => _seasonNodes.putIfAbsent(
     index,
     () => FocusNode(debugLabel: 'series season $index'),
   );
-  FocusNode _episodeFocus(int index) => _episodeNodes.putIfAbsent(
-    index,
-    () => FocusNode(debugLabel: 'series episode $index'),
+
+  void _mountEpisodeNode(int index, FocusNode node) =>
+      _mountedEpisodeNodes[index] = node;
+
+  void _unmountEpisodeNode(int index, FocusNode node) {
+    if (identical(_mountedEpisodeNodes[index], node)) {
+      _mountedEpisodeNodes.remove(index);
+    }
+  }
+
+  Widget get _artwork => SourceArtwork(
+    key: const ValueKey('series-continuation-artwork'),
+    locator: widget.artworkLocator,
+    kind: SourceMediaKind.series,
+    loader: widget.artworkLoader,
+    explicitlyActivated: true,
+    width: 120,
+    height: 84,
   );
 
   @override
@@ -137,9 +177,6 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
     for (final node in _seasonNodes.values) {
       node.dispose();
     }
-    for (final node in _episodeNodes.values) {
-      node.dispose();
-    }
     super.dispose();
   }
 
@@ -152,16 +189,16 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
       final rowEnd = rowStart + rowExtent;
       final visibleStart = _episodesScroll.offset;
       final visibleEnd = visibleStart + position.viewportDimension;
-      final node = _episodeFocus(index);
+      final node = _mountedEpisodeNodes[index];
       if (rowStart >= visibleStart && rowEnd <= visibleEnd) {
-        node.requestFocus();
+        node?.requestFocus();
         return;
       }
       final target = (rowStart - (position.viewportDimension - rowExtent) / 2)
           .clamp(0.0, position.maxScrollExtent);
       _episodesScroll.jumpTo(target);
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) node.requestFocus();
+        if (mounted) _mountedEpisodeNodes[index]?.requestFocus();
       });
     }
 
@@ -178,7 +215,9 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
       return _ContinuationFrame(
         title: widget.title,
         icon: Icons.tv_outlined,
+        artwork: _artwork,
         onBack: widget.onBack,
+        onOrganize: widget.onOrganize,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -204,11 +243,6 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
                   autofocus: true,
                   onPressed: widget.onRetry,
                 ),
-                _ContinuationAction(
-                  key: const ValueKey('series-back'),
-                  label: 'Back',
-                  onPressed: widget.onBack,
-                ),
               ],
             ),
           ],
@@ -219,7 +253,9 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
       return _ContinuationFrame(
         title: widget.title,
         icon: Icons.tv_outlined,
+        artwork: _artwork,
         onBack: widget.onBack,
+        onOrganize: widget.onOrganize,
         autofocusFrame: true,
         child: const Row(
           mainAxisSize: MainAxisSize.min,
@@ -243,7 +279,9 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
       return _ContinuationFrame(
         title: widget.title,
         icon: Icons.tv_outlined,
+        artwork: _artwork,
         onBack: widget.onBack,
+        onOrganize: widget.onOrganize,
         autofocusFrame: true,
         child: const Text(
           'No episodes are available for this series.',
@@ -255,7 +293,9 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
     return _ContinuationFrame(
       title: widget.title,
       icon: Icons.tv_outlined,
+      artwork: _artwork,
       onBack: widget.onBack,
+      onOrganize: widget.onOrganize,
       expandChild: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -277,7 +317,7 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
                       ensureVisibleOnFocus: true,
                       onDown: selected.episodes.isEmpty
                           ? null
-                          : () => _episodeFocus(0).requestFocus(),
+                          : () => _mountedEpisodeNodes[0]?.requestFocus(),
                       onPressed: () => setState(() => _season = index),
                     ),
                   ],
@@ -297,7 +337,9 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
                 return _EpisodeRow(
                   key: ValueKey('series-episode-$index'),
                   episode: episode,
-                  focusNode: _episodeFocus(index),
+                  index: index,
+                  onNodeMounted: _mountEpisodeNode,
+                  onNodeUnmounted: _unmountEpisodeNode,
                   onUp: index == 0
                       ? () => _seasonFocus(_season).requestFocus()
                       : () => _focusEpisode(index - 1),
@@ -321,21 +363,24 @@ class _ContinuationFrame extends StatelessWidget {
     required this.icon,
     required this.onBack,
     required this.child,
+    this.artwork,
     this.autofocusFrame = false,
     this.expandChild = false,
+    this.onOrganize,
   });
   final String title;
   final IconData icon;
   final VoidCallback onBack;
   final Widget child;
+  final Widget? artwork;
   final bool autofocusFrame;
   final bool expandChild;
+  final VoidCallback? onOrganize;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
     color: _graphite,
     child: Focus(
-      autofocus: autofocusFrame,
       onKeyEvent: (_, event) {
         if (event is KeyDownEvent &&
             (event.logicalKey == LogicalKeyboardKey.escape ||
@@ -356,7 +401,27 @@ class _ContinuationFrame extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(icon, size: 44, color: _quietText),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      artwork ?? Icon(icon, size: 44, color: _quietText),
+                      const Spacer(),
+                      if (onOrganize != null) ...[
+                        _ContinuationAction(
+                          key: const ValueKey('continuation-organize'),
+                          label: 'Organize',
+                          onPressed: onOrganize!,
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      _ContinuationAction(
+                        key: const ValueKey('continuation-visible-back'),
+                        label: 'Back',
+                        autofocus: autofocusFrame,
+                        onPressed: onBack,
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 20),
                   Text(
                     title,
@@ -388,13 +453,17 @@ class _EpisodeRow extends StatefulWidget {
   const _EpisodeRow({
     super.key,
     required this.episode,
-    required this.focusNode,
+    required this.index,
+    required this.onNodeMounted,
+    required this.onNodeUnmounted,
     required this.onPressed,
     this.onUp,
     this.onDown,
   });
   final SeriesEpisode episode;
-  final FocusNode focusNode;
+  final int index;
+  final void Function(int index, FocusNode node) onNodeMounted;
+  final void Function(int index, FocusNode node) onNodeUnmounted;
   final VoidCallback onPressed;
   final VoidCallback? onUp;
   final VoidCallback? onDown;
@@ -404,9 +473,34 @@ class _EpisodeRow extends StatefulWidget {
 
 class _EpisodeRowState extends State<_EpisodeRow> {
   bool _focused = false;
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode(debugLabel: 'series episode ${widget.index}');
+    widget.onNodeMounted(widget.index, _focusNode);
+  }
+
+  @override
+  void didUpdateWidget(covariant _EpisodeRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.index != widget.index) {
+      oldWidget.onNodeUnmounted(oldWidget.index, _focusNode);
+      widget.onNodeMounted(widget.index, _focusNode);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.onNodeUnmounted(widget.index, _focusNode);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) => Focus(
-    focusNode: widget.focusNode,
+    focusNode: _focusNode,
     onFocusChange: (value) => setState(() => _focused = value),
     onKeyEvent: (_, event) {
       if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -432,7 +526,7 @@ class _EpisodeRowState extends State<_EpisodeRow> {
       label: widget.episode.title,
       child: GestureDetector(
         onTap: () {
-          widget.focusNode.requestFocus();
+          _focusNode.requestFocus();
           widget.onPressed();
         },
         child: Container(

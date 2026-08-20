@@ -1,0 +1,26 @@
+{
+  "status": "Confirmed",
+  "approved": true,
+  "phase": "4 — Personal Library Organization",
+  "surface": "My Library organization",
+  "mode": "Operate",
+  "viewport": {
+    "width": 1265,
+    "height": 713
+  },
+  "syntheticEvidence": true,
+  "generatedBy": "built-in image_gen",
+  "decisionDate": "2026-08-18",
+  "references": [
+    ".impeccable/mocks/quiet-broadcast-my-library-a-directory-ledger.png"
+  ],
+  "lockedDecisions": [
+    "Favorites can be pinned to Home and participate in explicit shelf order.",
+    "There is no automatic or manual duplicate merging in Phase 4.",
+    "The organizer supports selecting multiple custom groups in one save."
+  ],
+  "composition": "A — Direct organizer drawer",
+  "prompt": "Create a high-fidelity native Windows Flutter UI composition for Wabbit TV Phase 4, exactly 1265x713 landscape. Extend the referenced approved Quiet Broadcast My Library composition without changing its visual identity. Composition A uses a compact 280px right in-shell Organize item drawer beside the retained Library directory and dense mixed ledger. The drawer exposes Favorite, a multi-select custom-group checklist, Cancel, and Save. Normal Enter/Select remains play/details. Group creation and management stay in My Library. Preserve Quiet Broadcast graphite, warm-white, quiet gray, signal amber focus, compact 6–8px geometry and one-target rows. No merging, fuzzy matching, poster grid, hero, credentials, URLs, provider logos, gradients, glow, or drag-only reordering.",
+  "approvedAt": "2026-08-18",
+  "approval": "User selected A"
+}

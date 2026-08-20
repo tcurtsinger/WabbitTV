@@ -4,7 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import '../artwork/artwork_loader.dart';
+import '../artwork/source_artwork.dart';
+import '../guide/guide_data.dart';
 import '../sources/credential_store.dart';
+import '../sources/epg_models.dart';
 import '../sources/source_catalog_database.dart';
 import '../sources/source_models.dart';
 import 'catalog_scope_controller.dart';
@@ -19,6 +23,40 @@ const _line = Color(0xFF343534);
 const _warmWhite = Color(0xFFF4F0E7);
 const _quietText = Color(0xFFAAA8A2);
 const _amber = Color(0xFFFFB347);
+
+String? _catalogScopeState(CatalogScopeController controller) {
+  final selected = controller.selectedSource;
+  if (selected != null) {
+    return switch (selected.status) {
+      'refreshing' => 'Refreshing · showing saved catalog',
+      'refresh_failed' => 'Refresh failed · showing saved catalog',
+      _ => null,
+    };
+  }
+
+  final refreshing = controller.sources
+      .where((source) => source.status == 'refreshing')
+      .length;
+  final failed = controller.sources
+      .where((source) => source.status == 'refresh_failed')
+      .length;
+  final affected = refreshing + failed;
+  if (affected == 0) return null;
+  final saved = affected == 1
+      ? 'saved catalog remains available'
+      : 'saved catalogs remain available';
+  if (refreshing > 0 && failed > 0) {
+    final refreshingSources =
+        '$refreshing ${refreshing == 1 ? 'source' : 'sources'} refreshing';
+    final failedSources =
+        '$failed ${failed == 1 ? 'source' : 'sources'} refresh failed';
+    return '$refreshingSources · $failedSources · $saved';
+  }
+  if (refreshing > 0) {
+    return '$refreshing ${refreshing == 1 ? 'source' : 'sources'} refreshing · $saved';
+  }
+  return '$failed ${failed == 1 ? 'source' : 'sources'} refresh failed · $saved';
+}
 
 /// The deliberately small handoff from catalog browse into the later player.
 typedef BrowseItemActivated = void Function(BrowseCatalogItem item);
@@ -105,6 +143,9 @@ class DatabaseBasicBrowseData implements BasicBrowseData, ScopedBrowseData {
 class BasicBrowseSession {
   final Map<String, _BrowseBookmark> _bookmarks = {};
 
+  @visibleForTesting
+  int mountedItemFocusCount = 0;
+
   _BrowseBookmark _bookmarkFor(SourceMediaKind kind, LibraryScope scope) {
     final sourceKey = scope.sourceId ?? 'all';
     return _bookmarks.putIfAbsent(
@@ -120,6 +161,7 @@ class _BrowseBookmark {
   double scrollOffset = 0;
   List<BrowseCatalogItem> items = const [];
   Map<String, String> sourceNames = const {};
+  Map<String, String> epgCatalogIds = const {};
   List<BrowseCategorySummary> categories = const [];
   int? total;
   int? controllerRevision;
@@ -141,8 +183,16 @@ class BasicBrowseScreen extends StatefulWidget {
     this.onOpenSourceSetup,
     this.onItemActivated,
     this.onPlaybackHandoff,
+    this.selectingSecondChannel = false,
+    this.secondChannelMessage,
+    this.secondChannelBusy = false,
+    this.onCancelSecondChannel,
+    this.onOrganizeItem,
     this.credentialStore,
     this.seriesInfoLoader,
+    this.artworkLoader,
+    this.epgWindowPort,
+    this.now,
   });
 
   final SourceMediaKind kind;
@@ -160,8 +210,16 @@ class BasicBrowseScreen extends StatefulWidget {
   /// New playback work must use [onPlaybackHandoff].
   final BrowseItemActivated? onItemActivated;
   final ValueChanged<PlaybackHandoff>? onPlaybackHandoff;
+  final bool selectingSecondChannel;
+  final String? secondChannelMessage;
+  final bool secondChannelBusy;
+  final VoidCallback? onCancelSecondChannel;
+  final ValueChanged<BrowseCatalogItem>? onOrganizeItem;
   final CredentialStore? credentialStore;
   final SeriesInfoLoader? seriesInfoLoader;
+  final ArtworkProvider? artworkLoader;
+  final EpgWindowPort? epgWindowPort;
+  final DateTime Function()? now;
 
   @override
   State<BasicBrowseScreen> createState() => _BasicBrowseScreenState();
@@ -175,9 +233,13 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
   final FocusNode _scopeFocus = FocusNode(debugLabel: 'catalog scope');
   final ScrollController _itemsScroll = ScrollController();
   final ScrollController _categoriesScroll = ScrollController();
-  final Map<int, FocusNode> _categoryNodes = {};
-  final Map<String, FocusNode> _itemNodes = {};
-  final Map<String, FocusNode> _scopeNodes = {};
+  final Map<int, FocusNode> _mountedCategoryNodes = {};
+  final Map<String, FocusNode> _mountedItemNodes = {};
+  Timer? _epgTimer;
+  Timer? _epgBoundaryTimer;
+  Map<String, EpgChannelWindow> _epgWindows = const {};
+  final Map<String, DateTime> _epgRefreshAttempts = {};
+  int _epgWindowRequest = 0;
   List<BrowseCategorySummary>? _categories;
   List<BrowseCatalogItem> _items = const [];
   BrowseCursor? _nextCursor;
@@ -258,16 +320,27 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
       _categories = null;
       _nextCursor = null;
       _error = null;
+      _clearEpgPresentation();
       if (widget.scopeController == null) {
         _loadCatalog(resetSelection: false);
       } else {
         _onScopeStateChanged();
       }
     }
+    if (oldWidget.epgWindowPort != widget.epgWindowPort) {
+      _clearEpgPresentation();
+      _scheduleVisibleEpg(immediate: true);
+    }
   }
 
   @override
   void dispose() {
+    final epgPort = widget.epgWindowPort;
+    if (epgPort != null) {
+      unawaited(epgPort.refreshCatalogItems(const []));
+    }
+    _epgTimer?.cancel();
+    _epgBoundaryTimer?.cancel();
     _cancelSeriesRequest();
     widget.scopeController?.removeListener(_onScopeStateChanged);
     _rememberPosition();
@@ -277,15 +350,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
     _categoriesScroll.dispose();
     _categoryLauncherFocus.dispose();
     _scopeFocus.dispose();
-    for (final node in _categoryNodes.values) {
-      node.dispose();
-    }
-    for (final node in _itemNodes.values) {
-      node.dispose();
-    }
-    for (final node in _scopeNodes.values) {
-      node.dispose();
-    }
+    widget.session.mountedItemFocusCount = 0;
     super.dispose();
   }
 
@@ -326,6 +391,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
     _nextCursor = _bookmark.nextCursor;
     _total = _bookmark.total;
     _error = null;
+    _clearEpgPresentation();
     _restoringCachedFocus =
         _bookmark.items.isNotEmpty && _bookmark.focusedItemId != null;
     unawaited(_loadCatalog(resetSelection: false, forceFresh: revisionReload));
@@ -336,6 +402,18 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
   void _rememberPosition() {
     if (_itemsScroll.hasClients) {
       _bookmark.scrollOffset = _itemsScroll.offset;
+    }
+  }
+
+  void _clearEpgPresentation() {
+    _epgWindowRequest += 1;
+    _epgTimer?.cancel();
+    _epgBoundaryTimer?.cancel();
+    _epgWindows = const {};
+    _epgRefreshAttempts.clear();
+    final epgPort = widget.epgWindowPort;
+    if (epgPort != null) {
+      unawaited(epgPort.refreshCatalogItems(const []));
     }
   }
 
@@ -368,6 +446,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         _nextCursor = null;
         _total = null;
         _restoringCachedFocus = false;
+        _clearEpgPresentation();
       }
     });
     if (requiresFresh) {
@@ -445,6 +524,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         });
         _restoringCachedFocus = bookmark.focusedItemId != null;
         _restoreListPosition(restoreFocus: true);
+        _scheduleVisibleEpg(immediate: true);
       } else {
         setState(() {
           _categories = categories;
@@ -544,6 +624,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         ..nextCursor = page.nextCursor
         ..controllerRevision = snapshotRevision;
       _restoreListPosition();
+      _scheduleVisibleEpg(immediate: true);
     } catch (_) {
       if (!_catalogRequestIsCurrent(
         request: request,
@@ -584,9 +665,11 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
     final id = _bookmark.focusedItemId;
     final index = _items.indexWhere((item) => item.id == id);
     if (index < 0) return;
-    final node = _itemFocus(_items[index], index);
-    node.requestFocus();
-    if (node.context != null) {
+    _focusItemAt(index);
+    final node = index == 0
+        ? widget.initialFocus
+        : _mountedItemNodes[_items[index].id];
+    if (node?.context != null) {
       _restoringCachedFocus = false;
       return;
     }
@@ -598,6 +681,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
   }
 
   void _maybeLoadMore() {
+    _scheduleVisibleEpg();
     if (_itemsScroll.hasClients) {
       _bookmark.scrollOffset = _itemsScroll.offset;
     }
@@ -609,6 +693,151 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
       return;
     }
     unawaited(_loadMore());
+  }
+
+  void _scheduleVisibleEpg({bool immediate = false}) {
+    if (widget.kind != SourceMediaKind.live ||
+        widget.epgWindowPort == null ||
+        _items.isEmpty) {
+      return;
+    }
+    _epgTimer?.cancel();
+    if (immediate) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadVisibleEpg());
+    } else {
+      _epgTimer = Timer(const Duration(milliseconds: 120), _loadVisibleEpg);
+    }
+  }
+
+  Future<void> _loadVisibleEpg() async {
+    final port = widget.epgWindowPort;
+    if (!mounted ||
+        port == null ||
+        widget.kind != SourceMediaKind.live ||
+        _items.isEmpty) {
+      return;
+    }
+    final extent = _itemRowExtent;
+    final offset = _itemsScroll.hasClients ? _itemsScroll.offset : 0.0;
+    final viewport = _itemsScroll.hasClients
+        ? _itemsScroll.position.viewportDimension
+        : extent * 8;
+    final first = ((offset / extent).floor() - 2).clamp(0, _items.length);
+    final count = ((viewport / extent).ceil() + 6).clamp(
+      1,
+      basicBrowseMountedEpgLimit,
+    );
+    final end = (first + count).clamp(0, _items.length);
+    if (first >= end) return;
+    final ids = <String>[];
+    for (final item in _items.sublist(first, end)) {
+      final id = _activeScope.isAll
+          ? _bookmark.epgCatalogIds[item.id]
+          : item.id;
+      if (id != null && id.isNotEmpty && !ids.contains(id)) ids.add(id);
+    }
+    if (ids.isEmpty) {
+      if (_epgWindows.isNotEmpty) {
+        setState(_clearEpgPresentation);
+      } else {
+        _clearEpgPresentation();
+      }
+      return;
+    }
+    final request = _request;
+    final windowRequest = ++_epgWindowRequest;
+    final nowUtc = (widget.now?.call() ?? DateTime.now()).toUtc();
+    final startUtc = nowUtc.subtract(const Duration(hours: 2));
+    final endUtc = nowUtc.add(const Duration(hours: 24));
+
+    Future<void> readCache() async {
+      final windows = await port.loadEpgWindow(
+        catalogItemIds: ids,
+        windowStartUtc: startUtc,
+        windowEndUtc: endUtc,
+        atUtc: nowUtc,
+      );
+      if (!mounted ||
+          request != _request ||
+          windowRequest != _epgWindowRequest ||
+          widget.epgWindowPort != port) {
+        return;
+      }
+      setState(() {
+        _epgWindows = Map.unmodifiable({
+          for (final window in windows) window.catalogItemId: window,
+        });
+      });
+      _scheduleEpgBoundaryRefresh();
+    }
+
+    try {
+      await readCache();
+      if (!mounted ||
+          request != _request ||
+          windowRequest != _epgWindowRequest) {
+        return;
+      }
+      _epgRefreshAttempts.removeWhere((id, _) => !ids.contains(id));
+      final toRefresh = ids
+          .where((id) {
+            final previous = _epgRefreshAttempts[id];
+            return previous == null ||
+                nowUtc.difference(previous) >= const Duration(minutes: 5);
+          })
+          .toList(growable: false);
+      if (toRefresh.isEmpty) return;
+      for (final id in toRefresh) {
+        _epgRefreshAttempts[id] = nowUtc;
+      }
+      await port.refreshCatalogItems(toRefresh);
+      await readCache();
+    } catch (_) {
+      // Now/Next is optional local metadata. Browse and playback stay primary.
+      if (mounted &&
+          request == _request &&
+          windowRequest == _epgWindowRequest) {
+        _scheduleEpgBoundaryRefresh(forceFallback: true);
+      }
+    }
+  }
+
+  void _scheduleEpgBoundaryRefresh({bool forceFallback = false}) {
+    _epgBoundaryTimer?.cancel();
+    final now = (widget.now?.call() ?? DateTime.now()).toUtc();
+    DateTime? boundary;
+    for (final window in _epgWindows.values) {
+      for (final program in window.programs) {
+        for (final candidate in [program.startUtc, program.endUtc]) {
+          if (candidate.isAfter(now) &&
+              (boundary == null || candidate.isBefore(boundary))) {
+            boundary = candidate;
+          }
+        }
+      }
+      final fallbackDelay = switch (window.availability) {
+        EpgAvailability.unknown ||
+        EpgAvailability.refreshing ||
+        EpgAvailability.temporarilyUnavailable => const Duration(minutes: 5),
+        EpgAvailability.empty => const Duration(minutes: 15),
+        EpgAvailability.available when window.programs.isEmpty =>
+          const Duration(minutes: 30),
+        EpgAvailability.unsupported => const Duration(hours: 6),
+        EpgAvailability.available => null,
+      };
+      if (fallbackDelay != null) {
+        final fallback = now.add(fallbackDelay);
+        if (boundary == null || fallback.isBefore(boundary)) {
+          boundary = fallback;
+        }
+      }
+    }
+    if (boundary == null && forceFallback) {
+      boundary = now.add(const Duration(minutes: 5));
+    }
+    if (boundary == null) return;
+    final delay = boundary.difference(now) + const Duration(milliseconds: 100);
+    _epgBoundaryTimer = Timer(delay, _loadVisibleEpg);
   }
 
   Future<void> _loadMore() async {
@@ -654,6 +883,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         ..items = _items
         ..nextCursor = page.nextCursor
         ..controllerRevision = scopeRevision;
+      _scheduleVisibleEpg(immediate: true);
     } catch (_) {
       if (!_catalogRequestIsCurrent(
             request: request,
@@ -688,9 +918,11 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         limit: _pageSize,
       );
       final names = Map<String, String>.of(bookmark.sourceNames);
+      final epgCatalogIds = Map<String, String>.of(bookmark.epgCatalogIds);
       final items = page.items
           .map((item) {
             names[item.libraryItemId] = item.sourceDisplayName;
+            epgCatalogIds[item.libraryItemId] = item.catalogItemId;
             return BrowseCatalogItem(
               id: item.libraryItemId,
               sourceId: item.sourceId,
@@ -698,10 +930,12 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
               title: item.title,
               artworkLocator: item.artworkLocator,
               playbackRef: item.playbackRef,
+              libraryItemId: item.libraryItemId,
             );
           })
           .toList(growable: false);
       bookmark.sourceNames = Map.unmodifiable(names);
+      bookmark.epgCatalogIds = Map.unmodifiable(epgCatalogIds);
       return BrowsePage(items: items, nextCursor: page.nextCursor);
     }
     if (source == null) {
@@ -736,6 +970,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
       _loadingMore = false;
       _pageError = false;
       _categoryOverlay = false;
+      _clearEpgPresentation();
     });
     final request = ++_request;
     setState(() => _loading = true);
@@ -768,18 +1003,24 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
     playbackRef: '',
   );
 
-  FocusNode _itemFocus(BrowseCatalogItem item, int index) {
-    if (index == 0) return widget.initialFocus;
-    return _itemNodes.putIfAbsent(
-      item.id,
-      () => FocusNode(debugLabel: 'browse ${widget.kind.name} ${item.id}'),
-    );
+  void _mountItemNode(String id, FocusNode node) {
+    _mountedItemNodes[id] = node;
+    widget.session.mountedItemFocusCount = _mountedItemNodes.length;
   }
 
-  FocusNode _categoryFocus(int index) => _categoryNodes.putIfAbsent(
-    index,
-    () => FocusNode(debugLabel: 'browse category $index'),
-  );
+  void _unmountItemNode(String id, FocusNode node) {
+    if (identical(_mountedItemNodes[id], node)) _mountedItemNodes.remove(id);
+    widget.session.mountedItemFocusCount = _mountedItemNodes.length;
+  }
+
+  void _mountCategoryNode(int index, FocusNode node) =>
+      _mountedCategoryNodes[index] = node;
+
+  void _unmountCategoryNode(int index, FocusNode node) {
+    if (identical(_mountedCategoryNodes[index], node)) {
+      _mountedCategoryNodes.remove(index);
+    }
+  }
 
   int _selectedCategoryIndex() {
     final categories = _categories ?? const <BrowseCategorySummary>[];
@@ -796,7 +1037,9 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
       controller: _itemsScroll,
       index: index,
       rowExtent: _itemRowExtent,
-      node: _itemFocus(_items[index], index),
+      node: () => index == 0
+          ? widget.initialFocus
+          : _mountedItemNodes[_items[index].id],
     );
   }
 
@@ -807,7 +1050,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
       controller: _categoriesScroll,
       index: index,
       rowExtent: rowExtent,
-      node: _categoryFocus(index),
+      node: () => _mountedCategoryNodes[index],
     );
   }
 
@@ -815,7 +1058,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
     required ScrollController controller,
     required int index,
     required double rowExtent,
-    required FocusNode node,
+    required FocusNode? Function() node,
   }) {
     void revealThenFocus() {
       if (!mounted || !controller.hasClients) return;
@@ -825,14 +1068,14 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
       final visibleStart = controller.offset;
       final visibleEnd = visibleStart + position.viewportDimension;
       if (rowStart >= visibleStart && rowEnd <= visibleEnd) {
-        node.requestFocus();
+        node()?.requestFocus();
         return;
       }
       final target = (rowStart - (position.viewportDimension - rowExtent) / 2)
           .clamp(0.0, position.maxScrollExtent);
       controller.jumpTo(target);
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) node.requestFocus();
+        if (mounted) node()?.requestFocus();
       });
     }
 
@@ -914,14 +1157,38 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
 
   Future<void> _loadSeries(BrowseCatalogItem item) async {
     final request = ++_seriesRequest;
-    var source = _activeSource ?? widget.source;
-    if (source?.id != item.sourceId) {
-      source = await widget.scopeController?.resolveReadySource(item.sourceId);
-    }
-    if (!mounted || request != _seriesRequest || source == null) return;
     setState(() {
       _continuation = _SeriesBrowseContinuation(item: item, loading: true);
     });
+    PersistedSource? source = _activeSource ?? widget.source;
+    try {
+      if (source?.id != item.sourceId) {
+        source = await widget.scopeController?.resolveReadySource(
+          item.sourceId,
+        );
+      }
+    } catch (_) {
+      if (!mounted || request != _seriesRequest) return;
+      setState(() {
+        _continuation = _SeriesBrowseContinuation(
+          item: item,
+          loading: false,
+          failure: ContinuationFailure.unavailable,
+        );
+      });
+      return;
+    }
+    if (!mounted || request != _seriesRequest) return;
+    if (source == null) {
+      setState(() {
+        _continuation = _SeriesBrowseContinuation(
+          item: item,
+          loading: false,
+          failure: ContinuationFailure.credentialsUnavailable,
+        );
+      });
+      return;
+    }
     try {
       final info = await _seriesInfoLoader.load(source: source, series: item);
       if (!mounted || request != _seriesRequest) return;
@@ -973,6 +1240,11 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         _MovieBrowseContinuation(:final item, :final handoff) =>
           MovieContinuation(
             title: item.title,
+            artworkLocator: item.artworkLocator,
+            artworkLoader: widget.artworkLoader,
+            onOrganize: widget.onOrganizeItem == null
+                ? null
+                : () => widget.onOrganizeItem!(item),
             onBack: _returnToBrowse,
             onPlay: () {
               widget.onPlaybackHandoff?.call(handoff);
@@ -987,6 +1259,11 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         ) =>
           SeriesContinuation(
             title: item.title,
+            artworkLocator: item.artworkLocator,
+            artworkLoader: widget.artworkLoader,
+            onOrganize: widget.onOrganizeItem == null
+                ? null
+                : () => widget.onOrganizeItem!(item),
             loading: loading,
             info: info,
             failure: failure,
@@ -998,6 +1275,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                 title: episode.title,
                 providerItemId: episode.providerItemId,
                 extension: episode.extension,
+                libraryItemId: item.libraryItemId,
               );
               widget.onPlaybackHandoff?.call(handoff);
               widget.onItemActivated?.call(item);
@@ -1030,18 +1308,17 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
 
   double get _itemRowExtent {
     final scaled = MediaQuery.textScalerOf(context).scale(16);
-    return 60 + ((scaled - 16).clamp(0, 16) * 1.25);
+    final base =
+        widget.kind == SourceMediaKind.live && widget.epgWindowPort != null
+        ? 74
+        : 60;
+    return base + ((scaled - 16).clamp(0, 16) * 1.25);
   }
 
   double get _categoryRowExtent {
     final scaled = MediaQuery.textScalerOf(context).scale(15);
     return 48 + ((scaled - 15).clamp(0, 15) * 1.2);
   }
-
-  FocusNode _scopeOptionFocus(String? sourceId) => _scopeNodes.putIfAbsent(
-    sourceId ?? 'all',
-    () => FocusNode(debugLabel: 'catalog scope ${sourceId ?? 'all'}'),
-  );
 
   void _openScopeMenu() {
     final controller = widget.scopeController;
@@ -1178,6 +1455,14 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        if (widget.selectingSecondChannel) ...[
+                          _SecondChannelBanner(
+                            message: widget.secondChannelMessage,
+                            busy: widget.secondChannelBusy,
+                            onCancel: widget.onCancelSecondChannel,
+                          ),
+                          const SizedBox(height: 14),
+                        ],
                         _DirectoryHeader(
                           kind: widget.kind,
                           summary: _headerSummary(
@@ -1219,8 +1504,9 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                                         child: _CategoryPane(
                                           categories: _categories!,
                                           selected: _bookmark.selection,
-                                          nodes: _categoryFocus,
                                           controller: _categoriesScroll,
+                                          onNodeMounted: _mountCategoryNode,
+                                          onNodeUnmounted: _unmountCategoryNode,
                                           onChoose: _chooseCategory,
                                           onOpenRail: widget.onOpenRail,
                                           onRight: _focusFirstItem,
@@ -1253,8 +1539,9 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                       child: _CategoryOverlay(
                         categories: _categories!,
                         selected: _bookmark.selection,
-                        nodes: _categoryFocus,
                         controller: _categoriesScroll,
+                        onNodeMounted: _mountCategoryNode,
+                        onNodeUnmounted: _unmountCategoryNode,
                         onChoose: _chooseCategory,
                         onDismiss: () =>
                             _dismissCategoryOverlay(toLauncher: true),
@@ -1273,7 +1560,6 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                       child: _ScopeMenu(
                         sources: scopeController.sources,
                         selected: scopeController.scope,
-                        nodes: _scopeOptionFocus,
                         onChoose: (scope) => unawaited(_chooseScope(scope)),
                         onDismiss: _dismissScopeMenu,
                       ),
@@ -1311,11 +1597,20 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
     required CatalogScopeController? controller,
   }) {
     final count = _total == null ? 'Loading' : _formatCount(_total!);
+    final sourceState = controller == null
+        ? null
+        : _catalogScopeState(controller);
     if (allSources) {
       final sourceCount = controller?.sources.length ?? 0;
-      return '$count available across $sourceCount ${sourceCount == 1 ? 'source' : 'sources'}';
+      final totalSummary =
+          '$count available across $sourceCount ${sourceCount == 1 ? 'source' : 'sources'}';
+      return sourceState == null
+          ? totalSummary
+          : '$sourceState · $totalSummary';
     }
-    return '$count items · ${source?.name ?? controller?.scopeLabel ?? 'Source'}';
+    final totalSummary =
+        '$count items · ${source?.name ?? controller?.scopeLabel ?? 'Source'}';
+    return sourceState == null ? totalSummary : '$sourceState · $totalSummary';
   }
 
   Widget _buildItems() {
@@ -1400,21 +1695,18 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
               itemBuilder: (context, index) {
                 if (index >= _items.length) return const _ItemSkeleton();
                 final item = _items[index];
-                final itemFocus = _itemFocus(item, index);
-                if (_restoringCachedFocus &&
-                    item.id == _bookmark.focusedItemId) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) {
-                      itemFocus.requestFocus();
-                      _restoringCachedFocus = false;
-                    }
-                  });
-                }
+                final epgCatalogId = allSources
+                    ? _bookmark.epgCatalogIds[item.id]
+                    : item.id;
                 return _CatalogRow(
+                  key: ValueKey('browse-row-${item.id}'),
                   item: item,
                   kind: widget.kind,
-                  focusNode: itemFocus,
+                  initialFocusNode: index == 0 ? widget.initialFocus : null,
                   autofocus: index == 0 && !_restoringCachedFocus,
+                  artworkLoader: widget.artworkLoader,
+                  onNodeMounted: _mountItemNode,
+                  onNodeUnmounted: _unmountItemNode,
                   onFocused: (node) {
                     if (!_restoringCachedFocus) {
                       _bookmark.focusedItemId = item.id;
@@ -1441,9 +1733,15 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                     }
                   },
                   onActivate: () => _activateItem(item),
+                  onOrganize: widget.onOrganizeItem == null
+                      ? null
+                      : () => widget.onOrganizeItem!(item),
                   sourceName: allSources
                       ? _bookmark.sourceNames[item.id]
                       : null,
+                  nowNext: epgCatalogId == null
+                      ? null
+                      : _epgWindows[epgCatalogId]?.nowNext,
                 );
               },
             ),
@@ -1489,6 +1787,131 @@ class _FailureContinuation extends _BrowseContinuation {
     required this.failure,
   }) : super(item);
   final ContinuationFailure failure;
+}
+
+class _SecondChannelBanner extends StatefulWidget {
+  const _SecondChannelBanner({
+    required this.message,
+    required this.busy,
+    required this.onCancel,
+  });
+
+  final String? message;
+  final bool busy;
+  final VoidCallback? onCancel;
+
+  @override
+  State<_SecondChannelBanner> createState() => _SecondChannelBannerState();
+}
+
+class _SecondChannelBannerState extends State<_SecondChannelBanner> {
+  final _cancelFocus = FocusNode(debugLabel: 'cancel second channel');
+  bool _focused = false;
+
+  @override
+  void dispose() {
+    _cancelFocus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    key: const ValueKey('browse-second-channel-banner'),
+    constraints: const BoxConstraints(minHeight: 64),
+    padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
+    decoration: BoxDecoration(
+      color: _surface,
+      border: Border.all(color: _line),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.view_week_outlined, color: _amber, size: 22),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.busy
+                    ? 'Checking stream allowance…'
+                    : 'Choose a second channel',
+                style: const TextStyle(
+                  color: _warmWhite,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                widget.message ??
+                    'Your current channel keeps playing in Corner Signal.',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: widget.message == null ? _quietText : _warmWhite,
+                  fontSize: 12,
+                  height: 1.25,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Focus(
+          focusNode: _cancelFocus,
+          canRequestFocus: !widget.busy,
+          onFocusChange: (value) => setState(() => _focused = value),
+          onKeyEvent: (_, event) {
+            if (!widget.busy &&
+                event is KeyDownEvent &&
+                (event.logicalKey == LogicalKeyboardKey.enter ||
+                    event.logicalKey == LogicalKeyboardKey.select)) {
+              widget.onCancel?.call();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: Semantics(
+            button: true,
+            enabled: !widget.busy,
+            label: 'Cancel adding a second channel',
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.busy
+                  ? null
+                  : () {
+                      _cancelFocus.requestFocus();
+                      widget.onCancel?.call();
+                    },
+              child: Container(
+                height: 44,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _focused ? _raised : Colors.transparent,
+                  border: Border.all(
+                    color: _focused ? _amber : _line,
+                    width: _focused ? 2 : 1,
+                  ),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  'Cancel',
+                  style: TextStyle(
+                    color: _warmWhite,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _DirectoryHeader extends StatelessWidget {
@@ -1661,14 +2084,12 @@ class _ScopeMenu extends StatefulWidget {
   const _ScopeMenu({
     required this.sources,
     required this.selected,
-    required this.nodes,
     required this.onChoose,
     required this.onDismiss,
   });
 
   final List<SourceRosterEntry> sources;
   final LibraryScope selected;
-  final FocusNode Function(String?) nodes;
   final ValueChanged<LibraryScope> onChoose;
   final VoidCallback onDismiss;
 
@@ -1679,6 +2100,7 @@ class _ScopeMenu extends StatefulWidget {
 class _ScopeMenuState extends State<_ScopeMenu> {
   static const _rowExtent = 48.0;
   final ScrollController _scrollController = ScrollController();
+  final Map<String, FocusNode> _mountedNodes = {};
 
   List<({LibraryScope scope, String label})> get _choices => [
     (scope: const LibraryScope.all(), label: 'All sources'),
@@ -1707,7 +2129,7 @@ class _ScopeMenuState extends State<_ScopeMenu> {
   void _focusAt(int index) {
     final choices = _choices;
     if (index < 0 || index >= choices.length) return;
-    final node = widget.nodes(choices[index].scope.sourceId);
+    final key = choices[index].scope.sourceId ?? 'all';
 
     void revealThenFocus() {
       if (!mounted || !_scrollController.hasClients) return;
@@ -1717,14 +2139,14 @@ class _ScopeMenuState extends State<_ScopeMenu> {
       final visibleStart = _scrollController.offset;
       final visibleEnd = visibleStart + position.viewportDimension;
       if (rowStart >= visibleStart && rowEnd <= visibleEnd) {
-        node.requestFocus();
+        _mountedNodes[key]?.requestFocus();
         return;
       }
       final target = (rowStart - (position.viewportDimension - _rowExtent) / 2)
           .clamp(0.0, position.maxScrollExtent);
       _scrollController.jumpTo(target);
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) node.requestFocus();
+        if (mounted) _mountedNodes[key]?.requestFocus();
       });
     }
 
@@ -1759,9 +2181,18 @@ class _ScopeMenuState extends State<_ScopeMenu> {
           itemBuilder: (context, index) {
             final choice = choices[index];
             return _ScopeOptionRow(
+              key: ValueKey(
+                'catalog-scope-row-${choice.scope.sourceId ?? 'all'}',
+              ),
+              nodeKey: choice.scope.sourceId ?? 'all',
               label: choice.label,
               selected: widget.selected.sourceId == choice.scope.sourceId,
-              focusNode: widget.nodes(choice.scope.sourceId),
+              onNodeMounted: (key, node) => _mountedNodes[key] = node,
+              onNodeUnmounted: (key, node) {
+                if (identical(_mountedNodes[key], node)) {
+                  _mountedNodes.remove(key);
+                }
+              },
               onChoose: () => widget.onChoose(choice.scope),
               onUp: index == 0 ? null : () => _focusAt(index - 1),
               onDown: index + 1 == choices.length
@@ -1778,18 +2209,23 @@ class _ScopeMenuState extends State<_ScopeMenu> {
 
 class _ScopeOptionRow extends StatefulWidget {
   const _ScopeOptionRow({
+    super.key,
+    required this.nodeKey,
     required this.label,
     required this.selected,
-    required this.focusNode,
+    required this.onNodeMounted,
+    required this.onNodeUnmounted,
     required this.onChoose,
     required this.onUp,
     required this.onDown,
     required this.onDismiss,
   });
 
+  final String nodeKey;
   final String label;
   final bool selected;
-  final FocusNode focusNode;
+  final void Function(String key, FocusNode node) onNodeMounted;
+  final void Function(String key, FocusNode node) onNodeUnmounted;
   final VoidCallback onChoose;
   final VoidCallback? onUp;
   final VoidCallback? onDown;
@@ -1801,10 +2237,34 @@ class _ScopeOptionRow extends StatefulWidget {
 
 class _ScopeOptionRowState extends State<_ScopeOptionRow> {
   bool _focused = false;
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode(debugLabel: 'catalog scope ${widget.nodeKey}');
+    widget.onNodeMounted(widget.nodeKey, _focusNode);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ScopeOptionRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.nodeKey != widget.nodeKey) {
+      oldWidget.onNodeUnmounted(oldWidget.nodeKey, _focusNode);
+      widget.onNodeMounted(widget.nodeKey, _focusNode);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.onNodeUnmounted(widget.nodeKey, _focusNode);
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => Focus(
-    focusNode: widget.focusNode,
+    focusNode: _focusNode,
     onFocusChange: (focused) => setState(() => _focused = focused),
     onKeyEvent: (_, event) {
       if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -1833,7 +2293,7 @@ class _ScopeOptionRowState extends State<_ScopeOptionRow> {
       label: widget.label,
       child: GestureDetector(
         onTap: () {
-          widget.focusNode.requestFocus();
+          _focusNode.requestFocus();
           widget.onChoose();
         },
         child: Container(
@@ -1869,8 +2329,9 @@ class _CategoryPane extends StatelessWidget {
   const _CategoryPane({
     required this.categories,
     required this.selected,
-    required this.nodes,
     required this.controller,
+    required this.onNodeMounted,
+    required this.onNodeUnmounted,
     required this.onChoose,
     required this.onOpenRail,
     required this.onRight,
@@ -1881,8 +2342,9 @@ class _CategoryPane extends StatelessWidget {
 
   final List<BrowseCategorySummary> categories;
   final BrowseCategorySelection selected;
-  final FocusNode Function(int) nodes;
   final ScrollController controller;
+  final void Function(int index, FocusNode node) onNodeMounted;
+  final void Function(int index, FocusNode node) onNodeUnmounted;
   final ValueChanged<BrowseCategorySummary> onChoose;
   final VoidCallback onOpenRail;
   final VoidCallback onRight;
@@ -1914,9 +2376,14 @@ class _CategoryPane extends StatelessWidget {
             itemCount: categories.length,
             itemExtent: rowExtent,
             itemBuilder: (context, index) => _CategoryRow(
+              key: ValueKey(
+                'browse-category-${categories[index].selection.kind.name}-${categories[index].selection.sourceGroupId ?? 'none'}',
+              ),
+              index: index,
               category: categories[index],
               selected: _sameCategory(categories[index].selection, selected),
-              focusNode: nodes(index),
+              onNodeMounted: onNodeMounted,
+              onNodeUnmounted: onNodeUnmounted,
               onLeft: onOpenRail,
               onRight: onRight,
               onChoose: () => onChoose(categories[index]),
@@ -1936,8 +2403,9 @@ class _CategoryOverlay extends StatelessWidget {
   const _CategoryOverlay({
     required this.categories,
     required this.selected,
-    required this.nodes,
     required this.controller,
+    required this.onNodeMounted,
+    required this.onNodeUnmounted,
     required this.onChoose,
     required this.onDismiss,
     required this.onFocusIndex,
@@ -1946,8 +2414,9 @@ class _CategoryOverlay extends StatelessWidget {
 
   final List<BrowseCategorySummary> categories;
   final BrowseCategorySelection selected;
-  final FocusNode Function(int) nodes;
   final ScrollController controller;
+  final void Function(int index, FocusNode node) onNodeMounted;
+  final void Function(int index, FocusNode node) onNodeUnmounted;
   final ValueChanged<BrowseCategorySummary> onChoose;
   final VoidCallback onDismiss;
   final ValueChanged<int> onFocusIndex;
@@ -2008,12 +2477,17 @@ class _CategoryOverlay extends StatelessWidget {
                     itemCount: categories.length,
                     itemExtent: rowExtent,
                     itemBuilder: (context, index) => _CategoryRow(
+                      key: ValueKey(
+                        'browse-overlay-category-${categories[index].selection.kind.name}-${categories[index].selection.sourceGroupId ?? 'none'}',
+                      ),
+                      index: index,
                       category: categories[index],
                       selected: _sameCategory(
                         categories[index].selection,
                         selected,
                       ),
-                      focusNode: nodes(index),
+                      onNodeMounted: onNodeMounted,
+                      onNodeUnmounted: onNodeUnmounted,
                       onLeft: onDismiss,
                       onRight: onDismiss,
                       onChoose: () => onChoose(categories[index]),
@@ -2035,9 +2509,12 @@ class _CategoryOverlay extends StatelessWidget {
 
 class _CategoryRow extends StatefulWidget {
   const _CategoryRow({
+    super.key,
+    required this.index,
     required this.category,
     required this.selected,
-    required this.focusNode,
+    required this.onNodeMounted,
+    required this.onNodeUnmounted,
     required this.onLeft,
     required this.onRight,
     required this.onChoose,
@@ -2045,9 +2522,11 @@ class _CategoryRow extends StatefulWidget {
     this.onDown,
   });
 
+  final int index;
   final BrowseCategorySummary category;
   final bool selected;
-  final FocusNode focusNode;
+  final void Function(int index, FocusNode node) onNodeMounted;
+  final void Function(int index, FocusNode node) onNodeUnmounted;
   final VoidCallback onLeft;
   final VoidCallback onRight;
   final VoidCallback onChoose;
@@ -2060,10 +2539,34 @@ class _CategoryRow extends StatefulWidget {
 
 class _CategoryRowState extends State<_CategoryRow> {
   bool _focused = false;
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode(debugLabel: 'browse category ${widget.index}');
+    widget.onNodeMounted(widget.index, _focusNode);
+  }
+
+  @override
+  void didUpdateWidget(covariant _CategoryRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.index != widget.index) {
+      oldWidget.onNodeUnmounted(oldWidget.index, _focusNode);
+      widget.onNodeMounted(widget.index, _focusNode);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.onNodeUnmounted(widget.index, _focusNode);
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => Focus(
-    focusNode: widget.focusNode,
+    focusNode: _focusNode,
     onFocusChange: (focused) => setState(() => _focused = focused),
     onKeyEvent: (_, event) {
       if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -2095,7 +2598,7 @@ class _CategoryRowState extends State<_CategoryRow> {
           '${widget.category.name}, ${_formatCount(widget.category.itemCount)} items',
       child: GestureDetector(
         onTap: () {
-          widget.focusNode.requestFocus();
+          _focusNode.requestFocus();
           widget.onChoose();
         },
         child: Container(
@@ -2140,41 +2643,84 @@ class _CategoryRowState extends State<_CategoryRow> {
 
 class _CatalogRow extends StatefulWidget {
   const _CatalogRow({
+    super.key,
     required this.item,
     required this.kind,
-    required this.focusNode,
+    required this.initialFocusNode,
     required this.autofocus,
+    required this.artworkLoader,
+    required this.onNodeMounted,
+    required this.onNodeUnmounted,
     required this.onFocused,
     required this.onLeft,
     required this.onUp,
     required this.onDown,
     required this.onActivate,
+    this.onOrganize,
     this.sourceName,
+    this.nowNext,
   });
   final BrowseCatalogItem item;
   final SourceMediaKind kind;
-  final FocusNode focusNode;
+  final FocusNode? initialFocusNode;
   final bool autofocus;
+  final ArtworkProvider? artworkLoader;
+  final void Function(String id, FocusNode node) onNodeMounted;
+  final void Function(String id, FocusNode node) onNodeUnmounted;
   final ValueChanged<FocusNode> onFocused;
   final VoidCallback onLeft;
   final VoidCallback? onUp;
   final VoidCallback onDown;
   final VoidCallback onActivate;
+  final VoidCallback? onOrganize;
   final String? sourceName;
+  final EpgNowNext? nowNext;
   @override
   State<_CatalogRow> createState() => _CatalogRowState();
 }
 
 class _CatalogRowState extends State<_CatalogRow> {
   bool _focused = false;
+  late final FocusNode _ownedFocus;
+
+  FocusNode get _focusNode => widget.initialFocusNode ?? _ownedFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    _ownedFocus = FocusNode(
+      debugLabel: 'browse ${widget.kind.name} ${widget.item.id}',
+    );
+    widget.onNodeMounted(widget.item.id, _focusNode);
+  }
+
+  @override
+  void didUpdateWidget(covariant _CatalogRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.id != widget.item.id ||
+        oldWidget.initialFocusNode != widget.initialFocusNode) {
+      oldWidget.onNodeUnmounted(
+        oldWidget.item.id,
+        oldWidget.initialFocusNode ?? _ownedFocus,
+      );
+      widget.onNodeMounted(widget.item.id, _focusNode);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.onNodeUnmounted(widget.item.id, _focusNode);
+    _ownedFocus.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => Focus(
-    focusNode: widget.focusNode,
+    focusNode: _focusNode,
     autofocus: widget.autofocus,
     onFocusChange: (focused) {
       setState(() => _focused = focused);
-      if (focused) widget.onFocused(widget.focusNode);
+      if (focused) widget.onFocused(_focusNode);
     },
     onKeyEvent: (_, event) {
       if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -2188,6 +2734,12 @@ class _CatalogRowState extends State<_CatalogRow> {
         case LogicalKeyboardKey.arrowDown:
           widget.onDown();
           return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowRight:
+        case LogicalKeyboardKey.contextMenu:
+          widget.onOrganize?.call();
+          return widget.onOrganize == null
+              ? KeyEventResult.ignored
+              : KeyEventResult.handled;
         case LogicalKeyboardKey.enter:
         case LogicalKeyboardKey.select:
           widget.onActivate();
@@ -2202,10 +2754,19 @@ class _CatalogRowState extends State<_CatalogRow> {
         widget.item.title,
         widget.kind.label,
         if (widget.sourceName != null) widget.sourceName!,
+        if (widget.nowNext?.current != null)
+          'Now ${widget.nowNext!.current!.title}',
+        if (widget.nowNext?.next != null) 'Next ${widget.nowNext!.next!.title}',
       ].join(', '),
+      customSemanticsActions: widget.onOrganize == null
+          ? null
+          : {
+              const CustomSemanticsAction(label: 'Organize item'):
+                  widget.onOrganize!,
+            },
       child: GestureDetector(
         onTap: () {
-          widget.focusNode.requestFocus();
+          _focusNode.requestFocus();
           widget.onActivate();
         },
         child: Container(
@@ -2222,18 +2783,43 @@ class _CatalogRowState extends State<_CatalogRow> {
           ),
           child: Row(
             children: [
-              _Artwork(item: widget.item),
+              SourceArtwork(
+                key: ValueKey('browse-artwork-${widget.item.id}'),
+                locator: widget.item.artworkLocator,
+                kind: widget.item.kind,
+                loader: widget.artworkLoader,
+                focused: _focused,
+                loadWhenVisible: true,
+              ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  widget.item.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _warmWhite,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _warmWhite,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (widget.nowNext != null &&
+                        (widget.nowNext!.current != null ||
+                            widget.nowNext!.next != null)) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        _nowNextLabel(context, widget.nowNext!),
+                        key: ValueKey('browse-now-next-${widget.item.id}'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: _quietText, fontSize: 12),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               if (widget.sourceName != null) ...[
@@ -2248,6 +2834,27 @@ class _CatalogRowState extends State<_CatalogRow> {
                   ),
                 ),
               ],
+              if (widget.onOrganize != null) ...[
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'Organize',
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      _focusNode.requestFocus();
+                      widget.onOrganize!();
+                    },
+                    child: const Padding(
+                      padding: EdgeInsets.all(7),
+                      child: Icon(
+                        Icons.bookmark_add_outlined,
+                        size: 18,
+                        color: _quietText,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
               if (widget.kind != SourceMediaKind.live) ...[
                 const SizedBox(width: 12),
                 const Icon(Icons.chevron_right, size: 19, color: _quietText),
@@ -2258,33 +2865,6 @@ class _CatalogRowState extends State<_CatalogRow> {
       ),
     ),
   );
-}
-
-class _Artwork extends StatelessWidget {
-  const _Artwork({required this.item});
-
-  final BrowseCatalogItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    final icon = switch (item.kind) {
-      SourceMediaKind.live => Icons.live_tv_outlined,
-      SourceMediaKind.movies => Icons.movie_outlined,
-      SourceMediaKind.series => Icons.tv_outlined,
-    };
-    return Container(
-      key: ValueKey('browse-artwork-${item.id}'),
-      width: 50,
-      height: 36,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: _raised,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: _line),
-      ),
-      child: Icon(icon, size: 18, color: _quietText),
-    );
-  }
 }
 
 class _DirectorySkeleton extends StatelessWidget {
@@ -2699,6 +3279,24 @@ class _DirectoryButtonState extends State<_DirectoryButton> {
 
 bool _sameCategory(BrowseCategorySelection a, BrowseCategorySelection b) =>
     a.kind == b.kind && a.sourceGroupId == b.sourceGroupId;
+
+String _nowNextLabel(BuildContext context, EpgNowNext nowNext) {
+  final localizations = MaterialLocalizations.of(context);
+  String time(DateTime value) =>
+      localizations.formatTimeOfDay(TimeOfDay.fromDateTime(value.toLocal()));
+  final current = nowNext.current;
+  final next = nowNext.next;
+  if (current != null && next != null) {
+    return 'Now · ${current.title} · until ${time(current.endUtc)}   Next · ${time(next.startUtc)} · ${next.title}';
+  }
+  if (current != null) {
+    return 'Now · ${current.title} · until ${time(current.endUtc)}';
+  }
+  if (next != null) {
+    return 'Next · ${time(next.startUtc)} · ${next.title}';
+  }
+  return '';
+}
 
 String _formatCount(int value) => value.toString().replaceAllMapped(
   RegExp(r'(?<!^)(?=(?:\d{3})+$)'),

@@ -10,7 +10,7 @@ import 'package:wabbit_tv/src/features/sources/xtream_connector.dart';
 
 void main() {
   test(
-    'fresh catalog creates the recorded Phase 2 schema and identities',
+    'fresh catalog creates the current schema and separate identities',
     () async {
       final fixture = await _SchemaFixture.create();
       addTearDown(fixture.dispose);
@@ -23,12 +23,46 @@ void main() {
 
       final db = sqlite3.open(fixture.path);
       addTearDown(db.close);
-      expect(_tableNames(db), containsAll(_phase2Tables));
+      expect(_tableNames(db), containsAll(_currentTables));
       expect(
         db.select('PRAGMA table_info(sources)').map((row) => row['name']),
         containsAll(['reported_connection_limit', 'connection_limit_override']),
       );
-      expect(db.select('SELECT * FROM schema_migrations').length, 7);
+      expect(db.select('SELECT * FROM schema_migrations').length, 12);
+      expect(_tableNames(db), contains('playback_progress'));
+      expect(
+        db
+            .select('PRAGMA table_info(playback_progress)')
+            .map((row) => row['name']),
+        containsAll([
+          'library_item_id',
+          'media_key',
+          'position_ms',
+          'duration_ms',
+          'watched_ms',
+          'completed',
+          'cleared',
+          'updated_at_us',
+        ]),
+      );
+      expect(
+        db
+            .select('PRAGMA index_list(custom_group_items)')
+            .map((row) => row['name']),
+        contains('custom_group_items_library'),
+      );
+      expect(
+        db
+            .select(
+              '''EXPLAIN QUERY PLAN
+               SELECT custom_group_id FROM custom_group_items
+               WHERE library_item_id = ?''',
+              ['fresh:live:item'],
+            )
+            .map((row) => row['detail'])
+            .join('\n'),
+        contains('custom_group_items_library'),
+      );
       expect(
         db.select('PRAGMA table_info(source_groups)').map((row) => row['name']),
         containsAll(['hidden', 'generation', 'available']),
@@ -69,7 +103,7 @@ void main() {
     expect(roster.single.counts[SourceMediaKind.live], 1);
     final migrated = sqlite3.open(fixture.path);
     addTearDown(migrated.close);
-    expect(migrated.select('SELECT * FROM schema_migrations').length, 7);
+    expect(migrated.select('SELECT * FROM schema_migrations').length, 12);
     expect(
       migrated.select(
         'SELECT library_item_id, title, supporting_text FROM library_fts',
@@ -822,7 +856,7 @@ ImportedStage _stage(String title, String key, {String? category}) =>
       ],
     );
 
-const _phase2Tables = [
+const _currentTables = [
   'sources',
   'source_groups',
   'catalog_items',
@@ -832,6 +866,10 @@ const _phase2Tables = [
   'custom_groups',
   'custom_group_items',
   'watch_state',
+  'playback_progress',
+  'epg_source_state',
+  'epg_channel_state',
+  'epg_programs',
   'app_settings',
   'library_fts',
 ];

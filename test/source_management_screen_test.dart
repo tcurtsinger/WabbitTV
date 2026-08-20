@@ -269,6 +269,452 @@ void main() {
       lessThan(tester.getTopLeft(find.text('Refresh')).dy),
     );
   });
+
+  testWidgets(
+    'intermediate width reflows complete actions and keeps remote order',
+    (tester) async {
+      final c = SourceManagementController(
+        entries: [entry('one', 'Home provider')],
+      );
+      await tester.binding.setSurfaceSize(const Size(800, 713));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(1.2)),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: SourceManagementScreen(
+              initialFocus: FocusNode(debugLabel: 'management initial'),
+              onContentFocus: (_) {},
+              onOpenRail: () {},
+              onAddSource: () {},
+              controller: c,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final refresh = find.byKey(const ValueKey('source-action-Refresh'));
+      final edit = find.byKey(const ValueKey('source-action-Edit'));
+      final visibility = find.byKey(
+        const ValueKey('source-action-Manage visibility'),
+      );
+      final toggle = find.byKey(const ValueKey('source-action-Disable'));
+      final remove = find.byKey(const ValueKey('source-action-Remove'));
+      expect(tester.getTopLeft(refresh).dy, tester.getTopLeft(edit).dy);
+      expect(
+        tester.getTopLeft(edit).dy,
+        lessThan(tester.getTopLeft(visibility).dy),
+      );
+      expect(
+        tester.getTopLeft(visibility).dy,
+        lessThan(tester.getTopLeft(toggle).dy),
+      );
+      expect(tester.getTopLeft(toggle).dy, tester.getTopLeft(remove).dy);
+
+      await tester.ensureVisible(visibility);
+      await tester.pumpAndSettle();
+      final buttonRect = tester.getRect(visibility);
+      final labelRect = tester.getRect(find.text('Manage visibility'));
+      expect(buttonRect.left, lessThanOrEqualTo(labelRect.left));
+      expect(buttonRect.right, greaterThanOrEqualTo(labelRect.right));
+      expect(tester.takeException(), isNull);
+
+      tester.widget<FilledButton>(refresh).focusNode!.requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source management edit',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source management manage visibility',
+      );
+    },
+  );
+
+  testWidgets(
+    'selected source shows reported or conservative Automatic allowance',
+    (tester) async {
+      final port =
+          _ConnectionPort([
+              entry('one', 'Reported provider'),
+              entry('two', 'Unknown provider'),
+            ])
+            ..allowances['one'] = const SourceConnectionAllowance(
+              reportedLimit: 2,
+              overrideLimit: null,
+            )
+            ..allowances['two'] = const SourceConnectionAllowance(
+              reportedLimit: null,
+              overrideLimit: null,
+            );
+      final c = SourceManagementController(port: port);
+
+      await tester.pumpWidget(app(c));
+      await tester.pumpAndSettle();
+      expect(find.text('Simultaneous streams'), findsOneWidget);
+      expect(find.text('Automatic · Reported 2'), findsOneWidget);
+      expect(
+        find.textContaining('Wabbit cannot change your provider subscription'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('source-row-two')));
+      await tester.pumpAndSettle();
+      expect(find.text('Automatic · Assuming 1'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'mouse and remote choices save locally with fixed busy truth and Back',
+    (tester) async {
+      final saveGate = Completer<void>();
+      final port = _ConnectionPort([entry('one', 'Home provider')])
+        ..allowances['one'] = const SourceConnectionAllowance(
+          reportedLimit: 1,
+          overrideLimit: null,
+        );
+      final c = SourceManagementController(port: port);
+      final firstRow = FocusNode(debugLabel: 'management initial');
+      final reportedFocus = <String?>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SourceManagementScreen(
+              initialFocus: firstRow,
+              onContentFocus: (node) => reportedFocus.add(node.debugLabel),
+              onOpenRail: () {},
+              onAddSource: () {},
+              controller: c,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('source-connection-choice-Automatic')),
+      );
+      await tester.pumpAndSettle();
+      final automatic = tester.widget<OutlinedButton>(
+        find.byKey(const ValueKey('source-connection-choice-Automatic')),
+      );
+      automatic.focusNode!.requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source management streams one',
+      );
+      expect(reportedFocus, contains('source management streams one'));
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Local override 1 · Provider reports 1'),
+        findsOneWidget,
+      );
+
+      port.saveGate = saveGate;
+
+      await tester.tap(
+        find.byKey(const ValueKey('source-connection-choice-2')),
+      );
+      await tester.pump();
+      expect(find.text('Saving locally…'), findsOneWidget);
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source management streams two',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump();
+      expect(port.saveCalls, [('one', 1), ('one', 2)]);
+      expect(
+        find.text('Local override 1 · Provider reports 1'),
+        findsOneWidget,
+      );
+
+      saveGate.complete();
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Local override 2 · Provider reports 1'),
+        findsOneWidget,
+      );
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source management streams two',
+      );
+      expect(port.saveCalls, [('one', 1), ('one', 2)]);
+
+      await tester.tap(
+        find.byKey(const ValueKey('source-connection-choice-Automatic')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Automatic · Reported 1'), findsOneWidget);
+      expect(port.saveCalls, [('one', 1), ('one', 2), ('one', null)]);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'management initial',
+      );
+    },
+  );
+
+  testWidgets(
+    'failed stream setting load and save retain truth and retry exact action',
+    (tester) async {
+      final port = _ConnectionPort([entry('one', 'Home provider')])
+        ..allowances['one'] = const SourceConnectionAllowance(
+          reportedLimit: null,
+          overrideLimit: null,
+        )
+        ..failLoad = true;
+      final c = SourceManagementController(port: port);
+      await tester.pumpWidget(app(c));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('The stream setting could not be loaded.'),
+        findsOneWidget,
+      );
+      expect(find.text('Retry'), findsOneWidget);
+      port.failLoad = false;
+      final retryLoad = Completer<SourceConnectionAllowance>();
+      port.loadOverrides['one'] = retryLoad.future;
+      await tester.ensureVisible(find.text('Retry'));
+      final retry = tester.widget<OutlinedButton>(
+        find.byKey(const ValueKey('source-action-Retry')),
+      );
+      retry.focusNode!.requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump();
+      expect(find.text('Retrying…'), findsOneWidget);
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source management streams retry',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump();
+      expect(port.loadCalls, ['one', 'one']);
+      retryLoad.complete(
+        const SourceConnectionAllowance(
+          reportedLimit: null,
+          overrideLimit: null,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Automatic · Assuming 1'), findsOneWidget);
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source management streams automatic',
+      );
+
+      port.loadOverrides.remove('one');
+      port.failSave = true;
+      final failedSave = Completer<void>();
+      port.saveGate = failedSave;
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('source-connection-choice-2')),
+      );
+      final choiceTwo = tester.widget<OutlinedButton>(
+        find.byKey(const ValueKey('source-connection-choice-2')),
+      );
+      choiceTwo.focusNode!.requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump();
+      expect(find.text('Saving locally…'), findsOneWidget);
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source management streams two',
+      );
+      failedSave.complete();
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'The stream setting could not be saved. Your previous choice is unchanged.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Automatic · Assuming 1'), findsOneWidget);
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source management streams two',
+      );
+
+      port.failSave = false;
+      port.saveGate = null;
+      await tester.ensureVisible(find.text('Retry'));
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Local override 2 · Provider limit not reported'),
+        findsOneWidget,
+      );
+      expect(port.saveCalls, [('one', 2), ('one', 2)]);
+    },
+  );
+
+  testWidgets('stale allowance completion cannot replace the selected source', (
+    tester,
+  ) async {
+    final firstLoad = Completer<SourceConnectionAllowance>();
+    final port =
+        _ConnectionPort([
+            entry('one', 'Slow provider'),
+            entry('two', 'Current provider'),
+          ])
+          ..loadOverrides['one'] = firstLoad.future
+          ..allowances['two'] = const SourceConnectionAllowance(
+            reportedLimit: 2,
+            overrideLimit: 1,
+          );
+    final c = SourceManagementController(
+      entries: [
+        entry('one', 'Slow provider'),
+        entry('two', 'Current provider'),
+      ],
+      port: port,
+    );
+    await tester.pumpWidget(app(c));
+    await tester.pump();
+    c.select('two');
+    await tester.pumpAndSettle();
+    expect(find.text('Local override 1 · Provider reports 2'), findsOneWidget);
+
+    firstLoad.complete(
+      const SourceConnectionAllowance(reportedLimit: 9, overrideLimit: null),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Local override 1 · Provider reports 2'), findsOneWidget);
+    expect(find.text('Automatic · Reported 9'), findsNothing);
+  });
+
+  testWidgets('constrained allowance states keep controls fixed and readable', (
+    tester,
+  ) async {
+    final load = Completer<SourceConnectionAllowance>();
+    final port = _ConnectionPort([entry('one', 'Home provider')])
+      ..loadOverrides['one'] = load.future;
+    final c = SourceManagementController(
+      entries: [entry('one', 'Home provider')],
+      port: port,
+    );
+    await tester.binding.setSurfaceSize(const Size(600, 713));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(app(c));
+    await tester.pump();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('source-connection-choice-Automatic')),
+    );
+    await tester.pump();
+    final loadingRect = tester.getRect(
+      find.byKey(const ValueKey('source-connection-choice-Automatic')),
+    );
+    expect(find.text('Loading stream setting…'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    load.complete(
+      const SourceConnectionAllowance(reportedLimit: null, overrideLimit: null),
+    );
+    await tester.pumpAndSettle();
+    final readyRect = tester.getRect(
+      find.byKey(const ValueKey('source-connection-choice-Automatic')),
+    );
+    expect(readyRect.size, loadingRect.size);
+    expect(find.text('Automatic · Assuming 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    '600px two-times text wraps loading ready saving and failure truth',
+    (tester) async {
+      final load = Completer<SourceConnectionAllowance>();
+      final port = _ConnectionPort([entry('one', 'Home provider')])
+        ..loadOverrides['one'] = load.future;
+      final c = SourceManagementController(
+        entries: [entry('one', 'Home provider')],
+        port: port,
+      );
+      await tester.binding.setSurfaceSize(const Size(600, 713));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: SourceManagementScreen(
+              initialFocus: FocusNode(debugLabel: 'management initial'),
+              onContentFocus: (_) {},
+              onOpenRail: () {},
+              onAddSource: () {},
+              controller: c,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final loading = find.text('Loading stream setting…');
+      await tester.ensureVisible(loading);
+      await tester.pump();
+      expect(tester.getSize(loading).height, greaterThan(24));
+      expect(tester.takeException(), isNull);
+
+      load.complete(
+        const SourceConnectionAllowance(
+          reportedLimit: null,
+          overrideLimit: null,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final ready = find.text('Automatic · Assuming 1');
+      await tester.ensureVisible(ready);
+      await tester.pump();
+      expect(tester.getSize(ready).height, greaterThan(24));
+      expect(tester.takeException(), isNull);
+
+      port.loadOverrides.remove('one');
+      port.failSave = true;
+      final save = Completer<void>();
+      port.saveGate = save;
+      final choice = find.byKey(const ValueKey('source-connection-choice-2'));
+      await tester.ensureVisible(choice);
+      await tester.tap(choice);
+      await tester.pump();
+      final saving = find.text('Saving locally…');
+      await tester.ensureVisible(saving);
+      await tester.pump();
+      expect(saving, findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      save.complete();
+      await tester.pumpAndSettle();
+      const failureCopy =
+          'The stream setting could not be saved. Your previous choice is unchanged.';
+      final failure = find.text(failureCopy);
+      await tester.ensureVisible(failure);
+      await tester.pump();
+      expect(tester.getSize(failure).height, greaterThan(48));
+      expect(find.text('Retry'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets('narrow high-text-scale rows keep metadata readable', (
     tester,
   ) async {
@@ -731,5 +1177,55 @@ class _RosterPort implements SourceManagementPort {
       status: enabled ? 'ready' : 'disabled',
       counts: entry.counts,
     );
+  }
+}
+
+class _ConnectionPort extends _RosterPort
+    implements SourceConnectionAllowancePort {
+  _ConnectionPort(super.seed);
+
+  final allowances = <String, SourceConnectionAllowance>{};
+  final loadOverrides = <String, Future<SourceConnectionAllowance>>{};
+  final loadCalls = <String>[];
+  final saveCalls = <(String, int?)>[];
+  Completer<void>? saveGate;
+  bool failLoad = false;
+  bool failSave = false;
+
+  @override
+  Future<SourceConnectionAllowance> loadSourceConnectionAllowance(
+    String sourceId,
+  ) async {
+    loadCalls.add(sourceId);
+    final override = loadOverrides[sourceId];
+    if (override != null) return override;
+    if (failLoad) throw StateError('local read failure');
+    return allowances[sourceId] ??
+        const SourceConnectionAllowance(
+          reportedLimit: null,
+          overrideLimit: null,
+        );
+  }
+
+  @override
+  Future<SourceConnectionAllowance> setSourceConnectionLimitOverride({
+    required String sourceId,
+    required int? overrideLimit,
+  }) async {
+    saveCalls.add((sourceId, overrideLimit));
+    await saveGate?.future;
+    if (failSave) throw StateError('local write failure');
+    final previous =
+        allowances[sourceId] ??
+        const SourceConnectionAllowance(
+          reportedLimit: null,
+          overrideLimit: null,
+        );
+    final updated = SourceConnectionAllowance(
+      reportedLimit: previous.reportedLimit,
+      overrideLimit: overrideLimit,
+    );
+    allowances[sourceId] = updated;
+    return updated;
   }
 }

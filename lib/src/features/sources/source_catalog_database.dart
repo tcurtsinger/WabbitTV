@@ -2,14 +2,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 import 'credential_store.dart';
+import 'epg_models.dart';
 import 'm3u_connector.dart';
 import 'source_models.dart';
+import 'startup_models.dart';
 import 'xtream_connector.dart';
 
 const _accountAndCategoryLimit = 8 * 1024 * 1024;
@@ -23,9 +26,45 @@ const _defaultVisibilityCategoryLimit = 1000;
 const _maximumVisibilityCategoryLimit = 1000;
 const _defaultSourceRosterLimit = 100;
 const _maximumSourceRosterLimit = 100;
+const _defaultRecentlyWatchedLimit = 24;
+const _maximumRecentlyWatchedLimit = 48;
+const _maximumPlaybackKeyUtf8Bytes = 512;
+const _defaultPlayableVariantLimit = 4;
+const _maximumPlayableVariantLimit = 8;
+const _defaultPersonalLibraryDirectoryLimit = 100;
+const _maximumPersonalLibraryDirectoryLimit = 200;
+const _maximumCustomGroups = _maximumPersonalLibraryDirectoryLimit - 1;
+const _maximumCustomGroupNameLength = 80;
+const _favoritesHomeOrdinalSettingKey = 'favorites_home_ordinal';
 const _catalogScopeSettingKey = 'catalog_scope';
+const _startupTargetSettingKey = 'startup_target';
+const _previousDestinationSettingKey = 'previous_destination';
+const _lastLiveLibraryItemSettingKey = 'last_live_library_item';
 const _allCatalogScopeValue = 'all';
 const _sourceCatalogScopePrefix = 'source:';
+const _maximumEpgWindowItemIds = 64;
+
+/// A bounded, title-ordered catalog window with truthful cursors on both
+/// sides. [previousCursor] is the exclusive upper boundary for
+/// [SourceCatalogDatabase.browsePageBefore]; [nextCursor] keeps the ordinary
+/// forward browse semantics.
+class CatalogBrowseWindow {
+  const CatalogBrowseWindow({
+    required this.items,
+    required this.previousCursor,
+    required this.nextCursor,
+  });
+
+  final List<BrowseCatalogItem> items;
+  final BrowseCursor? previousCursor;
+  final BrowseCursor? nextCursor;
+}
+
+const _maximumEpgRefreshTargets = 32;
+const _maximumEpgProgramsPerChannel = 32;
+const _epgRefreshLease = Duration(minutes: 2);
+const _epgSuccessTtl = Duration(minutes: 30);
+const _epgEmptyTtl = Duration(minutes: 15);
 
 enum ImportWorkerEventKind { stage, pending, ready, failed, cancelled }
 
@@ -474,6 +513,7 @@ void _xtreamRefreshWorker(Map<String, Object?> args) async {
     if (!_isAuthorized(account)) {
       throw const SourceImportFailure(SourceImportFailureKind.authentication);
     }
+    final reportedConnectionLimit = _parseReportedConnectionLimit(account);
     final stages = <ImportedStage>[];
     for (final kind in SourceMediaKind.values) {
       final categories = _parseCategories(
@@ -514,7 +554,13 @@ void _xtreamRefreshWorker(Map<String, Object?> args) async {
     if (cancelled) {
       throw const SourceImportFailure(SourceImportFailureKind.cancelled);
     }
-    final ready = _commitRefreshOnWorker(path, refresh, stages);
+    final ready = _commitRefreshOnWorker(
+      path,
+      refresh,
+      stages,
+      updateReportedConnectionLimit: true,
+      reportedConnectionLimit: reportedConnectionLimit,
+    );
     events.send({
       'type': 'ready',
       'count': ready.counts[SourceMediaKind.live] ?? 0,
@@ -838,6 +884,74 @@ class SourceCatalogDatabase {
     );
   }
 
+  /// Resolves one exact visible catalog identity inside the same source-local
+  /// browse scope. This is a bounded restoration lookup, never a title search.
+  Future<BrowseCatalogItem?> loadVisibleCatalogItem({
+    required String sourceId,
+    required SourceMediaKind kind,
+    required BrowseCategorySelection selection,
+    required String catalogItemId,
+  }) async {
+    if (catalogItemId.trim().isEmpty) return null;
+    final path = await resolvedPath();
+    return Isolate.run<BrowseCatalogItem?>(
+      () => _loadVisibleCatalogItemOnWorker(
+        path,
+        sourceId,
+        kind,
+        selection,
+        catalogItemId,
+      ),
+    );
+  }
+
+  /// Reconstructs one bounded, current catalog window around an exact visible
+  /// identity. Every returned row is re-read through the active source,
+  /// category, availability, and visibility filters.
+  Future<CatalogBrowseWindow?> browseWindowAroundCatalogItem({
+    required String sourceId,
+    required SourceMediaKind kind,
+    required BrowseCategorySelection selection,
+    required String catalogItemId,
+    int limit = _defaultBrowsePageLimit,
+  }) async {
+    if (catalogItemId.trim().isEmpty) return null;
+    final path = await resolvedPath();
+    return Isolate.run<CatalogBrowseWindow?>(
+      () => _browseWindowAroundCatalogItemOnWorker(
+        path,
+        sourceId,
+        kind,
+        selection,
+        catalogItemId,
+        limit.clamp(3, _maximumBrowsePageLimit),
+      ),
+    );
+  }
+
+  /// Loads the bounded title-ordered page immediately before [cursor]. The
+  /// returned [CatalogBrowseWindow.previousCursor] remains non-null only when
+  /// still-earlier visible rows exist.
+  Future<CatalogBrowseWindow> browsePageBefore({
+    required String sourceId,
+    required SourceMediaKind kind,
+    required BrowseCategorySelection selection,
+    required BrowseCursor cursor,
+    int limit = _defaultBrowsePageLimit,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<CatalogBrowseWindow>(
+      () => _browsePageBeforeOnWorker(
+        path,
+        sourceId,
+        kind,
+        selection,
+        cursor,
+        limit.clamp(1, _maximumBrowsePageLimit),
+      ),
+    );
+  }
+
   /// Reads the complete source-local category directory through bounded pages.
   /// Unlike ordinary Browse, hidden categories remain present so the user can
   /// restore them. `hiddenOnly` is the recovery filter and [limit] is the page
@@ -1013,6 +1127,481 @@ class SourceCatalogDatabase {
     );
   }
 
+  /// Answers Home's source-presence question without computing catalog
+  /// contribution totals for the full source roster.
+  Future<bool> hasAnySource() async {
+    final path = await resolvedPath();
+    return Isolate.run<bool>(() => _hasAnySourceOnWorker(path));
+  }
+
+  /// Records viewing occurrence only. Existing position/duration fields are
+  /// deliberately preserved for the later resume phase.
+  Future<bool> recordRecentlyWatched(
+    String libraryItemId, {
+    DateTime? playedAt,
+  }) async {
+    final path = await resolvedPath();
+    final timestamp = (playedAt ?? DateTime.now()).toUtc();
+    return Isolate.run<bool>(
+      () => _recordRecentlyWatchedOnWorker(path, libraryItemId, timestamp),
+    );
+  }
+
+  /// Reads the most recent playable identities. Disabled, unavailable, hidden,
+  /// and category-hidden source variants are excluded before one exact source
+  /// variant is selected for playback.
+  Future<List<RecentlyWatchedItem>> loadRecentlyWatched({
+    int limit = _defaultRecentlyWatchedLimit,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<List<RecentlyWatchedItem>>(
+      () => _loadRecentlyWatchedOnWorker(
+        path,
+        limit.clamp(1, _maximumRecentlyWatchedLimit),
+      ),
+    );
+  }
+
+  /// Reads restart-safe progress for one exact Movie or Episode key.
+  ///
+  /// Both keys are bounded before SQLite work. Playback locators must never be
+  /// used as [mediaKey]; the table intentionally has no locator/title column.
+  Future<PlaybackProgress?> loadPlaybackProgress({
+    required String libraryItemId,
+    required String mediaKey,
+  }) async {
+    if (!_validPlaybackProgressKey(libraryItemId) ||
+        !_validPlaybackProgressKey(mediaKey)) {
+      return null;
+    }
+    final path = await resolvedPath();
+    return Isolate.run<PlaybackProgress?>(
+      () => _loadPlaybackProgressOnWorker(path, libraryItemId, mediaKey),
+    );
+  }
+
+  /// Writes exact progress only when [progress.updatedAt] is newer than the
+  /// durable row. Delayed transport callbacks therefore cannot overwrite a
+  /// later stop, restart, or replacement.
+  Future<bool> upsertPlaybackProgress(PlaybackProgress progress) async {
+    if (!_validPlaybackProgressKey(progress.libraryItemId) ||
+        !_validPlaybackProgressKey(progress.mediaKey) ||
+        progress.positionMs < 0 ||
+        progress.durationMs < 0 ||
+        progress.watchedMs < 0) {
+      return false;
+    }
+    final path = await resolvedPath();
+    return Isolate.run<bool>(
+      () => _upsertPlaybackProgressOnWorker(path, progress),
+    );
+  }
+
+  /// Records authoritative cleared state for one exact Movie/Episode key.
+  /// The durable guard rejects delayed pre-clear callbacks while reads return
+  /// no resumable progress. History and sibling episodes remain untouched.
+  Future<bool> clearPlaybackProgress({
+    required String libraryItemId,
+    required String mediaKey,
+    DateTime? clearedAt,
+  }) async {
+    if (!_validPlaybackProgressKey(libraryItemId) ||
+        !_validPlaybackProgressKey(mediaKey)) {
+      return false;
+    }
+    final path = await resolvedPath();
+    final timestamp = (clearedAt ?? DateTime.now()).toUtc();
+    return Isolate.run<bool>(
+      () => _clearPlaybackProgressOnWorker(
+        path,
+        libraryItemId,
+        mediaKey,
+        timestamp,
+      ),
+    );
+  }
+
+  /// Loads exact existing active/visible members of one identity only.
+  /// Matching titles in other identities are never considered variants.
+  Future<List<LibraryCatalogItem>> loadPlayableVariants({
+    required String libraryItemId,
+    int limit = _defaultPlayableVariantLimit,
+  }) async {
+    if (!_validPlaybackProgressKey(libraryItemId)) return const [];
+    final path = await resolvedPath();
+    return Isolate.run<List<LibraryCatalogItem>>(
+      () => _loadPlayableVariantsOnWorker(
+        path,
+        libraryItemId,
+        limit.clamp(1, _maximumPlayableVariantLimit),
+      ),
+    );
+  }
+
+  /// Returns the per-source allowance used before a transport is opened.
+  Future<SourceConnectionAllowance?> loadSourceConnectionAllowance(
+    String sourceId,
+  ) async {
+    if (!_validPlaybackProgressKey(sourceId)) return null;
+    final path = await resolvedPath();
+    return Isolate.run<SourceConnectionAllowance?>(
+      () => _loadSourceConnectionAllowanceOnWorker(path, sourceId),
+    );
+  }
+
+  /// Persists Automatic (null), one, or two. Every other override is rejected
+  /// before SQLite and by the schema-v11 raw-write guard.
+  Future<SourceConnectionAllowance?> setSourceConnectionLimitOverride({
+    required String sourceId,
+    required int? overrideLimit,
+  }) async {
+    if (!_validPlaybackProgressKey(sourceId) ||
+        (overrideLimit != null && overrideLimit != 1 && overrideLimit != 2)) {
+      return null;
+    }
+    final path = await resolvedPath();
+    return Isolate.run<SourceConnectionAllowance?>(
+      () => _setSourceConnectionLimitOverrideOnWorker(
+        path,
+        sourceId,
+        overrideLimit,
+      ),
+    );
+  }
+
+  Future<StartupPreference> loadStartupPreference() async {
+    final path = await resolvedPath();
+    return Isolate.run<StartupPreference>(
+      () => _loadStartupPreferenceOnWorker(path),
+    );
+  }
+
+  Future<StartupPreference> saveStartupTarget(StartupTarget target) async {
+    final path = await resolvedPath();
+    return Isolate.run<StartupPreference>(
+      () => _saveStartupTargetOnWorker(path, target),
+    );
+  }
+
+  Future<StartupPreference> savePreviousDestination(
+    StartupDestinationSlug destination,
+  ) async {
+    final path = await resolvedPath();
+    return Isolate.run<StartupPreference>(
+      () => _savePreviousDestinationOnWorker(path, destination),
+    );
+  }
+
+  /// Records only an existing exact Live library identity. A Movie, Episode,
+  /// missing identity, title, or playback locator can never replace the saved
+  /// last channel.
+  Future<bool> saveLastLiveLibraryItem(String libraryItemId) async {
+    if (!_validPlaybackProgressKey(libraryItemId)) return false;
+    final path = await resolvedPath();
+    return Isolate.run<bool>(
+      () => _saveLastLiveLibraryItemOnWorker(path, libraryItemId),
+    );
+  }
+
+  Future<void> clearLastLiveLibraryItem() async {
+    final path = await resolvedPath();
+    await Isolate.run<void>(() => _clearLastLiveLibraryItemOnWorker(path));
+  }
+
+  /// Resolves the durable preference against current exact local eligibility.
+  /// Hidden, disabled, unavailable, or removed variants quietly resolve Home.
+  Future<StartupResolution> resolveStartupDestination() async {
+    final path = await resolvedPath();
+    return Isolate.run<StartupResolution>(
+      () => _resolveStartupDestinationOnWorker(path),
+    );
+  }
+
+  /// Reads cached guide data for a small exact Live-item set. M3U, hidden,
+  /// disabled, unavailable, and non-Live rows are deliberately absent.
+  Future<List<EpgChannelWindow>> loadEpgWindow({
+    required List<String> catalogItemIds,
+    required DateTime windowStartUtc,
+    required DateTime windowEndUtc,
+    required DateTime atUtc,
+  }) async {
+    final ids = _boundedExactIds(catalogItemIds, _maximumEpgWindowItemIds);
+    if (ids.isEmpty || !windowEndUtc.isAfter(windowStartUtc)) return const [];
+    final path = await resolvedPath();
+    return Isolate.run<List<EpgChannelWindow>>(
+      () => _loadEpgWindowOnWorker(
+        path,
+        ids,
+        windowStartUtc.toUtc(),
+        windowEndUtc.toUtc(),
+        atUtc.toUtc(),
+      ),
+    );
+  }
+
+  /// Atomically leases stale visible Xtream Live rows for one bounded fetch.
+  /// An explicit manual retry may bypass persisted error backoff, but never an
+  /// active refreshing lease or a successful/empty cache TTL.
+  /// The returned provider IDs are internal request data with redacted string
+  /// forms; they are never persisted as settings or exposed by window reads.
+  Future<List<EpgRefreshTarget>> claimEpgRefreshTargets({
+    required List<String> catalogItemIds,
+    required DateTime nowUtc,
+    int limit = _maximumEpgRefreshTargets,
+    bool manualRetry = false,
+  }) async {
+    final boundedLimit = limit.clamp(1, _maximumEpgRefreshTargets);
+    final ids = _boundedExactIds(catalogItemIds, boundedLimit);
+    if (ids.isEmpty) return const [];
+    final path = await resolvedPath();
+    return Isolate.run<List<EpgRefreshTarget>>(
+      () => _claimEpgRefreshTargetsOnWorker(
+        path,
+        ids,
+        nowUtc.toUtc(),
+        boundedLimit,
+        manualRetry,
+      ),
+    );
+  }
+
+  /// Replaces one exact channel cache only if this claim is still current.
+  Future<bool> commitEpgRefreshTarget({
+    required EpgRefreshTarget target,
+    required List<EpgProgram> programs,
+    required DateTime completedAtUtc,
+  }) async {
+    if (programs.length > _maximumEpgProgramsPerChannel ||
+        programs.any((program) => !_validEpgProgram(target, program))) {
+      return false;
+    }
+    final path = await resolvedPath();
+    return Isolate.run<bool>(
+      () => _commitEpgRefreshTargetOnWorker(
+        path,
+        target,
+        programs,
+        completedAtUtc.toUtc(),
+      ),
+    );
+  }
+
+  /// Records a fixed, credential-free failure while retaining last-good rows.
+  Future<bool> failEpgRefreshTarget({
+    required EpgRefreshTarget target,
+    required EpgRefreshFailure failure,
+    required DateTime failedAtUtc,
+    required DateTime retryAfterUtc,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<bool>(
+      () => _failEpgRefreshTargetOnWorker(
+        path,
+        target,
+        failure,
+        failedAtUtc.toUtc(),
+        retryAfterUtc.toUtc(),
+      ),
+    );
+  }
+
+  Future<void> markEpgSourceUnsupported({
+    required String sourceId,
+    required DateTime attemptedAtUtc,
+    required DateTime retryAfterUtc,
+  }) async {
+    if (!_validPlaybackProgressKey(sourceId)) return;
+    final path = await resolvedPath();
+    await Isolate.run<void>(
+      () => _markEpgSourceUnsupportedOnWorker(
+        path,
+        sourceId,
+        attemptedAtUtc.toUtc(),
+        retryAfterUtc.toUtc(),
+      ),
+    );
+  }
+
+  Future<int> pruneExpiredEpg(DateTime beforeUtc) async {
+    final path = await resolvedPath();
+    return Isolate.run<int>(
+      () => _pruneExpiredEpgOnWorker(path, beforeUtc.toUtc()),
+    );
+  }
+
+  /// Returns Favorites first, followed by the bounded custom-group directory
+  /// in the user's explicit local order.
+  Future<List<PersonalLibraryDirectoryEntry>> loadPersonalLibraryDirectory({
+    int limit = _defaultPersonalLibraryDirectoryLimit,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<List<PersonalLibraryDirectoryEntry>>(
+      () => _loadPersonalLibraryDirectoryOnWorker(
+        path,
+        limit.clamp(1, _maximumPersonalLibraryDirectoryLimit),
+      ),
+    );
+  }
+
+  /// Returns only Favorites/custom groups pinned to Home in one shared order.
+  Future<List<PersonalLibraryDirectoryEntry>>
+  loadPinnedPersonalLibraryDirectory({int limit = 24}) async {
+    final path = await resolvedPath();
+    return Isolate.run<List<PersonalLibraryDirectoryEntry>>(
+      () => _loadPinnedPersonalLibraryDirectoryOnWorker(
+        path,
+        limit.clamp(1, _maximumPersonalLibraryDirectoryLimit),
+      ),
+    );
+  }
+
+  /// Reads the Favorite flag and every custom-group membership for one stable
+  /// local library identity. No source credential or playback locator crosses
+  /// this boundary.
+  Future<PersonalLibraryOrganization?> loadItemOrganization(
+    String libraryItemId,
+  ) async {
+    final path = await resolvedPath();
+    return Isolate.run<PersonalLibraryOrganization?>(
+      () => _loadItemOrganizationOnWorker(path, libraryItemId),
+    );
+  }
+
+  /// Replaces Favorite plus the complete desired custom-group set in one
+  /// transaction. Existing custom-group ordinals are retained; new membership
+  /// appends to that group's manual order.
+  Future<PersonalLibraryMutationResult> saveItemOrganization({
+    required String libraryItemId,
+    required bool favorite,
+    required Set<String> customGroupIds,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<PersonalLibraryMutationResult>(
+      () => _saveItemOrganizationOnWorker(
+        path,
+        libraryItemId,
+        favorite,
+        customGroupIds.toList(growable: false),
+      ),
+    );
+  }
+
+  Future<PersonalLibraryMutationResult> createCustomGroup(String name) async {
+    final path = await resolvedPath();
+    final random = Random.secure().nextInt(0x7fffffff).toRadixString(36);
+    final id =
+        'group-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-$random';
+    return Isolate.run<PersonalLibraryMutationResult>(
+      () => _createCustomGroupOnWorker(path, id, name),
+    );
+  }
+
+  Future<PersonalLibraryMutationResult> renameCustomGroup({
+    required String customGroupId,
+    required String name,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<PersonalLibraryMutationResult>(
+      () => _renameCustomGroupOnWorker(path, customGroupId, name),
+    );
+  }
+
+  Future<PersonalLibraryMutationResult> deleteCustomGroup(
+    String customGroupId,
+  ) async {
+    final path = await resolvedPath();
+    return Isolate.run<PersonalLibraryMutationResult>(
+      () => _deleteCustomGroupOnWorker(path, customGroupId),
+    );
+  }
+
+  Future<PersonalLibraryMutationResult> moveCustomGroup({
+    required String customGroupId,
+    required PersonalLibraryMoveDirection direction,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<PersonalLibraryMutationResult>(
+      () => _moveCustomGroupOnWorker(path, customGroupId, direction),
+    );
+  }
+
+  Future<PersonalLibraryMutationResult> setPersonalCollectionPinned({
+    required PersonalLibraryCollectionRef collection,
+    required bool pinned,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<PersonalLibraryMutationResult>(
+      () => _setPersonalCollectionPinnedOnWorker(path, collection, pinned),
+    );
+  }
+
+  Future<PersonalLibraryMutationResult> movePinnedPersonalCollection({
+    required PersonalLibraryCollectionRef collection,
+    required PersonalLibraryMoveDirection direction,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<PersonalLibraryMutationResult>(
+      () => _movePinnedPersonalCollectionOnWorker(path, collection, direction),
+    );
+  }
+
+  Future<PersonalLibraryMutationResult> moveCustomGroupItem({
+    required String customGroupId,
+    required String libraryItemId,
+    required PersonalLibraryMoveDirection direction,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<PersonalLibraryMutationResult>(
+      () => _moveCustomGroupItemOnWorker(
+        path,
+        customGroupId,
+        libraryItemId,
+        direction,
+      ),
+    );
+  }
+
+  Future<PersonalLibraryMutationResult> removeCustomGroupItem({
+    required String customGroupId,
+    required String libraryItemId,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<PersonalLibraryMutationResult>(
+      () => _removeCustomGroupItemOnWorker(path, customGroupId, libraryItemId),
+    );
+  }
+
+  Future<FavoriteLibraryPage> loadFavoriteLibraryPage({
+    FavoritePageCursor? cursor,
+    int limit = _defaultBrowsePageLimit,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<FavoriteLibraryPage>(
+      () => _loadFavoriteLibraryPageOnWorker(
+        path,
+        cursor,
+        limit.clamp(1, _maximumBrowsePageLimit),
+      ),
+    );
+  }
+
+  /// Reads a custom group's manual order without exposing any mutation seam.
+  Future<CustomGroupLibraryPage> loadCustomGroupLibraryPage({
+    required String customGroupId,
+    CustomGroupPageCursor? cursor,
+    int limit = _defaultBrowsePageLimit,
+  }) async {
+    final path = await resolvedPath();
+    return Isolate.run<CustomGroupLibraryPage>(
+      () => _loadCustomGroupLibraryPageOnWorker(
+        path,
+        customGroupId,
+        cursor,
+        limit.clamp(1, _maximumBrowsePageLimit),
+      ),
+    );
+  }
+
   /// Loads the one global catalog scope. Stale source selections normalize to
   /// All sources so re-enabling a source cannot unexpectedly restore it.
   Future<LibraryScope> loadCatalogScope() async {
@@ -1122,6 +1711,682 @@ class SourceCatalogDatabase {
   }
 }
 
+List<String> _boundedExactIds(List<String> values, int limit) {
+  final result = <String>[];
+  final seen = <String>{};
+  for (final value in values) {
+    if (result.length == limit) break;
+    if (!_validPlaybackProgressKey(value) || !seen.add(value)) continue;
+    result.add(value);
+  }
+  return List.unmodifiable(result);
+}
+
+bool _validEpgProgram(EpgRefreshTarget target, EpgProgram program) =>
+    program.catalogItemId == target.catalogItemId &&
+    program.startUtc.isUtc &&
+    program.endUtc.isUtc &&
+    program.endUtc.isAfter(program.startUtc) &&
+    program.endUtc.difference(program.startUtc) <= epgMaximumProgramDuration &&
+    program.title.trim().isNotEmpty &&
+    utf8.encode(program.title).length <= 512 &&
+    (program.description == null ||
+        utf8.encode(program.description!).length <= 4 * 1024);
+
+StartupPreference _loadStartupPreferenceOnWorker(String path) {
+  final db = _openDatabase(path);
+  try {
+    return _loadStartupPreference(db);
+  } finally {
+    db.close();
+  }
+}
+
+StartupPreference _loadStartupPreference(Database db) {
+  final rows = db.select(
+    '''SELECT key, value FROM app_settings
+       WHERE key IN (?, ?, ?)''',
+    [
+      _startupTargetSettingKey,
+      _previousDestinationSettingKey,
+      _lastLiveLibraryItemSettingKey,
+    ],
+  );
+  final values = <String, String>{
+    for (final row in rows) row['key']! as String: row['value']! as String,
+  };
+  final target = StartupTargetStorage.tryDecode(
+    values[_startupTargetSettingKey],
+  );
+  final previousValue = values[_previousDestinationSettingKey];
+  final previous = previousValue == null
+      ? null
+      : StartupDestinationSlug.values
+            .where((value) => value.name == previousValue)
+            .firstOrNull;
+  final lastLive = values[_lastLiveLibraryItemSettingKey];
+  return StartupPreference(
+    target: target ?? StartupTarget.home,
+    previousDestination: previous,
+    lastLiveLibraryItemId:
+        lastLive == null || !_validPlaybackProgressKey(lastLive)
+        ? null
+        : lastLive,
+  );
+}
+
+StartupPreference _saveStartupTargetOnWorker(
+  String path,
+  StartupTarget target,
+) {
+  final db = _openDatabase(path);
+  try {
+    _writeAppSetting(db, _startupTargetSettingKey, target.storageValue);
+    return _loadStartupPreference(db);
+  } finally {
+    db.close();
+  }
+}
+
+StartupPreference _savePreviousDestinationOnWorker(
+  String path,
+  StartupDestinationSlug destination,
+) {
+  final db = _openDatabase(path);
+  try {
+    _writeAppSetting(db, _previousDestinationSettingKey, destination.name);
+    return _loadStartupPreference(db);
+  } finally {
+    db.close();
+  }
+}
+
+bool _saveLastLiveLibraryItemOnWorker(String path, String libraryItemId) {
+  final db = _openDatabase(path);
+  try {
+    final rows = db.select(
+      'SELECT 1 FROM library_items WHERE id = ? AND kind = ? LIMIT 1',
+      [libraryItemId, SourceMediaKind.live.name],
+    );
+    if (rows.isEmpty) return false;
+    _writeAppSetting(db, _lastLiveLibraryItemSettingKey, libraryItemId);
+    return true;
+  } finally {
+    db.close();
+  }
+}
+
+void _clearLastLiveLibraryItemOnWorker(String path) {
+  final db = _openDatabase(path);
+  try {
+    db.execute('DELETE FROM app_settings WHERE key = ?', [
+      _lastLiveLibraryItemSettingKey,
+    ]);
+  } finally {
+    db.close();
+  }
+}
+
+StartupResolution _resolveStartupDestinationOnWorker(String path) {
+  final db = _openDatabase(path);
+  try {
+    final preference = _loadStartupPreference(db);
+    switch (preference.target) {
+      case StartupTarget.home:
+        return const StartupResolution.home();
+      case StartupTarget.previousScreen:
+        final previous = preference.previousDestination;
+        return previous == null
+            ? const StartupResolution.home()
+            : StartupResolution(destination: previous, lastLiveItem: null);
+      case StartupTarget.lastChannel:
+        final libraryItemId = preference.lastLiveLibraryItemId;
+        if (libraryItemId == null) return const StartupResolution.home();
+        final item = _loadEligibleStartupLiveItem(db, libraryItemId);
+        return item == null
+            ? const StartupResolution.home()
+            : StartupResolution(
+                destination: StartupDestinationSlug.live,
+                lastLiveItem: item,
+              );
+    }
+  } finally {
+    db.close();
+  }
+}
+
+LibraryCatalogItem? _loadEligibleStartupLiveItem(
+  Database db,
+  String libraryItemId,
+) {
+  final rows = db.select(
+    '''SELECT library.id AS library_item_id,
+              catalog.id AS catalog_item_id,
+              catalog.source_id,
+              source.name AS source_display_name,
+              library.kind,
+              library.display_title,
+              library.artwork_locator,
+              catalog.playback_ref
+       FROM library_members AS member
+       JOIN library_items AS library ON library.id = member.library_item_id
+       JOIN catalog_items AS catalog ON catalog.id = member.catalog_item_id
+       JOIN sources AS source ON source.id = catalog.source_id
+       WHERE member.library_item_id = ?
+         AND library.kind = ?
+         AND catalog.kind = ?
+         AND catalog.available = 1
+         AND catalog.hidden = 0
+         AND NOT EXISTS (
+           SELECT 1 FROM source_groups AS visibility_group
+           WHERE visibility_group.id = catalog.source_group_id
+             AND visibility_group.hidden = 1
+         )
+         AND source.enabled = 1
+         AND source.refresh_state IN ('ready', 'refreshing')
+       ORDER BY member.preferred DESC, catalog.source_id ASC, catalog.id ASC
+       LIMIT 1''',
+    [libraryItemId, SourceMediaKind.live.name, SourceMediaKind.live.name],
+  );
+  if (rows.isEmpty) return null;
+  final row = rows.single;
+  return LibraryCatalogItem(
+    libraryItemId: row['library_item_id']! as String,
+    catalogItemId: row['catalog_item_id']! as String,
+    sourceId: row['source_id']! as String,
+    sourceDisplayName: row['source_display_name']! as String,
+    kind: SourceMediaKind.live,
+    title: row['display_title']! as String,
+    artworkLocator: row['artwork_locator'] as String?,
+    playbackRef: row['playback_ref']! as String,
+  );
+}
+
+void _writeAppSetting(Database db, String key, String value) {
+  db.execute(
+    '''INSERT INTO app_settings (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value''',
+    [key, value],
+  );
+}
+
+List<EpgChannelWindow> _loadEpgWindowOnWorker(
+  String path,
+  List<String> catalogItemIds,
+  DateTime windowStartUtc,
+  DateTime windowEndUtc,
+  DateTime atUtc,
+) {
+  if (!File(path).existsSync()) return const [];
+  final db = _openDatabase(path);
+  try {
+    final placeholders = List.filled(catalogItemIds.length, '?').join(',');
+    final eligibleRows = db.select(
+      '''SELECT catalog.id,
+                channel.refresh_state,
+                source_epg.capability,
+                source_epg.last_error AS source_epg_error,
+                source_epg.retry_after_utc_ms AS source_epg_retry_after_utc_ms
+         FROM catalog_items AS catalog
+         JOIN sources AS source ON source.id = catalog.source_id
+         LEFT JOIN epg_channel_state AS channel
+           ON channel.catalog_item_id = catalog.id
+         LEFT JOIN epg_source_state AS source_epg
+           ON source_epg.source_id = source.id
+         WHERE catalog.id IN ($placeholders)
+           AND catalog.kind = ?
+           AND catalog.available = 1
+           AND catalog.hidden = 0
+           AND NOT EXISTS (
+             SELECT 1 FROM source_groups AS visibility_group
+             WHERE visibility_group.id = catalog.source_group_id
+               AND visibility_group.hidden = 1
+           )
+           AND source.kind = 'xtream'
+           AND source.enabled = 1
+           AND source.refresh_state IN ('ready', 'refreshing')''',
+      [...catalogItemIds, SourceMediaKind.live.name],
+    );
+    final eligible = {
+      for (final row in eligibleRows) row['id']! as String: row,
+    };
+    if (eligible.isEmpty) return const [];
+    final eligibleIds = catalogItemIds
+        .where(eligible.containsKey)
+        .toList(growable: false);
+    final programPlaceholders = List.filled(eligibleIds.length, '?').join(',');
+    final rows = db.select(
+      '''SELECT catalog_item_id, start_utc_ms, end_utc_ms, title, description
+         FROM epg_programs
+         WHERE catalog_item_id IN ($programPlaceholders)
+           AND end_utc_ms > ? AND start_utc_ms < ?
+         ORDER BY catalog_item_id ASC, start_utc_ms ASC, end_utc_ms ASC''',
+      [
+        ...eligibleIds,
+        windowStartUtc.millisecondsSinceEpoch,
+        windowEndUtc.millisecondsSinceEpoch,
+      ],
+    );
+    final programsByItem = <String, List<EpgProgram>>{};
+    for (final row in rows) {
+      final id = row['catalog_item_id']! as String;
+      programsByItem
+          .putIfAbsent(id, () => [])
+          .add(
+            EpgProgram(
+              catalogItemId: id,
+              startUtc: DateTime.fromMillisecondsSinceEpoch(
+                row['start_utc_ms']! as int,
+                isUtc: true,
+              ),
+              endUtc: DateTime.fromMillisecondsSinceEpoch(
+                row['end_utc_ms']! as int,
+                isUtc: true,
+              ),
+              title: row['title']! as String,
+              description: row['description'] as String?,
+            ),
+          );
+    }
+    return List.unmodifiable(
+      eligibleIds.map((id) {
+        final state = eligible[id]!;
+        final programs = List<EpgProgram>.unmodifiable(
+          programsByItem[id] ?? const [],
+        );
+        return EpgChannelWindow(
+          catalogItemId: id,
+          availability: _epgAvailability(
+            state['refresh_state'] as String?,
+            state['capability'] as String?,
+            state['source_epg_error'] as String?,
+            state['source_epg_retry_after_utc_ms'] as int?,
+            atUtc,
+          ),
+          programs: programs,
+          nowNext: _epgNowNext(programs, atUtc),
+        );
+      }),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+EpgAvailability _epgAvailability(
+  String? state,
+  String? capability,
+  String? sourceError,
+  int? sourceRetryAfterUtcMs,
+  DateTime atUtc,
+) {
+  if (capability == 'unsupported') return EpgAvailability.unsupported;
+  final sourceFailureActive =
+      (sourceError == EpgRefreshFailure.credentialsUnavailable.name ||
+          sourceError == EpgRefreshFailure.authentication.name) &&
+      (sourceRetryAfterUtcMs ?? 0) > atUtc.millisecondsSinceEpoch;
+  if (sourceFailureActive) return EpgAvailability.temporarilyUnavailable;
+  return switch (state) {
+    'refreshing' => EpgAvailability.refreshing,
+    'available' => EpgAvailability.available,
+    'empty' => EpgAvailability.empty,
+    'error' => EpgAvailability.temporarilyUnavailable,
+    _ => EpgAvailability.unknown,
+  };
+}
+
+EpgNowNext _epgNowNext(List<EpgProgram> programs, DateTime atUtc) {
+  EpgProgram? current;
+  for (final program in programs) {
+    if (!program.startUtc.isAfter(atUtc) && program.endUtc.isAfter(atUtc)) {
+      if (current == null || program.startUtc.isAfter(current.startUtc)) {
+        current = program;
+      }
+    }
+  }
+  final nextBoundary = current?.endUtc ?? atUtc;
+  EpgProgram? next;
+  for (final program in programs) {
+    if (!program.startUtc.isBefore(nextBoundary) &&
+        (next == null || program.startUtc.isBefore(next.startUtc))) {
+      next = program;
+    }
+  }
+  return EpgNowNext(current: current, next: next);
+}
+
+List<EpgRefreshTarget> _claimEpgRefreshTargetsOnWorker(
+  String path,
+  List<String> catalogItemIds,
+  DateTime nowUtc,
+  int limit,
+  bool manualRetry,
+) {
+  if (!File(path).existsSync()) return const [];
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    final placeholders = List.filled(catalogItemIds.length, '?').join(',');
+    final nowMs = nowUtc.millisecondsSinceEpoch;
+    final rows = db.select(
+      '''SELECT catalog.id, catalog.source_id, catalog.provider_key,
+                COALESCE(channel.generation, 0) AS generation
+         FROM catalog_items AS catalog
+         JOIN sources AS source ON source.id = catalog.source_id
+         LEFT JOIN epg_channel_state AS channel
+           ON channel.catalog_item_id = catalog.id
+         LEFT JOIN epg_source_state AS source_epg
+           ON source_epg.source_id = source.id
+         WHERE catalog.id IN ($placeholders)
+           AND catalog.kind = ?
+           AND catalog.available = 1
+           AND catalog.hidden = 0
+           AND NOT EXISTS (
+             SELECT 1 FROM source_groups AS visibility_group
+             WHERE visibility_group.id = catalog.source_group_id
+               AND visibility_group.hidden = 1
+           )
+           AND source.kind = 'xtream'
+           AND source.enabled = 1
+           AND source.refresh_state IN ('ready', 'refreshing')
+           AND (
+             COALESCE(channel.retry_after_utc_ms, 0) <= ?
+             OR (? = 1 AND channel.refresh_state = 'error')
+           )
+           AND (
+             COALESCE(source_epg.retry_after_utc_ms, 0) <= ?
+             OR (? = 1 AND source_epg.last_error IS NOT NULL)
+           )
+         ORDER BY catalog.id ASC
+         LIMIT ?''',
+      [
+        ...catalogItemIds,
+        SourceMediaKind.live.name,
+        nowMs,
+        manualRetry ? 1 : 0,
+        nowMs,
+        manualRetry ? 1 : 0,
+        limit,
+      ],
+    );
+    final targets = <EpgRefreshTarget>[];
+    for (final row in rows) {
+      final sourceId = row['source_id']! as String;
+      final catalogItemId = row['id']! as String;
+      final generation = (row['generation']! as int) + 1;
+      db.execute(
+        '''INSERT INTO epg_channel_state
+             (catalog_item_id, generation, refresh_state, last_attempt_utc_ms,
+              last_success_utc_ms, retry_after_utc_ms, last_error)
+           VALUES (?, ?, 'refreshing', ?, NULL, ?, NULL)
+           ON CONFLICT(catalog_item_id) DO UPDATE SET
+             generation = excluded.generation,
+             refresh_state = 'refreshing',
+             last_attempt_utc_ms = excluded.last_attempt_utc_ms,
+             retry_after_utc_ms = excluded.retry_after_utc_ms,
+             last_error = NULL''',
+        [
+          catalogItemId,
+          generation,
+          nowMs,
+          nowUtc.add(_epgRefreshLease).millisecondsSinceEpoch,
+        ],
+      );
+      db.execute(
+        '''INSERT INTO epg_source_state
+             (source_id, capability, last_attempt_utc_ms,
+              last_success_utc_ms, retry_after_utc_ms, last_error)
+           VALUES (?, 'unknown', ?, NULL, 0, NULL)
+           ON CONFLICT(source_id) DO UPDATE SET
+             last_attempt_utc_ms = excluded.last_attempt_utc_ms''',
+        [sourceId, nowMs],
+      );
+      targets.add(
+        EpgRefreshTarget(
+          sourceId: sourceId,
+          catalogItemId: catalogItemId,
+          providerStreamId: row['provider_key']! as String,
+          generation: generation,
+        ),
+      );
+    }
+    db.execute('COMMIT');
+    return List.unmodifiable(targets);
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+bool _commitEpgRefreshTargetOnWorker(
+  String path,
+  EpgRefreshTarget target,
+  List<EpgProgram> programs,
+  DateTime completedAtUtc,
+) {
+  if (!File(path).existsSync()) return false;
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    final active = db.select(
+      '''SELECT 1 FROM epg_channel_state AS state
+         JOIN catalog_items AS catalog ON catalog.id = state.catalog_item_id
+         WHERE state.catalog_item_id = ? AND state.generation = ?
+           AND state.refresh_state = 'refreshing'
+           AND catalog.source_id = ? AND catalog.kind = ?
+           AND catalog.available = 1''',
+      [
+        target.catalogItemId,
+        target.generation,
+        target.sourceId,
+        SourceMediaKind.live.name,
+      ],
+    );
+    if (active.isEmpty) {
+      db.execute('ROLLBACK');
+      return false;
+    }
+    db.execute('DELETE FROM epg_programs WHERE catalog_item_id = ?', [
+      target.catalogItemId,
+    ]);
+    final insert = db.prepare('''INSERT INTO epg_programs
+           (catalog_item_id, start_utc_ms, end_utc_ms, title, description)
+         VALUES (?, ?, ?, ?, ?)''');
+    try {
+      for (final program in programs) {
+        insert.execute([
+          target.catalogItemId,
+          program.startUtc.millisecondsSinceEpoch,
+          program.endUtc.millisecondsSinceEpoch,
+          program.title,
+          program.description,
+        ]);
+      }
+    } finally {
+      insert.close();
+    }
+    final completedMs = completedAtUtc.millisecondsSinceEpoch;
+    final ttl = programs.isEmpty ? _epgEmptyTtl : _epgSuccessTtl;
+    db.execute(
+      '''UPDATE epg_channel_state
+         SET refresh_state = ?, last_success_utc_ms = ?,
+             retry_after_utc_ms = ?, last_error = NULL
+         WHERE catalog_item_id = ? AND generation = ?''',
+      [
+        programs.isEmpty ? 'empty' : 'available',
+        completedMs,
+        completedAtUtc.add(ttl).millisecondsSinceEpoch,
+        target.catalogItemId,
+        target.generation,
+      ],
+    );
+    db.execute(
+      '''INSERT INTO epg_source_state
+           (source_id, capability, last_attempt_utc_ms,
+            last_success_utc_ms, retry_after_utc_ms, last_error)
+         VALUES (?, 'available', ?, ?, 0, NULL)
+         ON CONFLICT(source_id) DO UPDATE SET
+           capability = 'available',
+           last_success_utc_ms = excluded.last_success_utc_ms,
+           retry_after_utc_ms = 0,
+           last_error = NULL''',
+      [target.sourceId, completedMs, completedMs],
+    );
+    db.execute('COMMIT');
+    return true;
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+bool _failEpgRefreshTargetOnWorker(
+  String path,
+  EpgRefreshTarget target,
+  EpgRefreshFailure failure,
+  DateTime failedAtUtc,
+  DateTime retryAfterUtc,
+) {
+  if (!File(path).existsSync()) return false;
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    db.execute(
+      '''UPDATE epg_channel_state
+         SET refresh_state = 'error', last_attempt_utc_ms = ?,
+             retry_after_utc_ms = ?, last_error = ?
+         WHERE catalog_item_id = ? AND generation = ?
+           AND refresh_state = 'refreshing' ''',
+      [
+        failedAtUtc.millisecondsSinceEpoch,
+        retryAfterUtc.millisecondsSinceEpoch,
+        failure.name,
+        target.catalogItemId,
+        target.generation,
+      ],
+    );
+    final changed = db.updatedRows == 1;
+    if (changed) {
+      switch (failure) {
+        case EpgRefreshFailure.unsupported:
+          _markEpgSourceUnsupported(
+            db,
+            target.sourceId,
+            failedAtUtc,
+            retryAfterUtc,
+          );
+          break;
+        case EpgRefreshFailure.credentialsUnavailable:
+        case EpgRefreshFailure.authentication:
+          _markEpgSourceTransientFailure(
+            db,
+            target.sourceId,
+            failure,
+            failedAtUtc,
+            retryAfterUtc,
+          );
+          break;
+        case EpgRefreshFailure.unreachable:
+        case EpgRefreshFailure.malformedResponse:
+        case EpgRefreshFailure.responseTooLarge:
+        case EpgRefreshFailure.timedOut:
+        case EpgRefreshFailure.localPersistence:
+        case EpgRefreshFailure.cancelled:
+          break;
+      }
+    }
+    db.execute('COMMIT');
+    return changed;
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+void _markEpgSourceUnsupportedOnWorker(
+  String path,
+  String sourceId,
+  DateTime attemptedAtUtc,
+  DateTime retryAfterUtc,
+) {
+  if (!File(path).existsSync()) return;
+  final db = _openDatabase(path);
+  try {
+    _markEpgSourceUnsupported(db, sourceId, attemptedAtUtc, retryAfterUtc);
+  } finally {
+    db.close();
+  }
+}
+
+void _markEpgSourceUnsupported(
+  Database db,
+  String sourceId,
+  DateTime attemptedAtUtc,
+  DateTime retryAfterUtc,
+) {
+  db.execute(
+    '''INSERT INTO epg_source_state
+         (source_id, capability, last_attempt_utc_ms,
+          last_success_utc_ms, retry_after_utc_ms, last_error)
+       VALUES (?, 'unsupported', ?, NULL, ?, 'unsupported')
+       ON CONFLICT(source_id) DO UPDATE SET
+         capability = 'unsupported',
+         last_attempt_utc_ms = excluded.last_attempt_utc_ms,
+         retry_after_utc_ms = excluded.retry_after_utc_ms,
+         last_error = 'unsupported' ''',
+    [
+      sourceId,
+      attemptedAtUtc.millisecondsSinceEpoch,
+      retryAfterUtc.millisecondsSinceEpoch,
+    ],
+  );
+}
+
+void _markEpgSourceTransientFailure(
+  Database db,
+  String sourceId,
+  EpgRefreshFailure failure,
+  DateTime attemptedAtUtc,
+  DateTime retryAfterUtc,
+) {
+  db.execute(
+    '''INSERT INTO epg_source_state
+         (source_id, capability, last_attempt_utc_ms,
+          last_success_utc_ms, retry_after_utc_ms, last_error)
+       VALUES (?, 'unknown', ?, NULL, ?, ?)
+       ON CONFLICT(source_id) DO UPDATE SET
+         capability = 'unknown',
+         last_attempt_utc_ms = excluded.last_attempt_utc_ms,
+         retry_after_utc_ms = excluded.retry_after_utc_ms,
+         last_error = excluded.last_error''',
+    [
+      sourceId,
+      attemptedAtUtc.millisecondsSinceEpoch,
+      retryAfterUtc.millisecondsSinceEpoch,
+      failure.name,
+    ],
+  );
+}
+
+int _pruneExpiredEpgOnWorker(String path, DateTime beforeUtc) {
+  if (!File(path).existsSync()) return 0;
+  final db = _openDatabase(path);
+  try {
+    db.execute('DELETE FROM epg_programs WHERE end_utc_ms < ?', [
+      beforeUtc.millisecondsSinceEpoch,
+    ]);
+    return db.updatedRows;
+  } finally {
+    db.close();
+  }
+}
+
 void _initialImportWorker(Map<String, Object?> args) {
   final worker = _InitialImportWorker(args);
   worker.start();
@@ -1225,6 +2490,10 @@ class _InitialImportWorker {
       if (!_isAuthorized(account)) {
         throw const SourceImportFailure(SourceImportFailureKind.authentication);
       }
+      db!.execute(
+        'UPDATE sources SET reported_connection_limit = ? WHERE id = ?',
+        [_parseReportedConnectionLimit(account), source['id']],
+      );
       for (final kind in SourceMediaKind.values) {
         _throwIfCancelled();
         events.send({'type': 'stage', 'kind': kind.name});
@@ -2009,7 +3278,11 @@ BrowsePage _browsePageOnWorker(
     }
     arguments.add(limit + 1);
     final rows = db.select(
-      '''SELECT id, source_id, kind, title, normalized_title, artwork_locator, playback_ref
+      '''SELECT id, source_id, kind, title, normalized_title, artwork_locator, playback_ref,
+                (SELECT member.library_item_id
+                 FROM library_members AS member
+                 WHERE member.catalog_item_id = catalog_items.id
+                 LIMIT 1) AS library_item_id
          FROM catalog_items
          WHERE ${filters.join(' AND ')}
          ORDER BY normalized_title ASC, id ASC
@@ -2027,6 +3300,7 @@ BrowsePage _browsePageOnWorker(
             title: row['title']! as String,
             artworkLocator: row['artwork_locator'] as String?,
             playbackRef: row['playback_ref']! as String,
+            libraryItemId: row['library_item_id'] as String?,
           ),
         )
         .toList(growable: false);
@@ -2039,6 +3313,252 @@ BrowsePage _browsePageOnWorker(
               id: last['id']! as String,
             )
           : null,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+CatalogBrowseWindow? _browseWindowAroundCatalogItemOnWorker(
+  String path,
+  String sourceId,
+  SourceMediaKind kind,
+  BrowseCategorySelection selection,
+  String catalogItemId,
+  int limit,
+) {
+  if (!File(path).existsSync()) return null;
+  final db = _openDatabase(path);
+  try {
+    final scope = _visibleCatalogBrowseScope(sourceId, kind, selection);
+    if (scope == null) return null;
+    final anchorRows = db.select(
+      '''SELECT id, source_id, kind, title, normalized_title, artwork_locator,
+                playback_ref,
+                (SELECT member.library_item_id
+                 FROM library_members AS member
+                 WHERE member.catalog_item_id = catalog_items.id
+                 LIMIT 1) AS library_item_id
+         FROM catalog_items
+         WHERE ${scope.filters.join(' AND ')} AND id = ?
+         LIMIT 1''',
+      [...scope.arguments, catalogItemId],
+    );
+    if (anchorRows.isEmpty) return null;
+    final anchor = anchorRows.first;
+    final anchorTitle = anchor['normalized_title']! as String;
+    final anchorId = anchor['id']! as String;
+    final beforeLimit = limit ~/ 2;
+    final afterLimit = limit - beforeLimit - 1;
+    final beforeRows = db.select(
+      '''SELECT id, source_id, kind, title, normalized_title, artwork_locator,
+                playback_ref,
+                (SELECT member.library_item_id
+                 FROM library_members AS member
+                 WHERE member.catalog_item_id = catalog_items.id
+                 LIMIT 1) AS library_item_id
+         FROM catalog_items
+         WHERE ${scope.filters.join(' AND ')}
+           AND (normalized_title < ? OR (normalized_title = ? AND id < ?))
+         ORDER BY normalized_title DESC, id DESC
+         LIMIT ?''',
+      [...scope.arguments, anchorTitle, anchorTitle, anchorId, beforeLimit + 1],
+    );
+    final hasEarlier = beforeRows.length > beforeLimit;
+    final visibleBefore = beforeRows.take(beforeLimit).toList().reversed;
+    final afterRows = db.select(
+      '''SELECT id, source_id, kind, title, normalized_title, artwork_locator,
+                playback_ref,
+                (SELECT member.library_item_id
+                 FROM library_members AS member
+                 WHERE member.catalog_item_id = catalog_items.id
+                 LIMIT 1) AS library_item_id
+         FROM catalog_items
+         WHERE ${scope.filters.join(' AND ')}
+           AND (normalized_title > ? OR (normalized_title = ? AND id > ?))
+         ORDER BY normalized_title ASC, id ASC
+         LIMIT ?''',
+      [...scope.arguments, anchorTitle, anchorTitle, anchorId, afterLimit + 1],
+    );
+    final hasLater = afterRows.length > afterLimit;
+    final visibleAfter = afterRows.take(afterLimit).toList(growable: false);
+    final visibleRows = <Row>[...visibleBefore, anchor, ...visibleAfter];
+    return CatalogBrowseWindow(
+      items: List.unmodifiable(visibleRows.map(_browseCatalogItemFromRow)),
+      previousCursor: hasEarlier && visibleRows.isNotEmpty
+          ? _browseCursorFromRow(visibleRows.first)
+          : null,
+      nextCursor: hasLater && visibleRows.isNotEmpty
+          ? _browseCursorFromRow(visibleRows.last)
+          : null,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+CatalogBrowseWindow _browsePageBeforeOnWorker(
+  String path,
+  String sourceId,
+  SourceMediaKind kind,
+  BrowseCategorySelection selection,
+  BrowseCursor cursor,
+  int limit,
+) {
+  if (!File(path).existsSync()) {
+    return const CatalogBrowseWindow(
+      items: [],
+      previousCursor: null,
+      nextCursor: null,
+    );
+  }
+  final db = _openDatabase(path);
+  try {
+    final scope = _visibleCatalogBrowseScope(sourceId, kind, selection);
+    if (scope == null) {
+      return const CatalogBrowseWindow(
+        items: [],
+        previousCursor: null,
+        nextCursor: null,
+      );
+    }
+    final rows = db.select(
+      '''SELECT id, source_id, kind, title, normalized_title, artwork_locator,
+                playback_ref,
+                (SELECT member.library_item_id
+                 FROM library_members AS member
+                 WHERE member.catalog_item_id = catalog_items.id
+                 LIMIT 1) AS library_item_id
+         FROM catalog_items
+         WHERE ${scope.filters.join(' AND ')}
+           AND (normalized_title < ? OR (normalized_title = ? AND id < ?))
+         ORDER BY normalized_title DESC, id DESC
+         LIMIT ?''',
+      [
+        ...scope.arguments,
+        cursor.normalizedTitle,
+        cursor.normalizedTitle,
+        cursor.id,
+        limit + 1,
+      ],
+    );
+    final hasEarlier = rows.length > limit;
+    final visibleRows = rows.take(limit).toList().reversed.toList();
+    return CatalogBrowseWindow(
+      items: List.unmodifiable(visibleRows.map(_browseCatalogItemFromRow)),
+      previousCursor: hasEarlier && visibleRows.isNotEmpty
+          ? _browseCursorFromRow(visibleRows.first)
+          : null,
+      nextCursor: null,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+({List<String> filters, List<Object?> arguments})? _visibleCatalogBrowseScope(
+  String sourceId,
+  SourceMediaKind kind,
+  BrowseCategorySelection selection,
+) {
+  final filters = <String>[
+    'source_id = ?',
+    'kind = ?',
+    'available = 1',
+    'hidden = 0',
+    '''NOT EXISTS (
+         SELECT 1 FROM source_groups AS visibility_group
+         WHERE visibility_group.id = catalog_items.source_group_id
+           AND visibility_group.hidden = 1
+       )''',
+    "EXISTS (SELECT 1 FROM sources WHERE sources.id = catalog_items.source_id AND sources.enabled = 1 AND sources.refresh_state IN ('ready', 'refreshing'))",
+  ];
+  final arguments = <Object?>[sourceId, kind.name];
+  switch (selection.kind) {
+    case BrowseCategorySelectionKind.all:
+      break;
+    case BrowseCategorySelectionKind.uncategorized:
+      filters.add('source_group_id IS NULL');
+    case BrowseCategorySelectionKind.sourceGroup:
+      final sourceGroupId = selection.sourceGroupId;
+      if (sourceGroupId == null) return null;
+      filters.add('source_group_id = ?');
+      arguments.add(sourceGroupId);
+  }
+  return (filters: filters, arguments: arguments);
+}
+
+BrowseCatalogItem _browseCatalogItemFromRow(Row row) => BrowseCatalogItem(
+  id: row['id']! as String,
+  sourceId: row['source_id']! as String,
+  kind: SourceMediaKind.values.byName(row['kind']! as String),
+  title: row['title']! as String,
+  artworkLocator: row['artwork_locator'] as String?,
+  playbackRef: row['playback_ref']! as String,
+  libraryItemId: row['library_item_id'] as String?,
+);
+
+BrowseCursor _browseCursorFromRow(Row row) => BrowseCursor(
+  normalizedTitle: row['normalized_title']! as String,
+  id: row['id']! as String,
+);
+
+BrowseCatalogItem? _loadVisibleCatalogItemOnWorker(
+  String path,
+  String sourceId,
+  SourceMediaKind kind,
+  BrowseCategorySelection selection,
+  String catalogItemId,
+) {
+  if (!File(path).existsSync()) return null;
+  final db = _openDatabase(path);
+  try {
+    final filters = <String>[
+      'id = ?',
+      'source_id = ?',
+      'kind = ?',
+      'available = 1',
+      'hidden = 0',
+      '''NOT EXISTS (
+           SELECT 1 FROM source_groups AS visibility_group
+           WHERE visibility_group.id = catalog_items.source_group_id
+             AND visibility_group.hidden = 1
+         )''',
+      "EXISTS (SELECT 1 FROM sources WHERE sources.id = catalog_items.source_id AND sources.enabled = 1 AND sources.refresh_state IN ('ready', 'refreshing'))",
+    ];
+    final arguments = <Object?>[catalogItemId, sourceId, kind.name];
+    switch (selection.kind) {
+      case BrowseCategorySelectionKind.all:
+        break;
+      case BrowseCategorySelectionKind.uncategorized:
+        filters.add('source_group_id IS NULL');
+      case BrowseCategorySelectionKind.sourceGroup:
+        final sourceGroupId = selection.sourceGroupId;
+        if (sourceGroupId == null) return null;
+        filters.add('source_group_id = ?');
+        arguments.add(sourceGroupId);
+    }
+    final rows = db.select(
+      '''SELECT id, source_id, kind, title, artwork_locator, playback_ref,
+                (SELECT member.library_item_id
+                 FROM library_members AS member
+                 WHERE member.catalog_item_id = catalog_items.id
+                 LIMIT 1) AS library_item_id
+         FROM catalog_items
+         WHERE ${filters.join(' AND ')}
+         LIMIT 1''',
+      arguments,
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return BrowseCatalogItem(
+      id: row['id']! as String,
+      sourceId: row['source_id']! as String,
+      kind: SourceMediaKind.values.byName(row['kind']! as String),
+      title: row['title']! as String,
+      artworkLocator: row['artwork_locator'] as String?,
+      playbackRef: row['playback_ref']! as String,
+      libraryItemId: row['library_item_id'] as String?,
     );
   } finally {
     db.close();
@@ -2163,6 +3683,1361 @@ LibraryPage _libraryPageOnWorker(
     db.close();
   }
 }
+
+bool _hasAnySourceOnWorker(String path) {
+  if (!File(path).existsSync()) return false;
+  final db = _openDatabase(path);
+  try {
+    return db.select('SELECT 1 FROM sources LIMIT 1').isNotEmpty;
+  } finally {
+    db.close();
+  }
+}
+
+bool _recordRecentlyWatchedOnWorker(
+  String path,
+  String libraryItemId,
+  DateTime playedAt,
+) {
+  if (!File(path).existsSync()) return false;
+  final db = _openDatabase(path);
+  try {
+    final identity = db.select('SELECT id FROM library_items WHERE id = ?', [
+      libraryItemId,
+    ]);
+    if (identity.isEmpty) return false;
+    final timestamp = playedAt.toUtc().toIso8601String();
+    db.execute(
+      '''INSERT INTO watch_state
+           (library_item_id, position_ms, duration_ms, completed, last_played_at)
+         VALUES (?, 0, 0, 0, ?)
+         ON CONFLICT(library_item_id) DO UPDATE SET
+           last_played_at = CASE
+             WHEN excluded.last_played_at > watch_state.last_played_at
+             THEN excluded.last_played_at
+             ELSE watch_state.last_played_at
+           END''',
+      [libraryItemId, timestamp],
+    );
+    return true;
+  } finally {
+    db.close();
+  }
+}
+
+List<RecentlyWatchedItem> _loadRecentlyWatchedOnWorker(String path, int limit) {
+  if (!File(path).existsSync()) return const [];
+  final db = _openDatabase(path);
+  try {
+    final rows = db.select(
+      '''WITH ranked AS (
+           SELECT watch.library_item_id,
+                  watch.last_played_at,
+                  catalog.id AS catalog_item_id,
+                  catalog.source_id,
+                  source.name AS source_display_name,
+                  library.kind,
+                  library.display_title,
+                  library.artwork_locator,
+                  catalog.playback_ref,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY watch.library_item_id
+                    ORDER BY member.preferred DESC,
+                             catalog.source_id ASC,
+                             catalog.id ASC
+                  ) AS variant_rank
+           FROM watch_state AS watch
+           JOIN library_items AS library
+             ON library.id = watch.library_item_id
+           JOIN library_members AS member
+             ON member.library_item_id = library.id
+           JOIN catalog_items AS catalog
+             ON catalog.id = member.catalog_item_id
+           JOIN sources AS source
+             ON source.id = catalog.source_id
+           WHERE catalog.available = 1
+             AND catalog.hidden = 0
+             AND NOT EXISTS (
+               SELECT 1 FROM source_groups AS visibility_group
+               WHERE visibility_group.id = catalog.source_group_id
+                 AND visibility_group.hidden = 1
+             )
+             AND source.enabled = 1
+             AND source.refresh_state IN ('ready', 'refreshing')
+         )
+         SELECT library_item_id, last_played_at, catalog_item_id, source_id,
+                source_display_name, kind, display_title, artwork_locator,
+                playback_ref
+         FROM ranked
+         WHERE variant_rank = 1
+         ORDER BY last_played_at DESC, library_item_id ASC
+         LIMIT ?''',
+      [limit],
+    );
+    return List.unmodifiable(
+      rows.map(
+        (row) => RecentlyWatchedItem(
+          item: LibraryCatalogItem(
+            libraryItemId: row['library_item_id']! as String,
+            catalogItemId: row['catalog_item_id']! as String,
+            sourceId: row['source_id']! as String,
+            sourceDisplayName: row['source_display_name']! as String,
+            kind: SourceMediaKind.values.byName(row['kind']! as String),
+            title: row['display_title']! as String,
+            artworkLocator: row['artwork_locator'] as String?,
+            playbackRef: row['playback_ref']! as String,
+          ),
+          lastPlayedAt: DateTime.parse(row['last_played_at']! as String)
+              .toUtc(),
+        ),
+      ),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+bool _validPlaybackProgressKey(String value) {
+  if (value.isEmpty || value.length > _maximumPlaybackKeyUtf8Bytes) {
+    return false;
+  }
+  return utf8.encode(value).length <= _maximumPlaybackKeyUtf8Bytes;
+}
+
+PlaybackProgress? _loadPlaybackProgressOnWorker(
+  String path,
+  String libraryItemId,
+  String mediaKey,
+) {
+  if (!File(path).existsSync()) return null;
+  final db = _openDatabase(path);
+  try {
+    final rows = db.select(
+      '''SELECT library_item_id, media_key, position_ms, duration_ms,
+                watched_ms, completed, updated_at_us
+         FROM playback_progress
+         WHERE library_item_id = ? AND media_key = ? AND cleared = 0
+         LIMIT 1''',
+      [libraryItemId, mediaKey],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.single;
+    return PlaybackProgress(
+      libraryItemId: row['library_item_id']! as String,
+      mediaKey: row['media_key']! as String,
+      positionMs: row['position_ms']! as int,
+      durationMs: row['duration_ms']! as int,
+      watchedMs: row['watched_ms']! as int,
+      completed: row['completed']! as int == 1,
+      updatedAt: DateTime.fromMicrosecondsSinceEpoch(
+        row['updated_at_us']! as int,
+        isUtc: true,
+      ),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+bool _upsertPlaybackProgressOnWorker(String path, PlaybackProgress progress) {
+  final db = _openDatabase(path);
+  try {
+    final identity = db.select('SELECT 1 FROM library_items WHERE id = ?', [
+      progress.libraryItemId,
+    ]);
+    if (identity.isEmpty) return false;
+    db.execute(
+      '''INSERT INTO playback_progress
+           (library_item_id, media_key, position_ms, duration_ms, watched_ms,
+            completed, cleared, updated_at_us)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+         ON CONFLICT(library_item_id, media_key) DO UPDATE SET
+           position_ms = excluded.position_ms,
+           duration_ms = excluded.duration_ms,
+           watched_ms = excluded.watched_ms,
+           completed = excluded.completed,
+           cleared = 0,
+           updated_at_us = excluded.updated_at_us
+         WHERE excluded.updated_at_us > playback_progress.updated_at_us''',
+      [
+        progress.libraryItemId,
+        progress.mediaKey,
+        progress.positionMs,
+        progress.durationMs,
+        progress.watchedMs,
+        progress.completed ? 1 : 0,
+        progress.updatedAt.toUtc().microsecondsSinceEpoch,
+      ],
+    );
+    return db.updatedRows == 1;
+  } finally {
+    db.close();
+  }
+}
+
+bool _clearPlaybackProgressOnWorker(
+  String path,
+  String libraryItemId,
+  String mediaKey,
+  DateTime clearedAt,
+) {
+  if (!File(path).existsSync()) return false;
+  final db = _openDatabase(path);
+  try {
+    final identity = db.select('SELECT 1 FROM library_items WHERE id = ?', [
+      libraryItemId,
+    ]);
+    if (identity.isEmpty) return false;
+    db.execute(
+      '''INSERT INTO playback_progress
+           (library_item_id, media_key, position_ms, duration_ms, watched_ms,
+            completed, cleared, updated_at_us)
+         VALUES (?, ?, 0, 0, 0, 0, 1, ?)
+         ON CONFLICT(library_item_id, media_key) DO UPDATE SET
+           position_ms = 0,
+           duration_ms = 0,
+           watched_ms = 0,
+           completed = 0,
+           cleared = 1,
+           updated_at_us = CASE
+             WHEN excluded.updated_at_us > playback_progress.updated_at_us
+             THEN excluded.updated_at_us
+             ELSE playback_progress.updated_at_us + 1
+           END''',
+      [libraryItemId, mediaKey, clearedAt.microsecondsSinceEpoch],
+    );
+    // A valid exact identity is now authoritatively clear whether this inserted
+    // a first tombstone or advanced an existing progress/tombstone generation.
+    return true;
+  } finally {
+    db.close();
+  }
+}
+
+List<LibraryCatalogItem> _loadPlayableVariantsOnWorker(
+  String path,
+  String libraryItemId,
+  int limit,
+) {
+  if (!File(path).existsSync()) return const [];
+  final db = _openDatabase(path);
+  try {
+    final rows = db.select(
+      '''SELECT library.id AS library_item_id,
+                catalog.id AS catalog_item_id,
+                catalog.source_id,
+                source.name AS source_display_name,
+                library.kind,
+                library.display_title,
+                library.artwork_locator,
+                catalog.playback_ref
+         FROM library_members AS member
+         JOIN library_items AS library ON library.id = member.library_item_id
+         JOIN catalog_items AS catalog ON catalog.id = member.catalog_item_id
+         JOIN sources AS source ON source.id = catalog.source_id
+         WHERE member.library_item_id = ?
+           AND catalog.available = 1
+           AND catalog.hidden = 0
+           AND NOT EXISTS (
+             SELECT 1 FROM source_groups AS visibility_group
+             WHERE visibility_group.id = catalog.source_group_id
+               AND visibility_group.hidden = 1
+           )
+           AND source.enabled = 1
+           AND source.refresh_state IN ('ready', 'refreshing')
+         ORDER BY member.preferred DESC, catalog.source_id ASC, catalog.id ASC
+         LIMIT ?''',
+      [libraryItemId, limit],
+    );
+    return List.unmodifiable(
+      rows.map(
+        (row) => LibraryCatalogItem(
+          libraryItemId: row['library_item_id']! as String,
+          catalogItemId: row['catalog_item_id']! as String,
+          sourceId: row['source_id']! as String,
+          sourceDisplayName: row['source_display_name']! as String,
+          kind: SourceMediaKind.values.byName(row['kind']! as String),
+          title: row['display_title']! as String,
+          artworkLocator: row['artwork_locator'] as String?,
+          playbackRef: row['playback_ref']! as String,
+        ),
+      ),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+SourceConnectionAllowance? _loadSourceConnectionAllowanceOnWorker(
+  String path,
+  String sourceId,
+) {
+  if (!File(path).existsSync()) return null;
+  final db = _openDatabase(path);
+  try {
+    return _sourceConnectionAllowance(db, sourceId);
+  } finally {
+    db.close();
+  }
+}
+
+SourceConnectionAllowance? _setSourceConnectionLimitOverrideOnWorker(
+  String path,
+  String sourceId,
+  int? overrideLimit,
+) {
+  if (!File(path).existsSync()) return null;
+  final db = _openDatabase(path);
+  try {
+    db.execute(
+      'UPDATE sources SET connection_limit_override = ? WHERE id = ?',
+      [overrideLimit, sourceId],
+    );
+    if (db.updatedRows == 0) return null;
+    return _sourceConnectionAllowance(db, sourceId);
+  } finally {
+    db.close();
+  }
+}
+
+SourceConnectionAllowance? _sourceConnectionAllowance(
+  Database db,
+  String sourceId,
+) {
+  final rows = db.select(
+    '''SELECT reported_connection_limit, connection_limit_override
+       FROM sources WHERE id = ? LIMIT 1''',
+    [sourceId],
+  );
+  if (rows.isEmpty) return null;
+  final row = rows.single;
+  final rawReported = row['reported_connection_limit'] as int?;
+  final rawOverride = row['connection_limit_override'] as int?;
+  return SourceConnectionAllowance(
+    reportedLimit: rawReported != null && rawReported > 0 ? rawReported : null,
+    overrideLimit: rawOverride == 1 || rawOverride == 2 ? rawOverride : null,
+  );
+}
+
+List<PersonalLibraryDirectoryEntry> _loadPersonalLibraryDirectoryOnWorker(
+  String path,
+  int limit,
+) {
+  if (!File(path).existsSync()) {
+    return const [
+      PersonalLibraryDirectoryEntry(
+        kind: PersonalLibraryDirectoryKind.favorites,
+        collectionId: null,
+        name: 'Favorites',
+        itemCount: 0,
+      ),
+    ];
+  }
+  final db = _openDatabase(path);
+  try {
+    final favoriteHomeOrdinal = _favoriteHomeOrdinal(db);
+    final entries = <PersonalLibraryDirectoryEntry>[
+      PersonalLibraryDirectoryEntry(
+        kind: PersonalLibraryDirectoryKind.favorites,
+        collectionId: null,
+        name: 'Favorites',
+        itemCount:
+            db
+                    .select('SELECT COUNT(*) AS count FROM favorites')
+                    .single['count']!
+                as int,
+        homeOrdinal: favoriteHomeOrdinal,
+      ),
+    ];
+    if (limit == 1) return List.unmodifiable(entries);
+    final groups = db.select(
+      '''SELECT groups.id, groups.name, groups.directory_ordinal,
+                groups.home_ordinal,
+                COUNT(items.library_item_id) AS item_count
+         FROM custom_groups AS groups
+         LEFT JOIN custom_group_items AS items
+           ON items.custom_group_id = groups.id
+         GROUP BY groups.id
+         ORDER BY groups.directory_ordinal ASC, groups.id ASC
+         LIMIT ?''',
+      [limit - 1],
+    );
+    entries.addAll(
+      groups.map(
+        (row) => PersonalLibraryDirectoryEntry(
+          kind: PersonalLibraryDirectoryKind.customGroup,
+          collectionId: row['id']! as String,
+          name: row['name']! as String,
+          itemCount: row['item_count']! as int,
+          directoryOrdinal: row['directory_ordinal']! as int,
+          homeOrdinal: row['home_ordinal'] as int?,
+        ),
+      ),
+    );
+    return List.unmodifiable(entries);
+  } finally {
+    db.close();
+  }
+}
+
+List<PersonalLibraryDirectoryEntry> _loadPinnedPersonalLibraryDirectoryOnWorker(
+  String path,
+  int limit,
+) {
+  if (!File(path).existsSync()) return const [];
+  final db = _openDatabase(path);
+  try {
+    final entries = <PersonalLibraryDirectoryEntry>[];
+    final favoriteHomeOrdinal = _favoriteHomeOrdinal(db);
+    if (favoriteHomeOrdinal != null) {
+      entries.add(
+        PersonalLibraryDirectoryEntry(
+          kind: PersonalLibraryDirectoryKind.favorites,
+          collectionId: null,
+          name: 'Favorites',
+          itemCount:
+              db
+                      .select('SELECT COUNT(*) AS count FROM favorites')
+                      .single['count']!
+                  as int,
+          homeOrdinal: favoriteHomeOrdinal,
+        ),
+      );
+    }
+    final groups = db.select(
+      '''SELECT groups.id, groups.name, groups.directory_ordinal,
+                groups.home_ordinal,
+                COUNT(items.library_item_id) AS item_count
+         FROM custom_groups AS groups
+         LEFT JOIN custom_group_items AS items
+           ON items.custom_group_id = groups.id
+         WHERE groups.home_ordinal IS NOT NULL
+         GROUP BY groups.id
+         ORDER BY groups.home_ordinal ASC, groups.id ASC''',
+    );
+    entries.addAll(
+      groups.map(
+        (row) => PersonalLibraryDirectoryEntry(
+          kind: PersonalLibraryDirectoryKind.customGroup,
+          collectionId: row['id']! as String,
+          name: row['name']! as String,
+          itemCount: row['item_count']! as int,
+          directoryOrdinal: row['directory_ordinal']! as int,
+          homeOrdinal: row['home_ordinal']! as int,
+        ),
+      ),
+    );
+    entries.sort((a, b) {
+      final ordinal = a.homeOrdinal!.compareTo(b.homeOrdinal!);
+      return ordinal != 0
+          ? ordinal
+          : a.reference.key.compareTo(b.reference.key);
+    });
+    return List.unmodifiable(entries.take(limit));
+  } finally {
+    db.close();
+  }
+}
+
+PersonalLibraryOrganization? _loadItemOrganizationOnWorker(
+  String path,
+  String libraryItemId,
+) {
+  if (!File(path).existsSync()) return null;
+  final db = _openDatabase(path);
+  try {
+    if (db.select('SELECT 1 FROM library_items WHERE id = ?', [
+      libraryItemId,
+    ]).isEmpty) {
+      return null;
+    }
+    final favorite = db.select(
+      'SELECT 1 FROM favorites WHERE library_item_id = ?',
+      [libraryItemId],
+    ).isNotEmpty;
+    final groups = db.select(
+      '''SELECT groups.id, groups.name,
+                CASE WHEN items.library_item_id IS NULL THEN 0 ELSE 1 END AS selected
+         FROM custom_groups AS groups
+         LEFT JOIN custom_group_items AS items
+           ON items.custom_group_id = groups.id
+          AND items.library_item_id = ?
+         ORDER BY groups.directory_ordinal ASC, groups.id ASC''',
+      [libraryItemId],
+    );
+    return PersonalLibraryOrganization(
+      libraryItemId: libraryItemId,
+      isFavorite: favorite,
+      groups: List.unmodifiable(
+        groups.map(
+          (row) => PersonalLibraryGroupChoice(
+            groupId: row['id']! as String,
+            name: row['name']! as String,
+            selected: row['selected']! == 1,
+          ),
+        ),
+      ),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+PersonalLibraryMutationResult _saveItemOrganizationOnWorker(
+  String path,
+  String libraryItemId,
+  bool favorite,
+  List<String> desiredGroupIds,
+) {
+  if (!File(path).existsSync()) {
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.missingItem,
+    );
+  }
+  final desired = desiredGroupIds.toSet();
+  if (desired.length > _maximumCustomGroups) {
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.limitReached,
+    );
+  }
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    if (db.select('SELECT 1 FROM library_items WHERE id = ?', [
+      libraryItemId,
+    ]).isEmpty) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.missingItem,
+      );
+    }
+    if (desired.isNotEmpty) {
+      final placeholders = List.filled(desired.length, '?').join(',');
+      final existing = db.select(
+        'SELECT id FROM custom_groups WHERE id IN ($placeholders)',
+        desired.toList(growable: false),
+      );
+      if (existing.length != desired.length) {
+        db.execute('ROLLBACK');
+        return const PersonalLibraryMutationResult(
+          PersonalLibraryMutationOutcome.missingGroup,
+        );
+      }
+    }
+    final wasFavorite = db.select(
+      'SELECT 1 FROM favorites WHERE library_item_id = ?',
+      [libraryItemId],
+    ).isNotEmpty;
+    final existingGroups = db
+        .select(
+          'SELECT custom_group_id FROM custom_group_items WHERE library_item_id = ?',
+          [libraryItemId],
+        )
+        .map((row) => row['custom_group_id']! as String)
+        .toSet();
+    if (wasFavorite == favorite && _sameStringSet(existingGroups, desired)) {
+      db.execute('COMMIT');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.unchanged,
+      );
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    if (favorite) {
+      db.execute(
+        'INSERT OR IGNORE INTO favorites (library_item_id, created_at) VALUES (?, ?)',
+        [libraryItemId, now],
+      );
+    } else {
+      db.execute('DELETE FROM favorites WHERE library_item_id = ?', [
+        libraryItemId,
+      ]);
+    }
+    if (desired.isEmpty) {
+      db.execute('DELETE FROM custom_group_items WHERE library_item_id = ?', [
+        libraryItemId,
+      ]);
+    } else {
+      final placeholders = List.filled(desired.length, '?').join(',');
+      db.execute(
+        '''DELETE FROM custom_group_items
+           WHERE library_item_id = ?
+             AND custom_group_id NOT IN ($placeholders)''',
+        [libraryItemId, ...desired],
+      );
+      final append = db.prepare('''INSERT OR IGNORE INTO custom_group_items
+             (custom_group_id, library_item_id, ordinal)
+           SELECT ?, ?, COALESCE(MAX(ordinal), -1) + 1
+           FROM custom_group_items WHERE custom_group_id = ?''');
+      try {
+        for (final groupId in desired) {
+          append.execute([groupId, libraryItemId, groupId]);
+        }
+      } finally {
+        append.close();
+      }
+    }
+    db.execute(
+      '''UPDATE custom_groups SET updated_at = ?
+         WHERE id IN (SELECT custom_group_id FROM custom_group_items
+                      WHERE library_item_id = ?)''',
+      [now, libraryItemId],
+    );
+    db.execute('COMMIT');
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.changed,
+    );
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+PersonalLibraryMutationResult _createCustomGroupOnWorker(
+  String path,
+  String id,
+  String rawName,
+) {
+  final name = _normalizedCustomGroupName(rawName);
+  if (name == null) {
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.invalidName,
+    );
+  }
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    if (_customGroupNameExists(db, name)) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.duplicateName,
+      );
+    }
+    final count =
+        db
+                .select('SELECT COUNT(*) AS count FROM custom_groups')
+                .single['count']!
+            as int;
+    if (count >= _maximumCustomGroups) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.limitReached,
+      );
+    }
+    final ordinal =
+        db
+                .select(
+                  'SELECT COALESCE(MAX(directory_ordinal), -1) + 1 AS ordinal FROM custom_groups',
+                )
+                .single['ordinal']!
+            as int;
+    final now = DateTime.now().toUtc().toIso8601String();
+    db.execute(
+      '''INSERT INTO custom_groups
+           (id, name, home_ordinal, created_at, updated_at, directory_ordinal)
+         VALUES (?, ?, NULL, ?, ?, ?)''',
+      [id, name, now, now, ordinal],
+    );
+    db.execute('COMMIT');
+    return PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.changed,
+      collection: PersonalLibraryDirectoryEntry(
+        kind: PersonalLibraryDirectoryKind.customGroup,
+        collectionId: id,
+        name: name,
+        itemCount: 0,
+        directoryOrdinal: ordinal,
+      ),
+    );
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+PersonalLibraryMutationResult _renameCustomGroupOnWorker(
+  String path,
+  String customGroupId,
+  String rawName,
+) {
+  final name = _normalizedCustomGroupName(rawName);
+  if (name == null) {
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.invalidName,
+    );
+  }
+  if (!File(path).existsSync()) {
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.missingGroup,
+    );
+  }
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    final rows = db.select('SELECT name FROM custom_groups WHERE id = ?', [
+      customGroupId,
+    ]);
+    if (rows.isEmpty) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.missingGroup,
+      );
+    }
+    if (_customGroupNameExists(db, name, exceptId: customGroupId)) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.duplicateName,
+      );
+    }
+    if (rows.single['name'] == name) {
+      db.execute('COMMIT');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.unchanged,
+      );
+    }
+    db.execute(
+      'UPDATE custom_groups SET name = ?, updated_at = ? WHERE id = ?',
+      [name, DateTime.now().toUtc().toIso8601String(), customGroupId],
+    );
+    db.execute('COMMIT');
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.changed,
+    );
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+PersonalLibraryMutationResult _deleteCustomGroupOnWorker(
+  String path,
+  String customGroupId,
+) {
+  if (!File(path).existsSync()) {
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.missingGroup,
+    );
+  }
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    if (db.select('SELECT 1 FROM custom_groups WHERE id = ?', [
+      customGroupId,
+    ]).isEmpty) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.missingGroup,
+      );
+    }
+    db.execute('DELETE FROM custom_group_items WHERE custom_group_id = ?', [
+      customGroupId,
+    ]);
+    db.execute('DELETE FROM custom_groups WHERE id = ?', [customGroupId]);
+    _normalizeCustomGroupOrdinals(db);
+    _normalizePinnedCollectionOrdinals(db);
+    db.execute('COMMIT');
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.changed,
+    );
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+PersonalLibraryMutationResult _moveCustomGroupOnWorker(
+  String path,
+  String customGroupId,
+  PersonalLibraryMoveDirection direction,
+) {
+  if (!File(path).existsSync()) {
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.missingGroup,
+    );
+  }
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    _normalizeCustomGroupOrdinals(db);
+    final rows = db.select(
+      'SELECT id, directory_ordinal FROM custom_groups ORDER BY directory_ordinal, id',
+    );
+    final index = rows.indexWhere((row) => row['id'] == customGroupId);
+    if (index < 0) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.missingGroup,
+      );
+    }
+    final target = direction == PersonalLibraryMoveDirection.up
+        ? index - 1
+        : index + 1;
+    if (target < 0 || target >= rows.length) {
+      db.execute('COMMIT');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.unchanged,
+      );
+    }
+    db.execute('UPDATE custom_groups SET directory_ordinal = ? WHERE id = ?', [
+      rows[target]['directory_ordinal'],
+      customGroupId,
+    ]);
+    db.execute('UPDATE custom_groups SET directory_ordinal = ? WHERE id = ?', [
+      rows[index]['directory_ordinal'],
+      rows[target]['id'],
+    ]);
+    db.execute('COMMIT');
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.changed,
+    );
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+PersonalLibraryMutationResult _setPersonalCollectionPinnedOnWorker(
+  String path,
+  PersonalLibraryCollectionRef collection,
+  bool pinned,
+) {
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    if (!_personalCollectionExists(db, collection)) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.missingGroup,
+      );
+    }
+    final current = _personalCollectionHomeOrdinal(db, collection);
+    if ((current != null) == pinned) {
+      db.execute('COMMIT');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.unchanged,
+      );
+    }
+    if (pinned) {
+      final next = _nextPinnedCollectionOrdinal(db);
+      _writePersonalCollectionHomeOrdinal(db, collection, next);
+    } else {
+      _writePersonalCollectionHomeOrdinal(db, collection, null);
+      _normalizePinnedCollectionOrdinals(db);
+    }
+    db.execute('COMMIT');
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.changed,
+    );
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+PersonalLibraryMutationResult _movePinnedPersonalCollectionOnWorker(
+  String path,
+  PersonalLibraryCollectionRef collection,
+  PersonalLibraryMoveDirection direction,
+) {
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    _normalizePinnedCollectionOrdinals(db);
+    final entries = _pinnedCollections(db);
+    final index = entries.indexWhere(
+      (entry) => entry.ref.key == collection.key,
+    );
+    if (index < 0) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.missingGroup,
+      );
+    }
+    final target = direction == PersonalLibraryMoveDirection.up
+        ? index - 1
+        : index + 1;
+    if (target < 0 || target >= entries.length) {
+      db.execute('COMMIT');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.unchanged,
+      );
+    }
+    _writePersonalCollectionHomeOrdinal(
+      db,
+      entries[index].ref,
+      entries[target].ordinal,
+    );
+    _writePersonalCollectionHomeOrdinal(
+      db,
+      entries[target].ref,
+      entries[index].ordinal,
+    );
+    db.execute('COMMIT');
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.changed,
+    );
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+PersonalLibraryMutationResult _moveCustomGroupItemOnWorker(
+  String path,
+  String customGroupId,
+  String libraryItemId,
+  PersonalLibraryMoveDirection direction,
+) {
+  if (!File(path).existsSync()) {
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.missingGroup,
+    );
+  }
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    if (db.select('SELECT 1 FROM custom_groups WHERE id = ?', [
+      customGroupId,
+    ]).isEmpty) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.missingGroup,
+      );
+    }
+    final currentRows = db.select(
+      '''SELECT ordinal FROM custom_group_items
+         WHERE custom_group_id = ? AND library_item_id = ?''',
+      [customGroupId, libraryItemId],
+    );
+    if (currentRows.isEmpty) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.missingItem,
+      );
+    }
+    final currentOrdinal = currentRows.single['ordinal']! as int;
+    final targetRows = direction == PersonalLibraryMoveDirection.up
+        ? db.select(
+            '''SELECT library_item_id, ordinal FROM custom_group_items
+               WHERE custom_group_id = ? AND ordinal < ?
+               ORDER BY ordinal DESC, library_item_id DESC LIMIT 1''',
+            [customGroupId, currentOrdinal],
+          )
+        : db.select(
+            '''SELECT library_item_id, ordinal FROM custom_group_items
+               WHERE custom_group_id = ? AND ordinal > ?
+               ORDER BY ordinal ASC, library_item_id ASC LIMIT 1''',
+            [customGroupId, currentOrdinal],
+          );
+    if (targetRows.isEmpty) {
+      db.execute('COMMIT');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.unchanged,
+      );
+    }
+    final target = targetRows.single;
+    db.execute(
+      '''UPDATE custom_group_items SET ordinal = ?
+         WHERE custom_group_id = ? AND library_item_id = ?''',
+      [target['ordinal'], customGroupId, libraryItemId],
+    );
+    db.execute(
+      '''UPDATE custom_group_items SET ordinal = ?
+         WHERE custom_group_id = ? AND library_item_id = ?''',
+      [currentOrdinal, customGroupId, target['library_item_id']],
+    );
+    db.execute('UPDATE custom_groups SET updated_at = ? WHERE id = ?', [
+      DateTime.now().toUtc().toIso8601String(),
+      customGroupId,
+    ]);
+    db.execute('COMMIT');
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.changed,
+    );
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+PersonalLibraryMutationResult _removeCustomGroupItemOnWorker(
+  String path,
+  String customGroupId,
+  String libraryItemId,
+) {
+  if (!File(path).existsSync()) {
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.missingGroup,
+    );
+  }
+  final db = _openDatabase(path);
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    if (db.select('SELECT 1 FROM custom_groups WHERE id = ?', [
+      customGroupId,
+    ]).isEmpty) {
+      db.execute('ROLLBACK');
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.missingGroup,
+      );
+    }
+    db.execute(
+      '''DELETE FROM custom_group_items
+         WHERE custom_group_id = ? AND library_item_id = ?''',
+      [customGroupId, libraryItemId],
+    );
+    final changed = db.updatedRows > 0;
+    if (changed) {
+      db.execute('UPDATE custom_groups SET updated_at = ? WHERE id = ?', [
+        DateTime.now().toUtc().toIso8601String(),
+        customGroupId,
+      ]);
+    }
+    db.execute('COMMIT');
+    return PersonalLibraryMutationResult(
+      changed
+          ? PersonalLibraryMutationOutcome.changed
+          : PersonalLibraryMutationOutcome.unchanged,
+    );
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    db.close();
+  }
+}
+
+bool _sameStringSet(Set<String> a, Set<String> b) =>
+    a.length == b.length && a.containsAll(b);
+
+String? _normalizedCustomGroupName(String raw) {
+  final name = raw.trim().replaceAll(RegExp(r'\s+'), ' ');
+  if (name.isEmpty || name.length > _maximumCustomGroupNameLength) return null;
+  return name;
+}
+
+bool _customGroupNameExists(Database db, String name, {String? exceptId}) {
+  final rows = exceptId == null
+      ? db.select(
+          'SELECT 1 FROM custom_groups WHERE name = ? COLLATE NOCASE LIMIT 1',
+          [name],
+        )
+      : db.select(
+          '''SELECT 1 FROM custom_groups
+             WHERE name = ? COLLATE NOCASE AND id <> ? LIMIT 1''',
+          [name, exceptId],
+        );
+  return rows.isNotEmpty;
+}
+
+int? _favoriteHomeOrdinal(Database db) {
+  final rows = db.select('SELECT value FROM app_settings WHERE key = ?', [
+    _favoritesHomeOrdinalSettingKey,
+  ]);
+  return rows.isEmpty ? null : int.tryParse(rows.single['value']! as String);
+}
+
+void _normalizeCustomGroupOrdinals(Database db) {
+  final rows = db.select(
+    'SELECT id FROM custom_groups ORDER BY directory_ordinal, id',
+  );
+  final update = db.prepare(
+    'UPDATE custom_groups SET directory_ordinal = ? WHERE id = ?',
+  );
+  try {
+    for (var i = 0; i < rows.length; i += 1) {
+      update.execute([i, rows[i]['id']]);
+    }
+  } finally {
+    update.close();
+  }
+}
+
+bool _personalCollectionExists(
+  Database db,
+  PersonalLibraryCollectionRef collection,
+) =>
+    collection.kind == PersonalLibraryDirectoryKind.favorites ||
+    (collection.collectionId != null &&
+        db.select('SELECT 1 FROM custom_groups WHERE id = ?', [
+          collection.collectionId,
+        ]).isNotEmpty);
+
+int? _personalCollectionHomeOrdinal(
+  Database db,
+  PersonalLibraryCollectionRef collection,
+) {
+  if (collection.kind == PersonalLibraryDirectoryKind.favorites) {
+    return _favoriteHomeOrdinal(db);
+  }
+  if (collection.collectionId == null) return null;
+  final rows = db.select(
+    'SELECT home_ordinal FROM custom_groups WHERE id = ?',
+    [collection.collectionId],
+  );
+  return rows.isEmpty ? null : rows.single['home_ordinal'] as int?;
+}
+
+void _writePersonalCollectionHomeOrdinal(
+  Database db,
+  PersonalLibraryCollectionRef collection,
+  int? ordinal,
+) {
+  if (collection.kind == PersonalLibraryDirectoryKind.favorites) {
+    if (ordinal == null) {
+      db.execute('DELETE FROM app_settings WHERE key = ?', [
+        _favoritesHomeOrdinalSettingKey,
+      ]);
+    } else {
+      db.execute(
+        '''INSERT INTO app_settings (key, value) VALUES (?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value''',
+        [_favoritesHomeOrdinalSettingKey, '$ordinal'],
+      );
+    }
+    return;
+  }
+  db.execute('UPDATE custom_groups SET home_ordinal = ? WHERE id = ?', [
+    ordinal,
+    collection.collectionId,
+  ]);
+}
+
+int _nextPinnedCollectionOrdinal(Database db) {
+  final values = <int>[
+    ...db
+        .select(
+          'SELECT home_ordinal FROM custom_groups WHERE home_ordinal IS NOT NULL',
+        )
+        .map((row) => row['home_ordinal']! as int),
+    ?_favoriteHomeOrdinal(db),
+  ];
+  return values.isEmpty ? 0 : values.reduce(max) + 1;
+}
+
+class _PinnedCollection {
+  const _PinnedCollection(this.ref, this.ordinal);
+  final PersonalLibraryCollectionRef ref;
+  final int ordinal;
+}
+
+List<_PinnedCollection> _pinnedCollections(Database db) {
+  final entries = <_PinnedCollection>[
+    if (_favoriteHomeOrdinal(db) case final value?)
+      _PinnedCollection(const PersonalLibraryCollectionRef.favorites(), value),
+    ...db
+        .select('''SELECT id, home_ordinal FROM custom_groups
+             WHERE home_ordinal IS NOT NULL''')
+        .map(
+          (row) => _PinnedCollection(
+            PersonalLibraryCollectionRef.customGroup(row['id']! as String),
+            row['home_ordinal']! as int,
+          ),
+        ),
+  ];
+  entries.sort((a, b) {
+    final ordinal = a.ordinal.compareTo(b.ordinal);
+    return ordinal != 0 ? ordinal : a.ref.key.compareTo(b.ref.key);
+  });
+  return entries;
+}
+
+void _normalizePinnedCollectionOrdinals(Database db) {
+  final entries = _pinnedCollections(db);
+  for (var i = 0; i < entries.length; i += 1) {
+    _writePersonalCollectionHomeOrdinal(db, entries[i].ref, i);
+  }
+}
+
+FavoriteLibraryPage _loadFavoriteLibraryPageOnWorker(
+  String path,
+  FavoritePageCursor? cursor,
+  int limit,
+) {
+  if (!File(path).existsSync()) {
+    return const FavoriteLibraryPage(items: [], nextCursor: null);
+  }
+  final db = _openDatabase(path);
+  try {
+    final arguments = <Object?>[];
+    final cursorFilter = cursor == null
+        ? ''
+        : '''WHERE (favorite.created_at < ?
+             OR (favorite.created_at = ? AND favorite.library_item_id > ?))''';
+    if (cursor != null) {
+      final createdAt = cursor.createdAt.toUtc().toIso8601String();
+      arguments.addAll([createdAt, createdAt, cursor.libraryItemId]);
+    }
+    arguments.add(limit + 1);
+    final rows = db.select('''WITH page AS (
+           SELECT favorite.library_item_id, favorite.created_at
+           FROM favorites AS favorite
+           $cursorFilter
+           ORDER BY favorite.created_at DESC, favorite.library_item_id ASC
+           LIMIT ?
+         ), ranked AS (
+           SELECT page.library_item_id,
+                  catalog.id AS catalog_item_id,
+                  catalog.source_id,
+                  source.name AS source_display_name,
+                  catalog.playback_ref,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY page.library_item_id
+                    ORDER BY member.preferred DESC,
+                             catalog.source_id ASC,
+                             catalog.id ASC
+                  ) AS variant_rank
+           FROM page
+           JOIN library_members AS member
+             ON member.library_item_id = page.library_item_id
+           JOIN catalog_items AS catalog
+             ON catalog.id = member.catalog_item_id
+           JOIN sources AS source ON source.id = catalog.source_id
+           WHERE catalog.available = 1
+             AND catalog.hidden = 0
+             AND NOT EXISTS (
+               SELECT 1 FROM source_groups AS visibility_group
+               WHERE visibility_group.id = catalog.source_group_id
+                 AND visibility_group.hidden = 1
+             )
+             AND source.enabled = 1
+             AND source.refresh_state IN ('ready', 'refreshing')
+         ), chosen AS (
+           SELECT * FROM ranked WHERE variant_rank = 1
+         )
+         SELECT page.created_at, page.library_item_id,
+                library.kind, library.display_title, library.artwork_locator,
+                chosen.catalog_item_id, chosen.source_id,
+                chosen.source_display_name, chosen.playback_ref
+         FROM page
+         JOIN library_items AS library ON library.id = page.library_item_id
+         LEFT JOIN chosen ON chosen.library_item_id = page.library_item_id
+         ORDER BY page.created_at DESC, page.library_item_id ASC''', arguments);
+    final hasMore = rows.length > limit;
+    final visibleRows = hasMore ? rows.take(limit).toList() : rows;
+    final last = visibleRows.lastOrNull;
+    return FavoriteLibraryPage(
+      items: List.unmodifiable(visibleRows.map(_personalLibraryItemFromRow)),
+      nextCursor: hasMore && last != null
+          ? FavoritePageCursor(
+              createdAt: DateTime.parse(last['created_at']! as String).toUtc(),
+              libraryItemId: last['library_item_id']! as String,
+            )
+          : null,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+CustomGroupLibraryPage _loadCustomGroupLibraryPageOnWorker(
+  String path,
+  String customGroupId,
+  CustomGroupPageCursor? cursor,
+  int limit,
+) {
+  if (!File(path).existsSync()) {
+    return const CustomGroupLibraryPage(items: [], nextCursor: null);
+  }
+  final db = _openDatabase(path);
+  try {
+    final arguments = <Object?>[customGroupId];
+    final cursorFilter = cursor == null
+        ? ''
+        : '''AND (ordinal > ?
+             OR (ordinal = ? AND library_item_id > ?))''';
+    if (cursor != null) {
+      arguments.addAll([cursor.ordinal, cursor.ordinal, cursor.libraryItemId]);
+    }
+    arguments.add(limit + 1);
+    final rows = db.select('''WITH page AS (
+           SELECT library_item_id, ordinal
+           FROM custom_group_items
+           WHERE custom_group_id = ?
+           $cursorFilter
+           ORDER BY ordinal ASC, library_item_id ASC
+           LIMIT ?
+         ), ranked AS (
+           SELECT page.library_item_id,
+                  catalog.id AS catalog_item_id,
+                  catalog.source_id,
+                  source.name AS source_display_name,
+                  catalog.playback_ref,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY page.library_item_id
+                    ORDER BY member.preferred DESC,
+                             catalog.source_id ASC,
+                             catalog.id ASC
+                  ) AS variant_rank
+           FROM page
+           JOIN library_members AS member
+             ON member.library_item_id = page.library_item_id
+           JOIN catalog_items AS catalog
+             ON catalog.id = member.catalog_item_id
+           JOIN sources AS source ON source.id = catalog.source_id
+           WHERE catalog.available = 1
+             AND catalog.hidden = 0
+             AND NOT EXISTS (
+               SELECT 1 FROM source_groups AS visibility_group
+               WHERE visibility_group.id = catalog.source_group_id
+                 AND visibility_group.hidden = 1
+             )
+             AND source.enabled = 1
+             AND source.refresh_state IN ('ready', 'refreshing')
+         ), chosen AS (
+           SELECT * FROM ranked WHERE variant_rank = 1
+         )
+         SELECT page.ordinal, page.library_item_id,
+                library.kind, library.display_title, library.artwork_locator,
+                chosen.catalog_item_id, chosen.source_id,
+                chosen.source_display_name, chosen.playback_ref
+         FROM page
+         JOIN library_items AS library
+           ON library.id = page.library_item_id
+         LEFT JOIN chosen ON chosen.library_item_id = page.library_item_id
+         ORDER BY page.ordinal ASC, page.library_item_id ASC''', arguments);
+    final hasMore = rows.length > limit;
+    final visibleRows = hasMore ? rows.take(limit).toList() : rows;
+    final last = visibleRows.lastOrNull;
+    return CustomGroupLibraryPage(
+      items: List.unmodifiable(visibleRows.map(_personalLibraryItemFromRow)),
+      nextCursor: hasMore && last != null
+          ? CustomGroupPageCursor(
+              ordinal: last['ordinal']! as int,
+              libraryItemId: last['library_item_id']! as String,
+            )
+          : null,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+PersonalLibraryItem _personalLibraryItemFromRow(Row row) => PersonalLibraryItem(
+  libraryItemId: row['library_item_id']! as String,
+  kind: SourceMediaKind.values.byName(row['kind']! as String),
+  title: row['display_title']! as String,
+  artworkLocator: row['artwork_locator'] as String?,
+  catalogItemId: row['catalog_item_id'] as String?,
+  sourceId: row['source_id'] as String?,
+  sourceDisplayName: row['source_display_name'] as String?,
+  playbackRef: row['playback_ref'] as String?,
+);
 
 int _countLibraryItemsOnWorker(
   String path,
@@ -2420,8 +5295,10 @@ SourceRefresh? _beginRefreshOnWorker(String path, String sourceId) {
 SourceReady _commitRefreshOnWorker(
   String path,
   SourceRefresh refresh,
-  List<ImportedStage> stages,
-) {
+  List<ImportedStage> stages, {
+  bool updateReportedConnectionLimit = false,
+  int? reportedConnectionLimit,
+}) {
   final db = _openDatabase(path);
   try {
     db.execute('BEGIN IMMEDIATE');
@@ -2451,10 +5328,31 @@ SourceReady _commitRefreshOnWorker(
         'UPDATE source_groups SET available = 0 WHERE source_id = ? AND generation < ?',
         [refresh.sourceId, refresh.generation],
       );
+      // Catalog refresh never deletes last-good guide rows. It only makes the
+      // small set of previously visited Live channels eligible for lazy
+      // revalidation the next time a visible surface requests them.
+      db.execute(
+        '''UPDATE epg_channel_state SET retry_after_utc_ms = 0
+           WHERE catalog_item_id IN (
+             SELECT id FROM catalog_items
+             WHERE source_id = ? AND kind = ? AND available = 1
+           )''',
+        [refresh.sourceId, SourceMediaKind.live.name],
+      );
+      db.execute(
+        'UPDATE epg_source_state SET retry_after_utc_ms = 0 WHERE source_id = ?',
+        [refresh.sourceId],
+      );
       db.execute(
         "UPDATE sources SET refresh_state = 'ready', last_refresh_at = ?, last_error = NULL WHERE id = ?",
         [DateTime.now().toUtc().toIso8601String(), refresh.sourceId],
       );
+      if (updateReportedConnectionLimit) {
+        db.execute(
+          'UPDATE sources SET reported_connection_limit = ? WHERE id = ?',
+          [reportedConnectionLimit, refresh.sourceId],
+        );
+      }
       db.execute('COMMIT');
       return SourceReady(counts: counts);
     } catch (_) {
@@ -2554,8 +5452,8 @@ void _writeStage(
     } finally {
       insert.close();
     }
-    // The Phase 2 baseline starts with exactly one durable library identity
-    // per provider item. Later organization work may deliberately merge them.
+    // Every provider item keeps its own durable library identity. Matching
+    // titles are intentionally not merged, automatically or manually.
     final identities = db.prepare('''INSERT OR IGNORE INTO library_items
          (id, kind, display_title, normalized_title, artwork_locator)
          VALUES (?, ?, ?, ?, ?)''');
@@ -2720,6 +5618,32 @@ void _upsertStage(
 void _deleteSource(Database db, String sourceId) {
   db.execute('BEGIN IMMEDIATE');
   try {
+    // A permanently removed source cannot remain the cold-start channel. Read
+    // the exact membership before deleting it; transient unavailability and
+    // local hiding deliberately do not clear this preference.
+    db.execute(
+      '''DELETE FROM app_settings
+         WHERE key = ? AND value IN (
+           SELECT member.library_item_id
+           FROM library_members AS member
+           JOIN catalog_items AS catalog ON catalog.id = member.catalog_item_id
+           WHERE catalog.source_id = ?
+         )''',
+      [_lastLiveLibraryItemSettingKey, sourceId],
+    );
+    db.execute(
+      '''DELETE FROM epg_programs WHERE catalog_item_id IN (
+           SELECT id FROM catalog_items WHERE source_id = ?
+         )''',
+      [sourceId],
+    );
+    db.execute(
+      '''DELETE FROM epg_channel_state WHERE catalog_item_id IN (
+           SELECT id FROM catalog_items WHERE source_id = ?
+         )''',
+      [sourceId],
+    );
+    db.execute('DELETE FROM epg_source_state WHERE source_id = ?', [sourceId]);
     // Library identities remain so a favorite, group, or watch state cannot
     // be destroyed merely because its final source variant is removed.
     db.execute(
@@ -2941,6 +5865,218 @@ void _migrate(Database db) {
       rethrow;
     }
   }
+  if (version < 8) {
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      db.execute(
+        'CREATE INDEX IF NOT EXISTS favorites_recent_page ON favorites(created_at DESC, library_item_id ASC)',
+      );
+      db.execute(
+        'CREATE INDEX IF NOT EXISTS custom_group_items_page ON custom_group_items(custom_group_id, ordinal, library_item_id)',
+      );
+      db.execute('INSERT INTO schema_migrations(version) VALUES (8)');
+      db.execute('COMMIT');
+    } catch (_) {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+  if (version < 9) {
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      if (!_tableHasColumn(db, 'custom_groups', 'directory_ordinal')) {
+        db.execute(
+          'ALTER TABLE custom_groups ADD COLUMN directory_ordinal INTEGER NOT NULL DEFAULT 0',
+        );
+      }
+      db.execute('''WITH ordered AS (
+           SELECT id,
+                  ROW_NUMBER() OVER (
+                    ORDER BY name COLLATE NOCASE ASC, id ASC
+                  ) - 1 AS ordinal
+           FROM custom_groups
+         )
+         UPDATE custom_groups
+         SET directory_ordinal = (
+           SELECT ordinal FROM ordered WHERE ordered.id = custom_groups.id
+         )''');
+      db.execute(
+        'CREATE INDEX IF NOT EXISTS custom_groups_directory ON custom_groups(directory_ordinal, id)',
+      );
+      db.execute(
+        'CREATE INDEX IF NOT EXISTS custom_groups_home ON custom_groups(home_ordinal, id)',
+      );
+      db.execute('INSERT INTO schema_migrations(version) VALUES (9)');
+      db.execute('COMMIT');
+    } catch (_) {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+  if (version < 10) {
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      // Item organization replaces one identity's complete membership set.
+      // Keep that lookup keyed by the identity rather than scanning every
+      // membership in every custom group at Strong scale.
+      db.execute(
+        'CREATE INDEX IF NOT EXISTS custom_group_items_library ON custom_group_items(library_item_id, custom_group_id)',
+      );
+      db.execute('INSERT INTO schema_migrations(version) VALUES (10)');
+      db.execute('COMMIT');
+    } catch (_) {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+  if (version < 11) {
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      // Another isolate may have completed v11 while this connection waited
+      // for the write lock. Re-read under the lock before any DDL/version row.
+      final lockedVersion =
+          db
+                  .select(
+                    'SELECT MAX(version) AS version FROM schema_migrations',
+                  )
+                  .first['version']
+              as int? ??
+          0;
+      if (lockedVersion < 11) {
+        // Episodes share the durable series identity but retain independent
+        // progress through an opaque exact media key. No playback locator,
+        // title, provider response, or engine error belongs in this table.
+        db.execute('''CREATE TABLE IF NOT EXISTS playback_progress (
+             library_item_id TEXT NOT NULL,
+             media_key TEXT NOT NULL,
+             position_ms INTEGER NOT NULL,
+             duration_ms INTEGER NOT NULL,
+             watched_ms INTEGER NOT NULL DEFAULT 0,
+             completed INTEGER NOT NULL,
+             cleared INTEGER NOT NULL DEFAULT 0,
+             updated_at_us INTEGER NOT NULL,
+             PRIMARY KEY (library_item_id, media_key),
+             CHECK (position_ms >= 0),
+             CHECK (duration_ms >= 0),
+             CHECK (watched_ms >= 0),
+             CHECK (completed IN (0, 1)),
+             CHECK (cleared IN (0, 1))
+           )''');
+        // Version 4 reserved these columns before a UI exposed them. Normalize
+        // an invalid local/manual value before installing the permanent guard.
+        db.execute('''UPDATE sources SET connection_limit_override = NULL
+           WHERE connection_limit_override IS NOT NULL
+             AND connection_limit_override NOT IN (1, 2)''');
+        db.execute(
+          '''CREATE TRIGGER IF NOT EXISTS sources_connection_override_insert
+           BEFORE INSERT ON sources
+           WHEN NEW.connection_limit_override IS NOT NULL
+             AND NEW.connection_limit_override NOT IN (1, 2)
+           BEGIN
+             SELECT RAISE(ABORT, 'invalid connection limit override');
+           END''',
+        );
+        db.execute(
+          '''CREATE TRIGGER IF NOT EXISTS sources_connection_override_update
+           BEFORE UPDATE OF connection_limit_override ON sources
+           WHEN NEW.connection_limit_override IS NOT NULL
+             AND NEW.connection_limit_override NOT IN (1, 2)
+           BEGIN
+             SELECT RAISE(ABORT, 'invalid connection limit override');
+           END''',
+        );
+        db.execute('INSERT INTO schema_migrations(version) VALUES (11)');
+      }
+      db.execute('COMMIT');
+    } catch (_) {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+  // Pre-verification v11 databases may already contain progress rows from the
+  // first Phase 5 build. Repair that same unshipped schema in place and
+  // backfill new state to zero without changing exact keys.
+  if (version >= 11 &&
+      (!_tableHasColumn(db, 'playback_progress', 'watched_ms') ||
+          !_tableHasColumn(db, 'playback_progress', 'cleared'))) {
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      if (!_tableHasColumn(db, 'playback_progress', 'watched_ms')) {
+        db.execute('''ALTER TABLE playback_progress
+             ADD COLUMN watched_ms INTEGER NOT NULL DEFAULT 0
+             CHECK (watched_ms >= 0)''');
+      }
+      if (!_tableHasColumn(db, 'playback_progress', 'cleared')) {
+        db.execute('''ALTER TABLE playback_progress
+             ADD COLUMN cleared INTEGER NOT NULL DEFAULT 0
+             CHECK (cleared IN (0, 1))''');
+      }
+      db.execute('COMMIT');
+    } catch (_) {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+  if (version < 12) {
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      // App startup, a guide fetch, and catalog reads may all open this file at
+      // once. Re-read under the writer lock so v12 is installed exactly once.
+      final lockedVersion =
+          db
+                  .select(
+                    'SELECT MAX(version) AS version FROM schema_migrations',
+                  )
+                  .first['version']
+              as int? ??
+          0;
+      if (lockedVersion < 12) {
+        db.execute('''CREATE TABLE IF NOT EXISTS epg_source_state (
+             source_id TEXT PRIMARY KEY,
+             capability TEXT NOT NULL DEFAULT 'unknown',
+             last_attempt_utc_ms INTEGER,
+             last_success_utc_ms INTEGER,
+             retry_after_utc_ms INTEGER NOT NULL DEFAULT 0,
+             last_error TEXT,
+             CHECK (capability IN ('unknown', 'available', 'unsupported')),
+             CHECK (retry_after_utc_ms >= 0)
+           )''');
+        db.execute('''CREATE TABLE IF NOT EXISTS epg_channel_state (
+             catalog_item_id TEXT PRIMARY KEY,
+             generation INTEGER NOT NULL DEFAULT 0,
+             refresh_state TEXT NOT NULL DEFAULT 'unknown',
+             last_attempt_utc_ms INTEGER,
+             last_success_utc_ms INTEGER,
+             retry_after_utc_ms INTEGER NOT NULL DEFAULT 0,
+             last_error TEXT,
+             CHECK (generation >= 0),
+             CHECK (refresh_state IN
+               ('unknown', 'refreshing', 'available', 'empty', 'error')),
+             CHECK (retry_after_utc_ms >= 0)
+           )''');
+        db.execute('''CREATE TABLE IF NOT EXISTS epg_programs (
+             catalog_item_id TEXT NOT NULL,
+             start_utc_ms INTEGER NOT NULL,
+             end_utc_ms INTEGER NOT NULL,
+             title TEXT NOT NULL,
+             description TEXT,
+             PRIMARY KEY (catalog_item_id, start_utc_ms, end_utc_ms),
+             CHECK (start_utc_ms >= 0),
+             CHECK (end_utc_ms > start_utc_ms),
+             CHECK (end_utc_ms - start_utc_ms <=
+               ${epgMaximumProgramDuration.inMilliseconds}),
+             CHECK (length(title) > 0)
+           ) WITHOUT ROWID''');
+        db.execute('''CREATE INDEX IF NOT EXISTS epg_programs_expiry
+             ON epg_programs(end_utc_ms)''');
+        db.execute('INSERT INTO schema_migrations(version) VALUES (12)');
+      }
+      db.execute('COMMIT');
+    } catch (_) {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
 }
 
 bool _tableHasColumn(Database db, String table, String column) =>
@@ -2952,6 +6088,13 @@ bool _isAuthorized(Object? value) {
   if (info is! Map) return false;
   final auth = info['auth'];
   return auth == 1 || auth == '1' || auth == true;
+}
+
+int? _parseReportedConnectionLimit(Object? value) {
+  if (value is! Map || value['user_info'] is! Map) return null;
+  final raw = (value['user_info'] as Map)['max_connections'];
+  final parsed = raw is int ? raw : int.tryParse('$raw'.trim());
+  return parsed != null && parsed > 0 ? parsed : null;
 }
 
 List<ImportedCategory> _parseCategories(Object? value) => value is! List

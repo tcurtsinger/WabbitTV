@@ -1,13 +1,5 @@
-// THESIS: Playback is one calm Broadcast Deck over the user's own video, refusing
-// floating control cards, provider branding, and a persistent application rail.
-// OWN-WORLD: Solid graphite bands, warm-white text, neutral seams, and crisp
-// signal-amber focus extend Quiet Broadcast into the viewing stage.
-// STORY: A deliberate handoff starts once, yields to unobstructed video, and
-// returns safely to the exact catalog context when the user backs out.
-// FIRST VIEWPORT: Contained video fills the client; a thin identity band sits
-// above it and one full-width transport deck anchors the lower edge.
-// FORM: Broadcast Deck (approved composition A), seed quiet-broadcast-player-a.
-// FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+// THESIS: One calm Broadcast Deck presents a shell-owned PlaybackManager
+// session; widget rebuilds never create or replace a native transport.
 
 import 'dart:async';
 import 'dart:io';
@@ -19,28 +11,35 @@ import 'package:window_manager/window_manager.dart';
 import '../browse/playback_handoff.dart';
 import '../sources/credential_store.dart';
 import '../sources/source_catalog_database.dart';
+import 'playback_manager.dart';
+import 'playback_runtime_adapters.dart';
 import 'playback_transport.dart';
 
-const _graphite = Color(0xFF111212);
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
-const _amberInk = Color(0xFF17120A);
+export 'playback_runtime_adapters.dart' show resolveXtreamPlaybackUri;
 
-const productionPlayerStartupDeadline = Duration(seconds: 20);
+const _graphite = Color(0xFF111212),
+    _surface = Color(0xFF191A1A),
+    _raised = Color(0xFF222321),
+    _line = Color(0xFF343534),
+    _warmWhite = Color(0xFFF4F0E7),
+    _quietText = Color(0xFFAAA8A2),
+    _amber = Color(0xFFFFB347),
+    _amberInk = Color(0xFF17120A);
+
+const productionPlayerStartupDeadline = playbackStartupDeadline;
 const _chromeDuration = Duration(seconds: 4);
 
+/// Legacy fixture helper retained while production startup is manager-owned.
+enum PlaybackFailureKind { credentialsUnavailable, unavailable, timedOut }
+
+@visibleForTesting
+Future<PlaybackFailureKind?> waitForPlaybackStartup(
+  Future<PlaybackFailureKind?> outcome,
+  Duration deadline,
+) => outcome.timeout(deadline, onTimeout: () => PlaybackFailureKind.timedOut);
+
 typedef PlaybackTransportFactory = PlaybackTransport Function();
-
-class _PlaybackTarget {
-  const _PlaybackTarget(this.uri, this.httpHeaders);
-
-  final Uri uri;
-  final Map<String, String> httpHeaders;
-}
+typedef UsableVideoCallback = FutureOr<void> Function(PlaybackHandoff handoff);
 
 abstract interface class FullscreenPort {
   Future<bool> get isFullscreen;
@@ -49,7 +48,6 @@ abstract interface class FullscreenPort {
 
 class WindowFullscreenPort implements FullscreenPort {
   const WindowFullscreenPort();
-
   @override
   Future<bool> get isFullscreen async {
     try {
@@ -72,103 +70,52 @@ class WindowFullscreenPort implements FullscreenPort {
           await windowManager.setFullScreen(true);
         } catch (_) {
           await windowManager.setTitleBarStyle(TitleBarStyle.normal);
-          rethrow;
         }
       } else {
         await windowManager.setFullScreen(false);
         await windowManager.setTitleBarStyle(TitleBarStyle.normal);
       }
-    } catch (_) {
-      // Fullscreen is an optional window affordance; playback remains usable.
-    }
+    } catch (_) {}
   }
-}
-
-enum PlaybackFailureKind { credentialsUnavailable, unavailable, timedOut }
-
-@visibleForTesting
-Future<PlaybackFailureKind?> waitForPlaybackStartup(
-  Future<PlaybackFailureKind?> outcome,
-  Duration deadline,
-) => outcome.timeout(deadline, onTimeout: () => PlaybackFailureKind.timedOut);
-
-extension PlaybackFailureCopy on PlaybackFailureKind {
-  String get message => switch (this) {
-    PlaybackFailureKind.credentialsUnavailable =>
-      'This source needs its saved account details restored in Settings.',
-    PlaybackFailureKind.unavailable => 'Playback is unavailable right now.',
-    PlaybackFailureKind.timedOut => 'Playback did not start in time.',
-  };
-}
-
-/// Resolves an Xtream stream only at the moment a transport is opened.
-/// Nothing returned from this method belongs in logs, diagnostics, or widget
-/// state; callers hold it only long enough to call [PlaybackTransport.open].
-Uri resolveXtreamPlaybackUri({
-  required XtreamPlaybackHandoff handoff,
-  required StoredCredential credential,
-}) {
-  final server = credential.serverUrl?.trim();
-  if (server == null || server.isEmpty) throw const FormatException();
-  final endpoint = Uri.parse(
-    server.contains('://') ? server : 'https://$server',
-  );
-  if ((endpoint.scheme != 'http' && endpoint.scheme != 'https') ||
-      endpoint.host.isEmpty ||
-      credential.username.trim().isEmpty ||
-      credential.password.isEmpty) {
-    throw const FormatException();
-  }
-  final mediaType = switch (handoff) {
-    LivePlaybackHandoff() => 'live',
-    MoviePlaybackHandoff() => 'movie',
-    EpisodePlaybackHandoff() => 'series',
-  };
-  final extension = handoff.extension.trim().isEmpty
-      ? (handoff is LivePlaybackHandoff ? 'ts' : 'mp4')
-      : handoff.extension.trim();
-  final baseSegments = endpoint.pathSegments
-      .where((segment) => segment.isNotEmpty)
-      .toList();
-  if (baseSegments.lastOrNull == 'player_api.php') baseSegments.removeLast();
-  return endpoint.replace(
-    pathSegments: [
-      ...baseSegments,
-      mediaType,
-      credential.username,
-      credential.password,
-      '${handoff.providerItemId}.$extension',
-    ],
-    query: null,
-    fragment: null,
-  );
 }
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
     super.key,
     required this.handoff,
-    required this.source,
     required this.onExit,
+    this.manager,
+    this.sessionId,
     this.onOpenSettings,
+    this.onEnterPip,
+    this.onAddChannel,
+    this.variantPort,
+    this.fullscreenPort,
+    this.onUsableVideo,
+    this.source,
     this.credentialStore,
     this.sourceResolver,
     this.transportFactory,
-    this.fullscreenPort,
     this.startupDeadline = productionPlayerStartupDeadline,
-  });
+  }) : assert(
+         (manager == null && sessionId == null) ||
+             (manager != null && sessionId != null),
+       );
 
   final PlaybackHandoff handoff;
-  final PersistedSource? source;
+  final PlaybackManager? manager;
+  final PlaybackSessionId? sessionId;
   final FutureOr<void> Function() onExit;
-  final FutureOr<void> Function()? onOpenSettings;
-  final CredentialStore? credentialStore;
+  final FutureOr<void> Function()? onOpenSettings, onEnterPip, onAddChannel;
+  final PlaybackExactVariantPort? variantPort;
+  final FullscreenPort? fullscreenPort;
+  final UsableVideoCallback? onUsableVideo;
 
-  /// Resolves the handoff's exact source when its result originated outside
-  /// the shell's current source view. When supplied, it is authoritative.
+  // Legacy fixture seam. Production passes manager + sessionId.
+  final PersistedSource? source;
+  final CredentialStore? credentialStore;
   final FutureOr<PersistedSource?> Function(String sourceId)? sourceResolver;
   final PlaybackTransportFactory? transportFactory;
-  final FullscreenPort? fullscreenPort;
   final Duration startupDeadline;
 
   @override
@@ -176,94 +123,230 @@ class PlayerScreen extends StatefulWidget {
 }
 
 class _PlayerScreenState extends State<PlayerScreen> {
-  final _stageFocus = FocusNode(debugLabel: 'player video stage');
-  final _chromeFocus = FocusScopeNode(debugLabel: 'player chrome controls');
-  final _backFocus = FocusNode(debugLabel: 'player back');
-  final _backTenFocus = FocusNode(debugLabel: 'player back 10 seconds');
-  final _playFocus = FocusNode(debugLabel: 'player play pause');
-  final _forwardTenFocus = FocusNode(debugLabel: 'player forward 10 seconds');
-  final _muteFocus = FocusNode(debugLabel: 'player mute');
-  final _timelineFocus = FocusNode(debugLabel: 'player timeline');
-  final _volumeFocus = FocusNode(debugLabel: 'player volume');
-  final _fullscreenFocus = FocusNode(debugLabel: 'player fullscreen');
-  final _recoveryPrimaryFocus = FocusNode(
-    debugLabel: 'player recovery primary',
+  final _stage = FocusNode(debugLabel: 'player video stage');
+  final _chrome = FocusScopeNode(debugLabel: 'player chrome');
+  final _tracksScope = FocusScopeNode(
+    debugLabel: 'tracks ledger',
+    traversalEdgeBehavior: TraversalEdgeBehavior.closedLoop,
+    directionalTraversalEdgeBehavior: TraversalEdgeBehavior.closedLoop,
   );
-  final _recoveryBackFocus = FocusNode(debugLabel: 'player recovery back');
-  final _recoveryDetailsFocus = FocusNode(
+  final _back = FocusNode(debugLabel: 'player back');
+  final _back10 = FocusNode(debugLabel: 'back ten');
+  final _play = FocusNode(debugLabel: 'play pause');
+  final _forward10 = FocusNode(debugLabel: 'forward ten');
+  final _mute = FocusNode(debugLabel: 'player mute');
+  final _timeline = FocusNode(debugLabel: 'player timeline');
+  final _volume = FocusNode(debugLabel: 'player volume');
+  final _tracks = FocusNode(debugLabel: 'tracks');
+  final _startOverNode = FocusNode(debugLabel: 'start over');
+  final _pip = FocusNode(debugLabel: 'picture in picture');
+  final _add = FocusNode(debugLabel: 'add channel');
+  final _fullscreenNode = FocusNode(debugLabel: 'player fullscreen');
+  final _trackDone = FocusNode(debugLabel: 'tracks done');
+  final _firstTrack = FocusNode(debugLabel: 'first track');
+  final _recoveryPrimary = FocusNode(debugLabel: 'player recovery primary');
+  final _recoveryBack = FocusNode(debugLabel: 'player recovery back');
+  final _recoveryDetails = FocusNode(
     debugLabel: 'player recovery technical details',
   );
 
-  PlaybackTransport? _transport;
-  StreamSubscription<PlaybackTransportState>? _states;
-  Future<void>? _teardown;
+  late PlaybackManager _manager;
+  late PlaybackHandoff _handoff;
+  late bool _ownsManager;
+  PlaybackSessionId? _sessionId;
   Timer? _chromeTimer;
-  PlaybackTransportState _state = const PlaybackTransportState();
-  PlaybackFailureKind? _failure;
-  int _attempts = 0;
-  bool _chromeVisible = true;
-  bool _detailsVisible = false;
-  bool _leaving = false;
-  bool _opening = false;
-  bool _recovering = false;
-  int _generation = 0;
-  (int, PlaybackTransport)? _pendingRuntimeError;
+  bool _chromeVisible = true,
+      _tracksOpen = false,
+      _detailsVisible = false,
+      _trackBusy = false,
+      _leaving = false,
+      _legacyStarting = false,
+      _usableReported = false;
+  bool _wasBuffering = false;
+  bool _wasFailed = false;
+  bool _variantRequestIssued = false;
+  PlaybackBlockReason? _legacyBlock;
+  String? _message;
+  List<PlaybackVariantCandidate> _variants = const [];
+  int _variantGeneration = 0;
 
-  bool get _isLive =>
-      widget.handoff is LivePlaybackHandoff ||
-      widget.handoff is M3uLivePlaybackHandoff;
-  bool get _isVod => !_isLive;
-  bool get _isStarting => _opening && _failure == null && !_state.hasVideo;
-  bool get _isFailure => _failure != null;
-  CredentialStore get _credentials =>
-      widget.credentialStore ?? SecureCredentialStore();
+  PlaybackSessionSnapshot? get _snapshot =>
+      _sessionId == null ? null : _manager.session(_sessionId!);
+  PlaybackTransportState get _state =>
+      _snapshot?.transportState ?? const PlaybackTransportState();
+  bool get _live => _handoff.mediaKind == PlaybackMediaKind.live;
+  bool get _starting =>
+      _legacyStarting || _snapshot?.phase == PlaybackSessionPhase.opening;
+  bool get _failed =>
+      _legacyBlock != null || _snapshot?.phase == PlaybackSessionPhase.failed;
   FullscreenPort get _fullscreen =>
       widget.fullscreenPort ?? const WindowFullscreenPort();
 
   @override
   void initState() {
     super.initState();
-    _stageFocus.addListener(_onFocusChanged);
-    _chromeFocus.addListener(_onChromeFocusChanged);
+    _handoff = widget.handoff;
+    _sessionId = widget.sessionId;
+    _ownsManager = widget.manager == null;
+    _manager = widget.manager ?? _legacyManager();
+    _manager.addListener(_changed);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _stageFocus.requestFocus();
+      _stage.requestFocus();
       _showChrome();
-      unawaited(_startCycle());
+      if (_sessionId == null) unawaited(_startLegacy());
+      _changed();
     });
+  }
+
+  PlaybackManager _legacyManager() {
+    final resolver =
+        widget.sourceResolver ??
+        (String id) {
+          final source = widget.source;
+          return source != null && source.id == id ? source : null;
+        };
+    return PlaybackManager(
+      targetResolver: SourcePlaybackTargetResolver(
+        sourceResolver: resolver,
+        credentialStore: widget.credentialStore ?? SecureCredentialStore(),
+      ),
+      transportFactory:
+          widget.transportFactory ?? MediaKitPlaybackTransport.create,
+      startupDeadline: widget.startupDeadline,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant PlayerScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.manager != null && widget.manager != oldWidget.manager) {
+      _manager.removeListener(_changed);
+      if (_ownsManager) unawaited(_manager.close());
+      _manager = widget.manager!;
+      _ownsManager = false;
+      _manager.addListener(_changed);
+    }
+    if (widget.sessionId != null && widget.sessionId != oldWidget.sessionId) {
+      _sessionId = widget.sessionId;
+      _usableReported = false;
+      _resetVariants();
+    }
+    if (widget.handoff != oldWidget.handoff) {
+      _handoff = widget.handoff;
+      _resetVariants();
+    } else if (widget.variantPort != oldWidget.variantPort) {
+      _resetVariants();
+    }
+    _changed();
   }
 
   @override
   void dispose() {
     _chromeTimer?.cancel();
-    unawaited(_disposeTransport());
-    _stageFocus
-      ..removeListener(_onFocusChanged)
-      ..dispose();
-    _chromeFocus.removeListener(_onChromeFocusChanged);
-    _chromeFocus.dispose();
-    _backFocus.dispose();
-    _backTenFocus.dispose();
-    _playFocus.dispose();
-    _forwardTenFocus.dispose();
-    _muteFocus.dispose();
-    _timelineFocus.dispose();
-    _volumeFocus.dispose();
-    _fullscreenFocus.dispose();
-    _recoveryPrimaryFocus.dispose();
-    _recoveryBackFocus.dispose();
-    _recoveryDetailsFocus.dispose();
+    _manager.removeListener(_changed);
+    if (_ownsManager) unawaited(_manager.close());
+    for (final node in [
+      _stage,
+      _chrome,
+      _tracksScope,
+      _back,
+      _back10,
+      _play,
+      _forward10,
+      _mute,
+      _timeline,
+      _volume,
+      _tracks,
+      _startOverNode,
+      _pip,
+      _add,
+      _fullscreenNode,
+      _trackDone,
+      _firstTrack,
+      _recoveryPrimary,
+      _recoveryBack,
+      _recoveryDetails,
+    ]) {
+      node.dispose();
+    }
     super.dispose();
   }
 
-  void _onFocusChanged() {
-    if (_stageFocus.hasFocus) {
-      _armChromeHide();
-    }
+  Future<void> _startLegacy() async {
+    if (_legacyStarting || _leaving) return;
+    setState(() {
+      _legacyStarting = true;
+      _legacyBlock = null;
+    });
+    final result = await _manager.start(_handoff);
+    if (!mounted || _leaving) return;
+    setState(() {
+      _legacyStarting = false;
+      switch (result) {
+        case PlaybackStarted(:final sessionId):
+        case PlaybackStartFailed(:final sessionId):
+          _sessionId = sessionId;
+        case PlaybackBlocked(:final reason):
+          _legacyBlock = reason;
+      }
+    });
+    _changed();
   }
 
-  void _onChromeFocusChanged() {
-    if (!_chromeFocus.hasFocus) _armChromeHide();
+  void _changed() {
+    if (!mounted) return;
+    final snapshot = _snapshot;
+    final buffering = snapshot?.transportState.isBuffering == true;
+    if (_wasBuffering && !buffering && !_chrome.hasFocus) {
+      _armChromeHide();
+    }
+    _wasBuffering = buffering;
+    if (!_usableReported && snapshot?.transportState.hasVideo == true) {
+      _usableReported = true;
+      final callback = widget.onUsableVideo;
+      if (callback != null) {
+        unawaited(
+          Future<void>.sync(() => callback(_handoff)).catchError((_) {}),
+        );
+      }
+    }
+    final failed = snapshot?.phase == PlaybackSessionPhase.failed;
+    if (failed && !_wasFailed) {
+      _resetVariants();
+    }
+    _wasFailed = failed;
+    if (failed) {
+      _loadVariants();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _failed) _recoveryPrimary.requestFocus();
+      });
+    }
+    setState(() {});
+  }
+
+  void _loadVariants() {
+    final port = widget.variantPort;
+    if (port == null || _variantRequestIssued) return;
+    _variantRequestIssued = true;
+    final generation = ++_variantGeneration;
+    unawaited(() async {
+      List<PlaybackVariantCandidate> values;
+      try {
+        values = await port.loadExactVariants(_handoff);
+      } catch (_) {
+        values = const [];
+      }
+      if (mounted && generation == _variantGeneration && _failed) {
+        setState(() => _variants = values);
+      }
+    }());
+  }
+
+  void _resetVariants() {
+    _variantGeneration += 1;
+    _variantRequestIssued = false;
+    _variants = const [];
   }
 
   void _showChrome() {
@@ -276,8 +359,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _chromeTimer?.cancel();
     _chromeTimer = Timer(_chromeDuration, () {
       if (!mounted ||
-          _hasControlFocus ||
-          _isFailure ||
+          _chrome.hasFocus ||
+          _tracksOpen ||
+          _failed ||
           _state.isBuffering ||
           !_state.hasVideo) {
         return;
@@ -286,346 +370,134 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
   }
 
-  bool get _hasControlFocus => _chromeFocus.hasFocus;
-
-  KeyEventResult _chromeKey(FocusNode _, KeyEvent event) {
-    if (event is KeyDownEvent &&
-        event.logicalKey == LogicalKeyboardKey.arrowDown) {
-      _stageFocus.requestFocus();
-      setState(() => _chromeVisible = false);
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
-  }
-
-  Future<void> _startCycle() async {
-    if (_opening || _leaving) return;
-    setState(() {
-      _opening = true;
-      _failure = null;
-      _detailsVisible = false;
-      _attempts = 0;
-      _chromeVisible = true;
-    });
-    final generation = ++_generation;
-    for (var retry = 0; retry < 2 && mounted && !_leaving; retry++) {
-      setState(() {
-        _attempts = retry + 1;
-        _state = const PlaybackTransportState();
-      });
-      final failure = await _openOnce(generation);
-      if (!mounted || _leaving) return;
-      if (failure == null) {
-        _finishSuccessfulOpen(generation);
-        return;
-      }
-      if (failure == PlaybackFailureKind.credentialsUnavailable) {
-        setState(() {
-          _opening = false;
-          _failure = failure;
-        });
-        _focusRecoveryPrimary();
-        return;
-      }
-      if (retry == 1) {
-        await _disposeTransport();
-        if (!mounted || _leaving) return;
-        setState(() {
-          _opening = false;
-          _failure = failure;
-        });
-        _focusRecoveryPrimary();
-        return;
-      }
-    }
-  }
-
-  void _finishSuccessfulOpen(int generation) {
-    if (!mounted || _leaving || generation != _generation) return;
-    setState(() => _opening = false);
-    _armChromeHide();
-    final pending = _pendingRuntimeError;
-    _pendingRuntimeError = null;
-    if (pending != null &&
-        pending.$1 == generation &&
-        identical(pending.$2, _transport)) {
-      unawaited(_recoverAfterPlaybackError(generation, pending.$2));
-    }
-  }
-
-  Future<PlaybackFailureKind?> _openOnce(int generation) async {
-    await _disposeTransport();
-    _PlaybackTarget? target;
-    try {
-      target = await _resolvePlaybackTarget();
-    } catch (_) {
-      return PlaybackFailureKind.unavailable;
-    }
-    final resolvedTarget = target;
-    if (resolvedTarget == null || _leaving) {
-      return widget.handoff is M3uLivePlaybackHandoff
-          ? PlaybackFailureKind.unavailable
-          : PlaybackFailureKind.credentialsUnavailable;
-    }
-    try {
-      final transport =
-          (widget.transportFactory ?? MediaKitPlaybackTransport.create)();
-      _transport = transport;
-      final usable = Completer<PlaybackFailureKind?>();
-      _states = transport.states.listen((next) {
-        if (!mounted || _transport != transport || generation != _generation) {
-          return;
-        }
-        final bufferingEnded = _state.isBuffering && !next.isBuffering;
-        setState(() => _state = next);
-        if (bufferingEnded && !_hasControlFocus) _armChromeHide();
-        if (next.hasError) {
-          if (!usable.isCompleted) {
-            usable.complete(PlaybackFailureKind.unavailable);
-          } else if (_opening) {
-            // The first usable frame and a later engine error can arrive in
-            // adjacent events. Let the opener clear its transient state, then
-            // recover exactly once from the transport that is still current.
-            _pendingRuntimeError = (generation, transport);
-          } else {
-            unawaited(_recoverAfterPlaybackError(generation, transport));
-          }
-        } else if (next.hasVideo && !usable.isCompleted) {
-          usable.complete(null);
-        }
-      });
-      unawaited(() async {
-        try {
-          await transport.open(
-            resolvedTarget.uri,
-            httpHeaders: resolvedTarget.httpHeaders,
-          );
-        } catch (_) {
-          if (mounted &&
-              _transport == transport &&
-              generation == _generation &&
-              !usable.isCompleted) {
-            usable.complete(PlaybackFailureKind.unavailable);
-          }
-        }
-      }());
-      return await waitForPlaybackStartup(
-        usable.future,
-        widget.startupDeadline,
-      );
-    } catch (_) {
-      return PlaybackFailureKind.unavailable;
-    }
-  }
-
-  Future<_PlaybackTarget?> _resolvePlaybackTarget() async {
-    final handoff = widget.handoff;
-    final source = await _resolveSource(handoff.sourceId);
-    if (source == null || source.id != handoff.sourceId || _leaving) {
-      return null;
-    }
-    if (handoff is M3uLivePlaybackHandoff) {
-      return _PlaybackTarget(handoff.uri, handoff.httpHeaders);
-    }
-    if (handoff is! XtreamPlaybackHandoff) return null;
-    final credential = await _credentials.read(source.credentialKey);
-    if (credential == null || _leaving) return null;
-    try {
-      return _PlaybackTarget(
-        resolveXtreamPlaybackUri(handoff: handoff, credential: credential),
-        const {},
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<PersistedSource?> _resolveSource(String sourceId) async {
-    final resolver = widget.sourceResolver;
-    if (resolver != null) return await resolver(sourceId);
-    final source = widget.source;
-    return source != null && source.id == sourceId ? source : null;
-  }
-
-  Future<void> _recoverAfterPlaybackError(
-    int generation,
-    PlaybackTransport transport,
-  ) async {
-    if (!mounted ||
-        _leaving ||
-        _recovering ||
-        generation != _generation ||
-        _transport != transport) {
+  Future<void> _backOut() async {
+    if (_tracksOpen) {
+      _closeTracks();
       return;
     }
-    _recovering = true;
-    final retryGeneration = ++_generation;
-    if (_attempts >= 2) {
-      await _disposeTransport();
-      if (!mounted || _leaving || retryGeneration != _generation) {
-        _recovering = false;
-        return;
-      }
-      setState(() {
-        _opening = false;
-        _failure = PlaybackFailureKind.unavailable;
-        _chromeVisible = true;
-      });
-      _focusRecoveryPrimary();
-      _recovering = false;
-      return;
-    }
-    setState(() {
-      _opening = true;
-      _chromeVisible = true;
-      _state = const PlaybackTransportState();
-    });
-    _attempts += 1;
-    final failure = await _openOnce(retryGeneration);
-    if (!mounted || _leaving || retryGeneration != _generation) {
-      _recovering = false;
-      return;
-    }
-    if (failure == null) {
-      _recovering = false;
-      _finishSuccessfulOpen(retryGeneration);
-      return;
-    }
-    await _disposeTransport();
-    if (!mounted || _leaving || retryGeneration != _generation) {
-      _recovering = false;
-      return;
-    }
-    setState(() {
-      _opening = false;
-      _failure = failure;
-      _chromeVisible = true;
-    });
-    _focusRecoveryPrimary();
-    _recovering = false;
-  }
-
-  void _focusRecoveryPrimary() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _isFailure && !_leaving) {
-        _recoveryPrimaryFocus.requestFocus();
-      }
-    });
-  }
-
-  Future<void> _disposeTransport() {
-    final active = _teardown;
-    if (active != null) return active;
-
-    final subscription = _states;
-    final transport = _transport;
-    _states = null;
-    _transport = null;
-    _pendingRuntimeError = null;
-
-    if (subscription == null && transport == null) {
-      return Future<void>.value();
-    }
-
-    late final Future<void> teardown;
-    teardown =
-        Future.wait<void>([
-          if (subscription != null) subscription.cancel(),
-          if (transport != null) transport.dispose(),
-        ]).whenComplete(() {
-          if (identical(_teardown, teardown)) _teardown = null;
-        });
-    _teardown = teardown;
-    return teardown;
-  }
-
-  Future<void> _leave() async {
     if (_leaving) return;
     if (await _fullscreen.isFullscreen) {
       await _fullscreen.setFullscreen(false);
       return;
     }
     _leaving = true;
-    _chromeTimer?.cancel();
-    await _disposeTransport();
+    final id = _sessionId;
+    if (id != null) await _manager.stop(id);
     if (mounted) await widget.onExit();
   }
 
   Future<void> _openSettings() async {
+    if (_leaving) return;
     _leaving = true;
-    await _disposeTransport();
+    final id = _sessionId;
+    if (id != null) await _manager.stop(id);
     if (mounted) await (widget.onOpenSettings?.call() ?? widget.onExit());
   }
 
-  Future<void> _togglePlay() async {
-    final transport = _transport;
-    if (transport == null) return;
-    _showChrome();
-    if (_state.isPlaying) {
-      await transport.pause();
-    } else {
-      await transport.play();
+  Future<void> _retry() async {
+    final id = _sessionId;
+    if (id == null) return _startLegacy();
+    setState(() {
+      _detailsVisible = false;
+      _resetVariants();
+      _message = null;
+    });
+    await _manager.retry(id);
+  }
+
+  Future<void> _tryVariant(PlaybackVariantCandidate value) async {
+    final prior = _sessionId;
+    if (prior == null) return;
+    final result = await _manager.start(value.handoff, replaceSessionId: prior);
+    if (!mounted) return;
+    switch (result) {
+      case PlaybackStarted(:final sessionId):
+      case PlaybackStartFailed(:final sessionId):
+        setState(() {
+          _sessionId = sessionId;
+          _handoff = value.handoff;
+          _usableReported = false;
+          _resetVariants();
+        });
+      case PlaybackBlocked():
+        setState(() => _message = 'That source variant is unavailable.');
     }
   }
 
-  Future<void> _seekBy(int seconds) async {
-    final transport = _transport;
-    if (transport == null || !_isVod) return;
+  Future<void> _togglePlay() async {
+    final id = _sessionId;
+    if (id == null) return;
     _showChrome();
-    final maximum = _state.duration;
-    final target = _state.position + Duration(seconds: seconds);
-    await transport.seek(
-      target < Duration.zero
-          ? Duration.zero
-          : (target > maximum ? maximum : target),
-    );
+    await (_state.isPlaying ? _manager.pause(id) : _manager.play(id));
   }
 
-  Future<void> _setVolume(double value) async {
-    final transport = _transport;
-    if (transport == null) return;
-    _showChrome();
-    await transport.setVolume(value.clamp(0, 100));
+  Future<void> _seek(Duration value) async {
+    final id = _sessionId;
+    if (id != null && !_live) await _manager.seek(id, value);
   }
 
-  Future<void> _toggleMute() async {
-    final transport = _transport;
-    if (transport == null) return;
-    _showChrome();
-    await transport.setMuted(!_state.muted);
+  Future<void> _startOver() async {
+    final id = _sessionId;
+    if (id == null || _live) return;
+    final outcome = await _manager.startOverWithOutcome(id);
+    if (!mounted) return;
+    setState(() {
+      _message = !outcome.seekSucceeded
+          ? 'Could not start over.'
+          : !outcome.progressSaved
+          ? 'Started over. Progress could not be saved.'
+          : 'Started over.';
+    });
   }
 
-  Future<void> _toggleFullscreen() async {
-    _showChrome();
-    await _fullscreen.setFullscreen(!(await _fullscreen.isFullscreen));
+  Future<void> _selectTrack(bool audio, String trackId) async {
+    final id = _sessionId;
+    if (id == null || _trackBusy) return;
+    setState(() => _trackBusy = true);
+    final changed = audio
+        ? await _manager.selectAudioTrack(id, trackId)
+        : await _manager.selectSubtitleTrack(id, trackId);
+    if (mounted) {
+      setState(() {
+        _trackBusy = false;
+        _message = changed ? null : 'Track could not be changed.';
+      });
+    }
+  }
+
+  void _openTracks() {
+    setState(() {
+      _tracksOpen = true;
+      _message = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _tracksOpen) _firstTrack.requestFocus();
+    });
+  }
+
+  void _closeTracks() {
+    setState(() => _tracksOpen = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _tracks.requestFocus();
+    });
   }
 
   KeyEventResult _stageKey(FocusNode _, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     if (event.logicalKey == LogicalKeyboardKey.escape ||
         event.logicalKey == LogicalKeyboardKey.browserBack) {
-      unawaited(_leave());
+      unawaited(_backOut());
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
       _showChrome();
-      _backFocus.requestFocus();
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-      _chromeVisible = false;
-      setState(() {});
+      _back.requestFocus();
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.enter ||
         event.logicalKey == LogicalKeyboardKey.select) {
       _showChrome();
-      (_isStarting
-              ? _backFocus
-              : _isFailure
-              ? _recoveryPrimaryFocus
-              : _playFocus)
-          .requestFocus();
+      (_failed ? _recoveryPrimary : _play).requestFocus();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -633,20 +505,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final video = _transport?.buildVideo() ?? const SizedBox.expand();
+    final snapshot = _snapshot;
+    final video = _sessionId == null
+        ? const SizedBox.expand()
+        : _manager.videoFor(_sessionId!);
     return CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
+      bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): () =>
-            unawaited(_leave()),
+            unawaited(_backOut()),
         const SingleActivator(LogicalKeyboardKey.browserBack): () =>
-            unawaited(_leave()),
+            unawaited(_backOut()),
       },
       child: FocusTraversalGroup(
-        policy: WidgetOrderTraversalPolicy(),
         child: MouseRegion(
           onHover: (_) => _showChrome(),
           child: Focus(
-            focusNode: _stageFocus,
+            focusNode: _stage,
             autofocus: true,
             onKeyEvent: _stageKey,
             child: Material(
@@ -659,87 +533,147 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     child: video,
                   ),
                   if (_state.isBuffering && _state.hasVideo)
-                    const Align(
-                      alignment: Alignment.center,
-                      child: _StatusMark(label: 'Buffering'),
-                    ),
-                  if (_isStarting)
-                    Align(
-                      alignment: Alignment.center,
-                      child: _StatusMark(
-                        label: 'Starting ${widget.handoff.title}',
-                      ),
-                    ),
-                  if (_chromeVisible || _isFailure || _isStarting)
-                    Positioned.fill(
-                      child: FocusScope(
-                        node: _chromeFocus,
-                        onKeyEvent: _chromeKey,
-                        child: Stack(
-                          children: [
-                            _IdentityBand(
-                              handoff: widget.handoff,
-                              focusNode: _backFocus,
-                              onBack: () => unawaited(_leave()),
-                              onDown: _returnToStage,
+                    const Center(child: _StatusMark('Buffering')),
+                  if (_starting)
+                    Center(child: _StatusMark('Starting ${_handoff.title}')),
+                  if (_chromeVisible || _starting || _failed || _tracksOpen)
+                    FocusScope(
+                      node: _chrome,
+                      child: Stack(
+                        children: [
+                          _IdentityBand(
+                            handoff: _handoff,
+                            focusNode: _back,
+                            onBack: () => unawaited(_backOut()),
+                            onDown: _returnToStage,
+                          ),
+                          if (snapshot != null &&
+                              (snapshot.resume.didResume ||
+                                  snapshot.resume.loadFailed ||
+                                  snapshot.progressSaveFailed ||
+                                  _message != null))
+                            Positioned(
+                              top: 58,
+                              left: 0,
+                              right: 0,
+                              child: _Notice(
+                                _message ??
+                                    (snapshot.progressSaveFailed
+                                        ? 'Progress could not be saved.'
+                                        : snapshot.resume.loadFailed
+                                        ? 'Saved progress could not be loaded. Playing from the start.'
+                                        : 'Resumed at ${_time(snapshot.resume.appliedPosition)}.'),
+                              ),
                             ),
-                            Align(
-                              alignment: Alignment.bottomCenter,
-                              child: _isFailure
-                                  ? _FailureDeck(
-                                      failure: _failure!,
-                                      handoff: widget.handoff,
-                                      attempts: _attempts,
-                                      detailsVisible: _detailsVisible,
-                                      primaryFocus: _recoveryPrimaryFocus,
-                                      backFocus: _recoveryBackFocus,
-                                      detailsFocus: _recoveryDetailsFocus,
-                                      onToggleDetails: () => setState(
-                                        () =>
-                                            _detailsVisible = !_detailsVisible,
-                                      ),
-                                      onPrimary:
-                                          _failure ==
-                                              PlaybackFailureKind
-                                                  .credentialsUnavailable
-                                          ? () => unawaited(_openSettings())
-                                          : () => unawaited(_startCycle()),
-                                      onBack: () => unawaited(_leave()),
-                                      onDownToStage: _returnToStage,
-                                    )
-                                  : _BroadcastDeck(
-                                      live: _isLive,
-                                      state: _state,
-                                      backTenFocus: _backTenFocus,
-                                      playFocus: _playFocus,
-                                      forwardTenFocus: _forwardTenFocus,
-                                      muteFocus: _muteFocus,
-                                      timelineFocus: _timelineFocus,
-                                      volumeFocus: _volumeFocus,
-                                      fullscreenFocus: _fullscreenFocus,
-                                      onPlayPause: () =>
-                                          unawaited(_togglePlay()),
-                                      onBackTen: () => unawaited(_seekBy(-10)),
-                                      onForwardTen: () =>
-                                          unawaited(_seekBy(10)),
-                                      onSeek: (value) => unawaited(
-                                        _transport?.seek(
-                                              Duration(
-                                                milliseconds: value.round(),
-                                              ),
-                                            ) ??
-                                            Future<void>.value(),
-                                      ),
-                                      onMute: () => unawaited(_toggleMute()),
-                                      onVolume: _setVolume,
-                                      onFullscreen: () =>
-                                          unawaited(_toggleFullscreen()),
-                                      onBack: () => unawaited(_leave()),
-                                      onDownToStage: _returnToStage,
+                          Align(
+                            alignment: Alignment.bottomCenter,
+                            child: _failed
+                                ? _FailureDeck(
+                                    failure:
+                                        snapshot?.failure ??
+                                        PlaybackSessionFailure.unavailable,
+                                    handoff: _handoff,
+                                    attempts: snapshot?.metrics.attempts ?? 0,
+                                    detailsVisible: _detailsVisible,
+                                    primaryFocus: _recoveryPrimary,
+                                    backFocus: _recoveryBack,
+                                    detailsFocus: _recoveryDetails,
+                                    variants: _variants,
+                                    message: _message,
+                                    onDetails: () => setState(
+                                      () => _detailsVisible = !_detailsVisible,
                                     ),
+                                    onPrimary:
+                                        snapshot?.failure ==
+                                            PlaybackSessionFailure
+                                                .credentialsUnavailable
+                                        ? () => unawaited(_openSettings())
+                                        : () => unawaited(_retry()),
+                                    onBack: () => unawaited(_backOut()),
+                                    onVariant: (value) =>
+                                        unawaited(_tryVariant(value)),
+                                    onDown: _returnToStage,
+                                  )
+                                : _BroadcastDeck(
+                                    live: _live,
+                                    state: _state,
+                                    audible: snapshot?.isAudible == true,
+                                    nodes: _DeckNodes(
+                                      back10: _back10,
+                                      play: _play,
+                                      forward10: _forward10,
+                                      mute: _mute,
+                                      timeline: _timeline,
+                                      volume: _volume,
+                                      tracks: _tracks,
+                                      startOver: _startOverNode,
+                                      pip: _pip,
+                                      add: _add,
+                                      fullscreen: _fullscreenNode,
+                                    ),
+                                    onPlay: () => unawaited(_togglePlay()),
+                                    onSeek: (value) => unawaited(_seek(value)),
+                                    onMute: () {
+                                      final id = _sessionId;
+                                      if (id != null) {
+                                        unawaited(
+                                          _manager.setMuted(
+                                            id,
+                                            snapshot?.isAudible == true,
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    onVolume: (value) {
+                                      final id = _sessionId;
+                                      if (id != null) {
+                                        unawaited(
+                                          _manager.setVolume(id, value),
+                                        );
+                                      }
+                                    },
+                                    onTracks: _openTracks,
+                                    onStartOver: () => unawaited(_startOver()),
+                                    onPip: widget.onEnterPip == null
+                                        ? null
+                                        : () => unawaited(
+                                            Future<void>.sync(
+                                              widget.onEnterPip!,
+                                            ),
+                                          ),
+                                    onAdd: !_live || widget.onAddChannel == null
+                                        ? null
+                                        : () => unawaited(
+                                            Future<void>.sync(
+                                              widget.onAddChannel!,
+                                            ),
+                                          ),
+                                    onFullscreen: () => unawaited(() async {
+                                      await _fullscreen.setFullscreen(
+                                        !(await _fullscreen.isFullscreen),
+                                      );
+                                    }()),
+                                    onBack: () => unawaited(_backOut()),
+                                    onDown: _returnToStage,
+                                  ),
+                          ),
+                          if (_tracksOpen)
+                            Positioned.fill(
+                              child: _TracksLedger(
+                                scope: _tracksScope,
+                                firstFocus: _firstTrack,
+                                doneFocus: _trackDone,
+                                state: _state,
+                                busy: _trackBusy,
+                                message: _message,
+                                onDone: _closeTracks,
+                                onAudio: (id) =>
+                                    unawaited(_selectTrack(true, id)),
+                                onSubtitle: (id) =>
+                                    unawaited(_selectTrack(false, id)),
+                              ),
                             ),
-                          ],
-                        ),
+                        ],
                       ),
                     ),
                 ],
@@ -752,13 +686,40 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _returnToStage() {
-    _stageFocus.requestFocus();
+    _stage.requestFocus();
     setState(() => _chromeVisible = false);
   }
 }
 
+class _DeckNodes {
+  const _DeckNodes({
+    required this.back10,
+    required this.play,
+    required this.forward10,
+    required this.mute,
+    required this.timeline,
+    required this.volume,
+    required this.tracks,
+    required this.startOver,
+    required this.pip,
+    required this.add,
+    required this.fullscreen,
+  });
+  final FocusNode back10,
+      play,
+      forward10,
+      mute,
+      timeline,
+      volume,
+      tracks,
+      startOver,
+      pip,
+      add,
+      fullscreen;
+}
+
 class _StatusMark extends StatelessWidget {
-  const _StatusMark({required this.label});
+  const _StatusMark(this.label);
   final String label;
   @override
   Widget build(BuildContext context) => Semantics(
@@ -773,11 +734,7 @@ class _StatusMark extends StatelessWidget {
         children: [
           const SizedBox.square(
             dimension: 16,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: _amber,
-              backgroundColor: _line,
-            ),
+            child: CircularProgressIndicator(strokeWidth: 2, color: _amber),
           ),
           const SizedBox(width: 10),
           Flexible(
@@ -798,6 +755,24 @@ class _StatusMark extends StatelessWidget {
   );
 }
 
+class _Notice extends StatelessWidget {
+  const _Notice(this.message);
+  final String message;
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    child: Container(
+      key: const ValueKey('player-playback-notice'),
+      color: _surface,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+      child: Text(
+        message,
+        style: const TextStyle(color: _quietText, fontSize: 13),
+      ),
+    ),
+  );
+}
+
 class _IdentityBand extends StatelessWidget {
   const _IdentityBand({
     required this.handoff,
@@ -807,8 +782,7 @@ class _IdentityBand extends StatelessWidget {
   });
   final PlaybackHandoff handoff;
   final FocusNode focusNode;
-  final VoidCallback onBack;
-  final VoidCallback onDown;
+  final VoidCallback onBack, onDown;
   @override
   Widget build(BuildContext context) => SafeArea(
     bottom: false,
@@ -842,13 +816,8 @@ class _IdentityBand extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 12),
           Text(
-            handoff is LivePlaybackHandoff || handoff is M3uLivePlaybackHandoff
-                ? 'LIVE'
-                : handoff is MoviePlaybackHandoff
-                ? 'MOVIE'
-                : 'EPISODE',
+            handoff.mediaKind.name.toUpperCase(),
             style: const TextStyle(
               color: _quietText,
               fontSize: 12,
@@ -865,169 +834,483 @@ class _BroadcastDeck extends StatelessWidget {
   const _BroadcastDeck({
     required this.live,
     required this.state,
-    required this.backTenFocus,
-    required this.playFocus,
-    required this.forwardTenFocus,
-    required this.muteFocus,
-    required this.timelineFocus,
-    required this.volumeFocus,
-    required this.fullscreenFocus,
-    required this.onPlayPause,
-    required this.onBackTen,
-    required this.onForwardTen,
+    required this.audible,
+    required this.nodes,
+    required this.onPlay,
     required this.onSeek,
     required this.onMute,
     required this.onVolume,
+    required this.onTracks,
+    required this.onStartOver,
+    required this.onPip,
+    required this.onAdd,
     required this.onFullscreen,
     required this.onBack,
-    required this.onDownToStage,
+    required this.onDown,
   });
-  final bool live;
+  final bool live, audible;
   final PlaybackTransportState state;
-  final FocusNode backTenFocus,
-      playFocus,
-      forwardTenFocus,
-      muteFocus,
-      timelineFocus,
-      volumeFocus,
-      fullscreenFocus;
-  final VoidCallback onPlayPause,
-      onBackTen,
-      onForwardTen,
+  final _DeckNodes nodes;
+  final VoidCallback onPlay,
       onMute,
+      onTracks,
+      onStartOver,
       onFullscreen,
       onBack,
-      onDownToStage;
-  final ValueChanged<double> onSeek, onVolume;
+      onDown;
+  final VoidCallback? onPip, onAdd;
+  final ValueChanged<Duration> onSeek;
+  final ValueChanged<double> onVolume;
 
-  Widget _primaryControls() => KeyedSubtree(
+  Widget _primary() => Row(
     key: const ValueKey('player-primary-controls'),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (!live) ...[
-          _DeckAction(
-            icon: Icons.replay_10,
-            label: 'Back 10 seconds',
-            focusNode: backTenFocus,
-            onPressed: onBackTen,
-            onDown: onDownToStage,
-          ),
-          const SizedBox(width: 8),
-        ],
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (!live) ...[
         _DeckAction(
-          key: const ValueKey('player-play-pause'),
-          focusNode: playFocus,
-          icon: state.isPlaying ? Icons.pause : Icons.play_arrow,
-          label: state.isPlaying ? 'Pause' : 'Play',
-          onPressed: onPlayPause,
-          onDown: onDownToStage,
+          focusNode: nodes.back10,
+          icon: Icons.replay_10,
+          label: 'Back 10 seconds',
+          onPressed: () => onSeek(_boundedSeek(state, -10)),
+          onDown: onDown,
         ),
-        if (!live) ...[
-          const SizedBox(width: 8),
-          _DeckAction(
-            icon: Icons.forward_10,
-            label: 'Forward 10 seconds',
-            focusNode: forwardTenFocus,
-            onPressed: onForwardTen,
-            onDown: onDownToStage,
-          ),
-        ],
+        const SizedBox(width: 8),
       ],
-    ),
+      _DeckAction(
+        key: const ValueKey('player-play-pause'),
+        focusNode: nodes.play,
+        icon: state.isPlaying ? Icons.pause : Icons.play_arrow,
+        label: state.isPlaying ? 'Pause' : 'Play',
+        onPressed: onPlay,
+        onDown: onDown,
+      ),
+      if (!live) ...[
+        const SizedBox(width: 8),
+        _DeckAction(
+          focusNode: nodes.forward10,
+          icon: Icons.forward_10,
+          label: 'Forward 10 seconds',
+          onPressed: () => onSeek(_boundedSeek(state, 10)),
+          onDown: onDown,
+        ),
+      ],
+    ],
   );
 
-  Widget _utilityControls() => KeyedSubtree(
+  Widget _utilities() => Row(
     key: const ValueKey('player-utility-controls'),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _DeckAction(
-          icon: state.muted ? Icons.volume_off : Icons.volume_up,
-          label: state.muted ? 'Unmute' : 'Mute',
-          focusNode: muteFocus,
-          onPressed: onMute,
-          onDown: onDownToStage,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      _DeckAction(
+        focusNode: nodes.mute,
+        icon: audible ? Icons.volume_up : Icons.volume_off,
+        label: audible ? 'Mute' : 'Unmute',
+        onPressed: onMute,
+        onDown: onDown,
+      ),
+      const SizedBox(width: 8),
+      SizedBox(
+        width: 112,
+        child: _Volume(
+          focusNode: nodes.volume,
+          value: state.volume,
+          onChanged: onVolume,
+          onDown: onDown,
         ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 112,
-          child: _Volume(
-            focusNode: volumeFocus,
-            value: state.volume,
-            onChanged: onVolume,
-            onDown: onDownToStage,
-          ),
-        ),
-        const SizedBox(width: 8),
-        _DeckAction(
-          key: const ValueKey('player-fullscreen'),
-          focusNode: fullscreenFocus,
-          icon: Icons.fullscreen,
-          label: 'Fullscreen',
-          onPressed: onFullscreen,
-          onBack: onBack,
-          onDown: onDownToStage,
-        ),
-      ],
-    ),
+      ),
+      const SizedBox(width: 8),
+      _DeckAction(
+        key: const ValueKey('player-fullscreen'),
+        focusNode: nodes.fullscreen,
+        icon: Icons.fullscreen,
+        label: 'Fullscreen',
+        onPressed: onFullscreen,
+        onBack: onBack,
+        onDown: onDown,
+      ),
+    ],
   );
+
+  List<Widget> _secondary() => [
+    if (!live)
+      _DeckAction(
+        focusNode: nodes.startOver,
+        icon: Icons.restart_alt,
+        label: 'Start over',
+        onPressed: onStartOver,
+        onDown: onDown,
+      ),
+    _DeckAction(
+      focusNode: nodes.tracks,
+      icon: Icons.audiotrack,
+      label: 'Tracks',
+      onPressed: onTracks,
+      onDown: onDown,
+    ),
+    if (onPip != null)
+      _DeckAction(
+        focusNode: nodes.pip,
+        icon: Icons.picture_in_picture_alt,
+        label: 'Picture in picture',
+        onPressed: onPip!,
+        onDown: onDown,
+      ),
+    if (onAdd != null)
+      _DeckAction(
+        focusNode: nodes.add,
+        icon: Icons.view_week_outlined,
+        label: 'Add channel',
+        onPressed: onAdd!,
+        onDown: onDown,
+      ),
+  ];
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      final wide = constraints.maxWidth >= 1265;
-      return SafeArea(
-        top: false,
-        child: Container(
-          key: const ValueKey('player-broadcast-deck'),
-          constraints: const BoxConstraints(minHeight: 78),
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-          decoration: const BoxDecoration(
-            color: _surface,
-            border: Border(top: BorderSide(color: _line)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (!live)
-                _Timeline(
-                  focusNode: timelineFocus,
-                  position: state.position,
-                  duration: state.duration,
-                  onChanged: onSeek,
-                  onDown: onDownToStage,
-                ),
-              if (!live) const SizedBox(height: 8),
-              if (wide)
-                Row(
-                  children: [
-                    const Expanded(
-                      key: ValueKey('player-left-balance-zone'),
-                      child: SizedBox.shrink(),
+    builder: (context, constraints) => SafeArea(
+      top: false,
+      child: Container(
+        key: const ValueKey('player-broadcast-deck'),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        decoration: const BoxDecoration(
+          color: _surface,
+          border: Border(top: BorderSide(color: _line)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!live) ...[
+              _Timeline(
+                focusNode: nodes.timeline,
+                position: state.position,
+                duration: state.duration,
+                onChanged: onSeek,
+                onDown: onDown,
+              ),
+              const SizedBox(height: 8),
+            ],
+            Wrap(spacing: 8, runSpacing: 8, children: _secondary()),
+            const SizedBox(height: 8),
+            if (constraints.maxWidth >= 1100)
+              Row(
+                children: [
+                  const Expanded(
+                    key: ValueKey('player-left-balance-zone'),
+                    child: SizedBox.shrink(),
+                  ),
+                  _primary(),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: _utilities(),
                     ),
-                    _primaryControls(),
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: _utilityControls(),
+                  ),
+                ],
+              )
+            else
+              Row(children: [_primary(), const Spacer(), _utilities()]),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+Duration _boundedSeek(PlaybackTransportState state, int seconds) {
+  final target = state.position + Duration(seconds: seconds);
+  if (target < Duration.zero) return Duration.zero;
+  if (state.duration > Duration.zero && target > state.duration) {
+    return state.duration;
+  }
+  return target;
+}
+
+class _TracksLedger extends StatelessWidget {
+  const _TracksLedger({
+    required this.scope,
+    required this.firstFocus,
+    required this.doneFocus,
+    required this.state,
+    required this.busy,
+    required this.message,
+    required this.onDone,
+    required this.onAudio,
+    required this.onSubtitle,
+  });
+  final FocusScopeNode scope;
+  final FocusNode firstFocus, doneFocus;
+  final PlaybackTransportState state;
+  final bool busy;
+  final String? message;
+  final VoidCallback onDone;
+  final ValueChanged<String> onAudio, onSubtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final audio = [
+      if (!state.audioTracks.any((value) => value.id == 'auto'))
+        const PlaybackMediaTrack(id: 'auto', label: 'Automatic'),
+      ...state.audioTracks,
+    ];
+    final subtitles = [
+      if (!state.subtitleTracks.any((value) => value.id == 'no'))
+        const PlaybackMediaTrack(id: 'no', label: 'Off'),
+      ...state.subtitleTracks,
+    ];
+    return ColoredBox(
+      color: const Color(0xC9111212),
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: FocusScope(
+          node: scope,
+          child: FocusTraversalGroup(
+            policy: WidgetOrderTraversalPolicy(),
+            child: Container(
+              key: const ValueKey('player-tracks-ledger'),
+              width: double.infinity,
+              constraints: const BoxConstraints(maxHeight: 420),
+              padding: const EdgeInsets.all(18),
+              decoration: const BoxDecoration(
+                color: _surface,
+                border: Border(top: BorderSide(color: _line)),
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Tracks',
+                            style: TextStyle(
+                              color: _warmWhite,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        _TextAction(
+                          focusNode: doneFocus,
+                          label: 'Done',
+                          onPressed: onDone,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('Audio', style: _ledgerHeading),
+                    if (state.audioTracks.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: Text(
+                          'No alternate audio tracks',
+                          style: _ledgerEmpty,
+                        ),
                       ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (var index = 0; index < audio.length; index++)
+                          _TextAction(
+                            focusNode: index == 0 ? firstFocus : null,
+                            label: _trackLabel(audio[index]),
+                            primary:
+                                audio[index].id == state.selectedAudioTrackId,
+                            onPressed: busy
+                                ? null
+                                : () => onAudio(audio[index].id),
+                          ),
+                      ],
                     ),
+                    const SizedBox(height: 18),
+                    const Text('Subtitles', style: _ledgerHeading),
+                    if (state.subtitleTracks.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: Text(
+                          'No subtitle tracks reported',
+                          style: _ledgerEmpty,
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final track in subtitles)
+                          _TextAction(
+                            label: _trackLabel(track),
+                            primary:
+                                track.id == state.selectedSubtitleTrackId ||
+                                (track.id == 'no' &&
+                                    state.selectedSubtitleTrackId == null),
+                            onPressed: busy ? null : () => onSubtitle(track.id),
+                          ),
+                      ],
+                    ),
+                    if (message != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        message!,
+                        key: const ValueKey('player-track-message'),
+                        style: _ledgerEmpty,
+                      ),
+                    ],
                   ],
-                )
-              else
-                Row(
-                  children: [
-                    _primaryControls(),
-                    const Spacer(),
-                    _utilityControls(),
-                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+const _ledgerHeading = TextStyle(
+  color: _warmWhite,
+  fontSize: 14,
+  fontWeight: FontWeight.w700,
+);
+const _ledgerEmpty = TextStyle(color: _quietText, fontSize: 13);
+
+String _trackLabel(PlaybackMediaTrack track) =>
+    track.language == null || track.language == track.label
+    ? track.label
+    : '${track.label} · ${track.language}';
+
+class _FailureDeck extends StatelessWidget {
+  const _FailureDeck({
+    required this.failure,
+    required this.handoff,
+    required this.attempts,
+    required this.detailsVisible,
+    required this.primaryFocus,
+    required this.backFocus,
+    required this.detailsFocus,
+    required this.variants,
+    required this.message,
+    required this.onDetails,
+    required this.onPrimary,
+    required this.onBack,
+    required this.onVariant,
+    required this.onDown,
+  });
+  final PlaybackSessionFailure failure;
+  final PlaybackHandoff handoff;
+  final int attempts;
+  final bool detailsVisible;
+  final FocusNode primaryFocus, backFocus, detailsFocus;
+  final List<PlaybackVariantCandidate> variants;
+  final String? message;
+  final VoidCallback onDetails, onPrimary, onBack, onDown;
+  final ValueChanged<PlaybackVariantCandidate> onVariant;
+
+  String get failureMessage => switch (failure) {
+    PlaybackSessionFailure.credentialsUnavailable =>
+      'This source needs its saved account details restored in Settings.',
+    PlaybackSessionFailure.unavailable => 'Playback is unavailable right now.',
+    PlaybackSessionFailure.timedOut => 'Playback did not start in time.',
+  };
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    top: false,
+    child: Container(
+      key: const ValueKey('player-failure-deck'),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+      decoration: const BoxDecoration(
+        color: _surface,
+        border: Border(top: BorderSide(color: _line)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            failureMessage,
+            style: const TextStyle(
+              color: _warmWhite,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _TextAction(
+                key: const ValueKey('player-recovery-primary'),
+                focusRingKey: const ValueKey(
+                  'player-recovery-primary-focus-ring',
+                ),
+                focusNode: primaryFocus,
+                primary: true,
+                label: failure == PlaybackSessionFailure.credentialsUnavailable
+                    ? 'Open Settings'
+                    : 'Retry',
+                onPressed: onPrimary,
+                onDown: onDown,
+                onLeft: detailsFocus.requestFocus,
+                onRight: backFocus.requestFocus,
+              ),
+              _TextAction(
+                key: const ValueKey('player-recovery-back'),
+                focusRingKey: const ValueKey('player-recovery-back-focus-ring'),
+                focusNode: backFocus,
+                label: 'Back',
+                onPressed: onBack,
+                onDown: onDown,
+                onLeft: primaryFocus.requestFocus,
+                onRight: detailsFocus.requestFocus,
+              ),
+              _TextAction(
+                key: const ValueKey('player-recovery-details'),
+                focusRingKey: const ValueKey(
+                  'player-recovery-details-focus-ring',
+                ),
+                focusNode: detailsFocus,
+                label: detailsVisible
+                    ? 'Hide technical details'
+                    : 'Technical details',
+                onPressed: onDetails,
+                onDown: onDown,
+                onLeft: backFocus.requestFocus,
+                onRight: primaryFocus.requestFocus,
+              ),
+              for (final variant in variants)
+                _TextAction(
+                  label: 'Try ${variant.label}',
+                  onPressed: () => onVariant(variant),
+                  onDown: onDown,
                 ),
             ],
           ),
-        ),
-      );
-    },
+          if (message != null) ...[
+            const SizedBox(height: 10),
+            Text(message!, style: _ledgerEmpty),
+          ],
+          if (detailsVisible)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                'Category: ${failure.name}\nMedia: ${handoff.mediaKind.name}\nAttempts: $attempts\nLocal time: ${_localTime()}',
+                key: const ValueKey('player-technical-details'),
+                style: const TextStyle(
+                  color: _quietText,
+                  fontSize: 13,
+                  height: 1.4,
+                ),
+              ),
+            ),
+        ],
+      ),
+    ),
   );
 }
 
@@ -1041,85 +1324,83 @@ class _Timeline extends StatefulWidget {
   });
   final FocusNode focusNode;
   final Duration position, duration;
-  final ValueChanged<double> onChanged;
+  final ValueChanged<Duration> onChanged;
   final VoidCallback onDown;
   @override
   State<_Timeline> createState() => _TimelineState();
 }
 
 class _TimelineState extends State<_Timeline> {
-  bool _focused = false;
+  bool focused = false;
   @override
   Widget build(BuildContext context) {
     final maximum = widget.duration.inMilliseconds.toDouble();
     final value = maximum <= 0
         ? 0.0
         : widget.position.inMilliseconds.clamp(0, maximum).toDouble();
-    return KeyedSubtree(
-      key: const ValueKey('player-timeline'),
-      child: Focus(
-        focusNode: widget.focusNode,
-        onFocusChange: (value) => setState(() => _focused = value),
-        onKeyEvent: (_, event) {
-          if (event is! KeyDownEvent) return KeyEventResult.ignored;
-          if (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
-              event.logicalKey == LogicalKeyboardKey.arrowRight) {
-            final delta = event.logicalKey == LogicalKeyboardKey.arrowLeft
-                ? -10000
-                : 10000;
-            widget.onChanged((value + delta).clamp(0, maximum));
-            return KeyEventResult.handled;
-          }
-          if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-            widget.onDown();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: Semantics(
-          slider: true,
-          label: 'Playback timeline',
-          value: '${_time(widget.position)} of ${_time(widget.duration)}',
-          child: Container(
-            height: 28,
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: _focused ? _amber : _line,
-                width: _focused ? 2 : 1,
+    return Focus(
+      focusNode: widget.focusNode,
+      onFocusChange: (value) => setState(() => focused = value),
+      onKeyEvent: (_, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+            event.logicalKey == LogicalKeyboardKey.arrowRight) {
+          final delta = event.logicalKey == LogicalKeyboardKey.arrowLeft
+              ? -10000
+              : 10000;
+          widget.onChanged(
+            Duration(milliseconds: (value + delta).clamp(0, maximum).round()),
+          );
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+          widget.onDown();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Semantics(
+        slider: true,
+        label: 'Playback timeline',
+        value: '${_time(widget.position)} of ${_time(widget.duration)}',
+        child: Container(
+          key: const ValueKey('player-timeline'),
+          height: 28,
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: focused ? _amber : _line,
+              width: focused ? 2 : 1,
+            ),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 58,
+                child: Center(
+                  child: Text(_time(widget.position), style: _ledgerEmpty),
+                ),
               ),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 58,
-                  child: Center(
-                    child: Text(
-                      _time(widget.position),
-                      style: const TextStyle(color: _quietText, fontSize: 12),
-                    ),
-                  ),
+              Expanded(
+                child: Slider(
+                  value: value,
+                  max: maximum <= 0 ? 1 : maximum,
+                  onChanged: maximum <= 0
+                      ? null
+                      : (value) => widget.onChanged(
+                          Duration(milliseconds: value.round()),
+                        ),
+                  activeColor: _amber,
+                  inactiveColor: _raised,
                 ),
-                Expanded(
-                  child: Slider(
-                    value: value,
-                    max: maximum <= 0 ? 1 : maximum,
-                    onChanged: maximum <= 0 ? null : widget.onChanged,
-                    activeColor: _amber,
-                    inactiveColor: _raised,
-                  ),
+              ),
+              SizedBox(
+                width: 58,
+                child: Center(
+                  child: Text(_time(widget.duration), style: _ledgerEmpty),
                 ),
-                SizedBox(
-                  width: 58,
-                  child: Center(
-                    child: Text(
-                      _time(widget.duration),
-                      style: const TextStyle(color: _quietText, fontSize: 12),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1143,20 +1424,19 @@ class _Volume extends StatefulWidget {
 }
 
 class _VolumeState extends State<_Volume> {
-  bool _focused = false;
+  bool focused = false;
   @override
   Widget build(BuildContext context) => Focus(
     focusNode: widget.focusNode,
-    onFocusChange: (value) => setState(() => _focused = value),
+    onFocusChange: (value) => setState(() => focused = value),
     onKeyEvent: (_, event) {
-      if (event is KeyDownEvent &&
-          event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      if (event is! KeyDownEvent) return KeyEventResult.ignored;
+      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
         widget.onDown();
         return KeyEventResult.handled;
       }
-      if (event is KeyDownEvent &&
-          (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
-              event.logicalKey == LogicalKeyboardKey.arrowRight)) {
+      if (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+          event.logicalKey == LogicalKeyboardKey.arrowRight) {
         widget.onChanged(
           (widget.value +
                   (event.logicalKey == LogicalKeyboardKey.arrowLeft ? -5 : 5))
@@ -1174,8 +1454,8 @@ class _VolumeState extends State<_Volume> {
         height: 44,
         decoration: BoxDecoration(
           border: Border.all(
-            color: _focused ? _amber : _line,
-            width: _focused ? 2 : 1,
+            color: focused ? _amber : _line,
+            width: focused ? 2 : 1,
           ),
           borderRadius: BorderRadius.circular(6),
         ),
@@ -1205,18 +1485,17 @@ class _DeckAction extends StatefulWidget {
   final String label;
   final VoidCallback onPressed;
   final FocusNode? focusNode;
-  final VoidCallback? onBack;
-  final VoidCallback? onDown;
+  final VoidCallback? onBack, onDown;
   @override
   State<_DeckAction> createState() => _DeckActionState();
 }
 
 class _DeckActionState extends State<_DeckAction> {
-  bool _focused = false;
+  bool focused = false;
   @override
   Widget build(BuildContext context) => Focus(
     focusNode: widget.focusNode,
-    onFocusChange: (value) => setState(() => _focused = value),
+    onFocusChange: (value) => setState(() => focused = value),
     onKeyEvent: (_, event) {
       if (event is! KeyDownEvent) return KeyEventResult.ignored;
       if ((event.logicalKey == LogicalKeyboardKey.escape ||
@@ -1237,266 +1516,123 @@ class _DeckActionState extends State<_DeckAction> {
       }
       return KeyEventResult.ignored;
     },
-    child: Semantics(
-      button: true,
-      label: widget.label,
-      child: GestureDetector(
-        onTap: () {
-          widget.focusNode?.requestFocus();
-          widget.onPressed();
-        },
-        child: Container(
-          width: 44,
-          height: 44,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: _focused ? _raised : Colors.transparent,
-            border: Border.all(
-              color: _focused ? _amber : _line,
-              width: _focused ? 2 : 1,
+    child: Tooltip(
+      message: widget.label,
+      child: Semantics(
+        button: true,
+        label: widget.label,
+        child: GestureDetector(
+          onTap: () {
+            widget.focusNode?.requestFocus();
+            widget.onPressed();
+          },
+          child: Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: focused ? _raised : Colors.transparent,
+              border: Border.all(
+                color: focused ? _amber : _line,
+                width: focused ? 2 : 1,
+              ),
+              borderRadius: BorderRadius.circular(6),
             ),
-            borderRadius: BorderRadius.circular(6),
+            child: Icon(widget.icon, color: _warmWhite, size: 22),
           ),
-          child: Icon(widget.icon, color: _warmWhite, size: 22),
         ),
       ),
     ),
   );
 }
 
-class _FailureDeck extends StatelessWidget {
-  const _FailureDeck({
-    required this.failure,
-    required this.handoff,
-    required this.attempts,
-    required this.detailsVisible,
-    required this.primaryFocus,
-    required this.backFocus,
-    required this.detailsFocus,
-    required this.onToggleDetails,
-    required this.onPrimary,
-    required this.onBack,
-    required this.onDownToStage,
-  });
-  final PlaybackFailureKind failure;
-  final PlaybackHandoff handoff;
-  final int attempts;
-  final bool detailsVisible;
-  final FocusNode primaryFocus, backFocus, detailsFocus;
-  final VoidCallback onToggleDetails;
-  final VoidCallback onPrimary;
-  final VoidCallback onBack;
-  final VoidCallback onDownToStage;
-  @override
-  Widget build(BuildContext context) => SafeArea(
-    top: false,
-    child: Container(
-      key: const ValueKey('player-failure-deck'),
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
-      decoration: const BoxDecoration(
-        color: _surface,
-        border: Border(top: BorderSide(color: _line)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            failure.message,
-            style: const TextStyle(
-              color: _warmWhite,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 14),
-          FocusTraversalGroup(
-            policy: WidgetOrderTraversalPolicy(),
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                _RecoveryAction(
-                  key: const ValueKey('player-recovery-primary'),
-                  focusRingKey: const ValueKey(
-                    'player-recovery-primary-focus-ring',
-                  ),
-                  focusNode: primaryFocus,
-                  label: failure == PlaybackFailureKind.credentialsUnavailable
-                      ? 'Open Settings'
-                      : 'Try again',
-                  primary: true,
-                  onPressed: onPrimary,
-                  onLeft: detailsFocus.requestFocus,
-                  onRight: backFocus.requestFocus,
-                  onDown: onDownToStage,
-                  onBack: onBack,
-                ),
-                _RecoveryAction(
-                  key: const ValueKey('player-recovery-back'),
-                  focusRingKey: const ValueKey(
-                    'player-recovery-back-focus-ring',
-                  ),
-                  focusNode: backFocus,
-                  label: 'Back',
-                  onPressed: onBack,
-                  onLeft: primaryFocus.requestFocus,
-                  onRight: detailsFocus.requestFocus,
-                  onDown: onDownToStage,
-                  onBack: onBack,
-                ),
-                _RecoveryAction(
-                  key: const ValueKey('player-recovery-details'),
-                  focusRingKey: const ValueKey(
-                    'player-recovery-details-focus-ring',
-                  ),
-                  focusNode: detailsFocus,
-                  label: detailsVisible
-                      ? 'Hide technical details'
-                      : 'Technical details',
-                  subordinate: true,
-                  onPressed: onToggleDetails,
-                  onLeft: backFocus.requestFocus,
-                  onRight: primaryFocus.requestFocus,
-                  onDown: onDownToStage,
-                  onBack: onBack,
-                ),
-              ],
-            ),
-          ),
-          if (detailsVisible)
-            Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Text(
-                'Category: ${failure.name}\nMedia: ${handoff is LivePlaybackHandoff || handoff is M3uLivePlaybackHandoff
-                    ? 'Live'
-                    : handoff is MoviePlaybackHandoff
-                    ? 'Movie'
-                    : 'Episode'}\nAttempts: $attempts\nLocal time: ${_localTime()}',
-                style: const TextStyle(
-                  color: _quietText,
-                  fontSize: 13,
-                  height: 1.4,
-                ),
-              ),
-            ),
-        ],
-      ),
-    ),
-  );
-}
-
-class _RecoveryAction extends StatefulWidget {
-  const _RecoveryAction({
+class _TextAction extends StatefulWidget {
+  const _TextAction({
     super.key,
-    this.focusRingKey,
-    required this.focusNode,
     required this.label,
     required this.onPressed,
-    required this.onLeft,
-    required this.onRight,
-    required this.onDown,
-    required this.onBack,
+    this.focusNode,
     this.primary = false,
-    this.subordinate = false,
+    this.onDown,
+    this.focusRingKey,
+    this.onLeft,
+    this.onRight,
   });
-  final Key? focusRingKey;
-  final FocusNode focusNode;
   final String label;
-  final VoidCallback onPressed;
-  final VoidCallback onLeft, onRight, onDown, onBack;
+  final VoidCallback? onPressed;
+  final FocusNode? focusNode;
   final bool primary;
-  final bool subordinate;
-
+  final VoidCallback? onDown;
+  final Key? focusRingKey;
+  final VoidCallback? onLeft, onRight;
   @override
-  State<_RecoveryAction> createState() => _RecoveryActionState();
+  State<_TextAction> createState() => _TextActionState();
 }
 
-class _RecoveryActionState extends State<_RecoveryAction> {
-  bool _focused = false;
-
+class _TextActionState extends State<_TextAction> {
+  bool focused = false;
   @override
   Widget build(BuildContext context) => Focus(
     focusNode: widget.focusNode,
-    onFocusChange: (value) => setState(() => _focused = value),
+    canRequestFocus: widget.onPressed != null,
+    onFocusChange: (value) => setState(() => focused = value),
     onKeyEvent: (_, event) {
       if (event is! KeyDownEvent) return KeyEventResult.ignored;
-      if (event.logicalKey == LogicalKeyboardKey.escape ||
-          event.logicalKey == LogicalKeyboardKey.browserBack) {
-        widget.onBack();
+      if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
+          widget.onDown != null) {
+        widget.onDown!();
         return KeyEventResult.handled;
       }
-      if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-        widget.onLeft();
+      if (event.logicalKey == LogicalKeyboardKey.arrowLeft &&
+          widget.onLeft != null) {
+        widget.onLeft!();
         return KeyEventResult.handled;
       }
-      if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-        widget.onRight();
+      if (event.logicalKey == LogicalKeyboardKey.arrowRight &&
+          widget.onRight != null) {
+        widget.onRight!();
         return KeyEventResult.handled;
       }
-      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-        widget.onDown();
-        return KeyEventResult.handled;
-      }
-      if (event.logicalKey == LogicalKeyboardKey.enter ||
-          event.logicalKey == LogicalKeyboardKey.select) {
-        widget.onPressed();
+      if ((event.logicalKey == LogicalKeyboardKey.enter ||
+              event.logicalKey == LogicalKeyboardKey.select) &&
+          widget.onPressed != null) {
+        widget.onPressed!();
         return KeyEventResult.handled;
       }
       return KeyEventResult.ignored;
     },
     child: Semantics(
       button: true,
+      enabled: widget.onPressed != null,
       label: widget.label,
       excludeSemantics: true,
-      child: GestureDetector(
-        onTap: () {
-          widget.focusNode.requestFocus();
-          widget.onPressed();
-        },
-        child: DecoratedBox(
-          key: widget.focusRingKey,
-          decoration: BoxDecoration(
-            color: _surface,
-            border: Border.all(
-              color: _focused ? _amber : Colors.transparent,
-              width: 2,
-            ),
-            borderRadius: BorderRadius.circular(6),
+      child: DecoratedBox(
+        key: widget.focusRingKey,
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: focused ? _amber : Colors.transparent,
+            width: 2,
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(2),
-            child: Container(
-              constraints: BoxConstraints(
-                minWidth: widget.subordinate ? 142 : 106,
-                minHeight: 40,
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: widget.subordinate
-                    ? Colors.transparent
-                    : widget.primary
-                    ? _amber
-                    : _raised,
-                border: Border.all(
-                  color: widget.subordinate ? Colors.transparent : _line,
-                ),
-                borderRadius: BorderRadius.circular(3),
-              ),
-              child: Text(
-                widget.label,
-                style: TextStyle(
-                  color: widget.subordinate
-                      ? (_focused ? _warmWhite : _quietText)
-                      : widget.primary
-                      ? _amberInk
-                      : _warmWhite,
-                  fontSize: 14,
-                  fontWeight: widget.subordinate
-                      ? FontWeight.w600
-                      : FontWeight.w700,
-                ),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: GestureDetector(
+          onTap: widget.onPressed,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 40, minWidth: 92),
+            margin: const EdgeInsets.all(2),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: widget.primary ? _amber : _raised,
+              border: Border.all(color: _line),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                color: widget.primary ? _amberInk : _warmWhite,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ),

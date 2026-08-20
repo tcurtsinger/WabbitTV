@@ -17,9 +17,14 @@ import 'package:media_kit/media_kit.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'src/app_shell.dart';
+import 'src/features/artwork/artwork_loader.dart';
 import 'src/features/browse/basic_browse_screen.dart';
 import 'src/features/browse/catalog_scope_controller.dart';
+import 'src/features/home/home_screen.dart';
+import 'src/features/guide/guide_data.dart';
+import 'src/features/library/my_library_screen.dart';
 import 'src/features/search/local_search_screen.dart';
+import 'src/features/settings/startup_preferences_controller.dart';
 import 'src/features/sources/source_catalog_database.dart';
 import 'src/features/sources/source_editor.dart';
 import 'src/home_fixture_mode.dart';
@@ -107,12 +112,17 @@ class WabbitApp extends StatelessWidget {
     this.scopedBrowseData,
     this.catalogScopeController,
     this.localSearchData,
+    this.homeController,
+    this.artworkProvider,
+    this.myLibraryData,
     this.playbackSourceResolver,
     this.initialDestination,
     this.credentialStore,
     this.playbackTransportFactory,
     this.fullscreenPort,
     this.m3uFilePicker,
+    this.startupPreferencesController,
+    this.guideData,
   });
 
   final HomeFixtureMode fixtureMode;
@@ -122,6 +132,9 @@ class WabbitApp extends StatelessWidget {
   final ScopedBrowseData? scopedBrowseData;
   final CatalogScopeController? catalogScopeController;
   final LocalSearchData? localSearchData;
+  final HomeController? homeController;
+  final ArtworkProvider? artworkProvider;
+  final MyLibraryData? myLibraryData;
   final FutureOr<PersistedSource?> Function(String sourceId)?
   playbackSourceResolver;
   final ShellDestination? initialDestination;
@@ -129,6 +142,8 @@ class WabbitApp extends StatelessWidget {
   final PlaybackTransportFactory? playbackTransportFactory;
   final FullscreenPort? fullscreenPort;
   final M3uFilePicker? m3uFilePicker;
+  final StartupPreferencesController? startupPreferencesController;
+  final GuideDataPort? guideData;
 
   @override
   Widget build(BuildContext context) {
@@ -156,12 +171,17 @@ class WabbitApp extends StatelessWidget {
         scopedBrowseData: scopedBrowseData,
         catalogScopeController: catalogScopeController,
         localSearchData: localSearchData,
+        homeController: homeController,
+        artworkProvider: artworkProvider,
+        myLibraryData: myLibraryData,
         playbackSourceResolver: playbackSourceResolver,
         initialDestination: initialDestination,
         credentialStore: credentialStore,
         playbackTransportFactory: playbackTransportFactory,
         fullscreenPort: fullscreenPort,
         m3uFilePicker: m3uFilePicker,
+        startupPreferencesController: startupPreferencesController,
+        guideData: guideData,
       ),
     );
   }

@@ -1,0 +1,22 @@
+{
+  "status": "Confirmed",
+  "approved": true,
+  "phase": "3 \u2014 App Shell and Browsing Experience",
+  "surface": "My Library",
+  "composition": "A \u2014 Direct directory + ledger",
+  "mode": "Operate",
+  "viewport": {
+    "width": 1265,
+    "height": 713
+  },
+  "syntheticEvidence": true,
+  "generatedBy": "built-in image_gen",
+  "references": [
+    ".impeccable/mocks/quiet-broadcast-basic-browse-hybrid-approved.png",
+    ".impeccable/mocks/quiet-broadcast-home-b-focused-shelf.png",
+    ".impeccable/mocks/quiet-broadcast-source-management-a-directory-detail.png"
+  ],
+  "prompt": "Use case: ui-mockup\nAsset type: high-fidelity native Windows Flutter app composition, option A for Wabbit TV My Library\nPrimary request: Design the complete first viewport of the Wabbit TV \"My Library\" destination at exactly a 1265 by 713 landscape window. This is an Operate surface, not marketing.\nInput images: use the three referenced Wabbit TV approved comps only as visual-system references for Quiet Broadcast palette, Windows title frame, collapsed left navigation rail, typography, compact geometry, line weights, and amber focus. Do not copy their content.\nStructure in exact order: native black Windows title bar with small Wabbit TV name; collapsed 72px rail with seven monochrome destination icons and My Library selected; content header \"My Library\" with quiet subtitle \"Your saved library\"; below, a 270px left directory and a dominant right mixed-item ledger.\nOption A topology: left directory is labeled \"Library\" and lists \"Favorites\" selected with count 12, then \"Living Room\", \"Weekend Movies\", \"News & Sports\", and \"Kids\" with small counts. Right header says \"Favorites\" and \"12 items\". The ledger is dense with eight 64px rows, each row one focus target with a fixed 50x36 provider-art thumbnail, real-looking but explicitly synthetic titles, a small LIVE/MOVIE/SERIES label, and quiet source provenance. One row has a precise 2px amber focus edge. No create/edit/add/remove buttons in this Phase 3 read-only surface.\nStyle/medium: flat matte product UI mockup, crisp Segoe UI-like typography, graphite #111212, raised #222321, warm white, quiet gray, signal amber #FFB347, compact 6-8px corners, 1px separators, no pills.\nComposition/framing: straight-on full-window screenshot, 1265x713 landscape, all edges visible, balanced television-distance readability.\nConstraints: exact visible text must be spelled correctly; titles and art are synthetic compositional evidence. Preserve dense directory-not-storefront presentation. No poster grid, hero, recommendations, promotional copy, gradients, glass, neon glow, ambient shadows, floating cards, rabbit illustration, provider logos, credentials, URLs, badges beyond media kind, or mobile layout.",
+  "approvedAt": "2026-08-18",
+  "approval": "User selected A"
+}

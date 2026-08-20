@@ -70,3 +70,7 @@ On 2026-08-17, the ordinary maintainer-local production run rendered Live, Movie
 ## Confirmation record
 
 The user approved the **Compact Thumbnail Directory hybrid** on 2026-08-16: C's small artwork-forward television feel combined with B's compact text-ledger density, inside the shared two-pane Source Directory List. The user also approved `All <kind>` as the default entry category and the narrow-window Categories overlay. This brief is limited to Phase 1 functional browse; later visual redesign remains deferred.
+
+## Phase 6 confirmed extension — not yet implemented
+
+The user confirmed `docs/shapes/12-phase6-xtream-live-guide-startup.md` on 2026-08-19. That later Shape permits existing compact Live rows to add one quiet Now/Next line only from exact locally cached Xtream schedule data. It preserves the title-led directory, bounded mounted window, source/category visibility rules, and one-row/one-focus-target behavior recorded here. Confirmation is not implementation or provider evidence.

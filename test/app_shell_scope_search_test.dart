@@ -35,7 +35,12 @@ void main() {
 
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
-    await tester.tapAt(const Offset(40, 318));
+    final searchDestination = tester.widget<FocusableActionDetector>(
+      find.byKey(const ValueKey('shell-destination-search')),
+    );
+    searchDestination.focusNode!.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const ValueKey('search-field')), 'news');
     await tester.pump(const Duration(milliseconds: 220));
@@ -70,7 +75,7 @@ void main() {
     expect(handoff?.sourceId, 'source-b');
   });
 
-  testWidgets('production PlayerScreen receives the exact-source resolver', (
+  testWidgets('production manager resolves the exact selected source', (
     tester,
   ) async {
     final scope = CatalogScopeController(port: _ScopePort());
@@ -96,11 +101,15 @@ void main() {
     await tester.pump(const Duration(milliseconds: 220));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('search-item-live-b')));
-    await tester.pump();
+    await _pumpUntil(
+      tester,
+      () => find.byType(PlayerScreen).evaluate().isNotEmpty,
+    );
 
     final player = tester.widget<PlayerScreen>(find.byType(PlayerScreen));
-    expect(player.sourceResolver, isNotNull);
-    expect((await player.sourceResolver!('source-b'))?.id, 'source-b');
+    expect(player.manager, isNotNull);
+    expect(player.sessionId, isNotNull);
+    expect(player.sourceResolver, isNull);
     expect(resolverCalls, contains('source-b'));
     expect(transport.openedUri?.host, 'selected.example');
   });
@@ -129,11 +138,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 220));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('search-item-live-b')));
-    await tester.pump();
-    await tester.pump();
+    await _pumpUntil(tester, () => find.text('Retry').evaluate().isNotEmpty);
 
     expect(transportCalls, 0);
-    expect(find.text('Open Settings'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Open Settings'), findsNothing);
   });
 
   testWidgets('Search Escape opens rail, then restores its focused row', (
@@ -189,6 +198,16 @@ void main() {
     expect(scope.scope.isAll, isTrue);
     expect(port.savedScopes.last.isAll, isTrue);
   });
+}
+
+Future<void> _pumpUntil(WidgetTester tester, bool Function() condition) async {
+  for (var index = 0; index < 40 && !condition(); index++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 2)),
+    );
+    await tester.pump(const Duration(milliseconds: 10));
+  }
+  await tester.pumpAndSettle();
 }
 
 Widget _shell({

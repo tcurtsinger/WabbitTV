@@ -1,0 +1,20 @@
+{
+  "status": "Not selected",
+  "approved": false,
+  "phase": "3 \u2014 App Shell and Browsing Experience",
+  "surface": "My Library",
+  "composition": "C \u2014 Directory + ledger + selected context",
+  "mode": "Operate",
+  "viewport": {
+    "width": 1265,
+    "height": 713
+  },
+  "syntheticEvidence": true,
+  "generatedBy": "built-in image_gen",
+  "references": [
+    ".impeccable/mocks/quiet-broadcast-basic-browse-hybrid-approved.png",
+    ".impeccable/mocks/quiet-broadcast-home-b-focused-shelf.png",
+    ".impeccable/mocks/quiet-broadcast-source-management-a-directory-detail.png"
+  ],
+  "prompt": "Use case: ui-mockup\nAsset type: high-fidelity native Windows Flutter app composition, option C for Wabbit TV My Library\nPrimary request: Design the complete first viewport of Wabbit TV \"My Library\" at exactly a 1265 by 713 landscape window. This is an Operate surface.\nInput images: use the three approved Wabbit TV comps only as references for the established Quiet Broadcast world: Windows title frame, collapsed left rail, graphite surfaces, warm-white hierarchy, quiet metadata, one signal-amber focus edge, compact square geometry.\nStructure: native black Wabbit TV title bar; collapsed 72px rail with all seven destinations and My Library selected; quiet header \"My Library\" and subtitle \"Your saved library\". Beneath, use a three-plane directory experience: a compact 220px Library directory on the left; a dominant 520px mixed-item ledger in the center; and a restrained 250px selected-item context pane on the right.\nOption C topology: left lists Favorites selected, Living Room, Weekend Movies, News & Sports, Kids with counts. Center header says \"Favorites \u00b7 12 items\" and shows seven dense mixed rows with 50x36 artwork, title, media kind, and source. One center row is focused with exact 2px amber edge. Right context pane reflects that selected row only: one wider artwork crop, title \"Midnight Crossing\", label \"MOVIE\", source \"Weekend playlist\", and quiet instruction \"Press Select to open\". No synopsis, recommendations, extra metadata, or action buttons.\nStyle/medium: flat matte native product UI screenshot, crisp Segoe UI-like type, graphite #111212, rail #171818, surface #191A1A, raised #222321, line #343534, warm white, quiet gray, amber #FFB347. 6-8px corners, 1px separators, no pill controls.\nComposition/framing: straight-on full-window screenshot, exact landscape viewport, all regions visible and dense, selected context helps TV-distance recognition without becoming a hero.\nConstraints: text spelled correctly; all titles/art synthetic evidence. No poster grid, storefront, shelves, promotions, create/edit/add/remove actions, gradients, glass, neon, glow, broad shadows, floating cards, rabbit illustration, provider logos, credentials, URLs, or mobile layout."
+}

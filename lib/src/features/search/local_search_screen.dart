@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import '../artwork/artwork_loader.dart';
+import '../artwork/source_artwork.dart';
 import '../browse/catalog_scope_controller.dart';
 import '../browse/minimal_continuations.dart';
 import '../browse/playback_handoff.dart';
@@ -19,6 +21,40 @@ const _line = Color(0xFF343534);
 const _warmWhite = Color(0xFFF4F0E7);
 const _quietText = Color(0xFFAAA8A2);
 const _amber = Color(0xFFFFB347);
+
+String? _catalogScopeState(CatalogScopeController controller) {
+  final selected = controller.selectedSource;
+  if (selected != null) {
+    return switch (selected.status) {
+      'refreshing' => 'Refreshing · showing saved catalog',
+      'refresh_failed' => 'Refresh failed · showing saved catalog',
+      _ => null,
+    };
+  }
+
+  final refreshing = controller.sources
+      .where((source) => source.status == 'refreshing')
+      .length;
+  final failed = controller.sources
+      .where((source) => source.status == 'refresh_failed')
+      .length;
+  final affected = refreshing + failed;
+  if (affected == 0) return null;
+  final saved = affected == 1
+      ? 'saved catalog remains available'
+      : 'saved catalogs remain available';
+  if (refreshing > 0 && failed > 0) {
+    final refreshingSources =
+        '$refreshing ${refreshing == 1 ? 'source' : 'sources'} refreshing';
+    final failedSources =
+        '$failed ${failed == 1 ? 'source' : 'sources'} refresh failed';
+    return '$refreshingSources · $failedSources · $saved';
+  }
+  if (refreshing > 0) {
+    return '$refreshing ${refreshing == 1 ? 'source' : 'sources'} refreshing · $saved';
+  }
+  return '$failed ${failed == 1 ? 'source' : 'sources'} refresh failed · $saved';
+}
 
 /// Typed handoff from the mixed local ledger to the shell's existing playback
 /// or continuation contracts. The item remains credential-free.
@@ -75,6 +111,9 @@ class LocalSearchSession {
   List<LibraryCatalogItem> items = const [];
   BrowseCursor? nextCursor;
   int? total;
+
+  @visibleForTesting
+  int mountedItemFocusCount = 0;
 }
 
 class LocalSearchScreen extends StatefulWidget {
@@ -88,8 +127,10 @@ class LocalSearchScreen extends StatefulWidget {
     this.data,
     this.onItemActivated,
     this.onPlaybackHandoff,
+    this.onOrganizeItem,
     this.credentialStore,
     this.seriesInfoLoader,
+    this.artworkLoader,
   });
 
   final CatalogScopeController scopeController;
@@ -100,8 +141,10 @@ class LocalSearchScreen extends StatefulWidget {
   final LocalSearchData? data;
   final SearchItemActivated? onItemActivated;
   final ValueChanged<PlaybackHandoff>? onPlaybackHandoff;
+  final ValueChanged<LibraryCatalogItem>? onOrganizeItem;
   final CredentialStore? credentialStore;
   final SeriesInfoLoader? seriesInfoLoader;
+  final ArtworkProvider? artworkLoader;
 
   @override
   State<LocalSearchScreen> createState() => _LocalSearchScreenState();
@@ -118,7 +161,7 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
   final FocusNode _pageRetryFocus = FocusNode(
     debugLabel: 'search next-page retry',
   );
-  final Map<String, FocusNode> _itemNodes = {};
+  final Map<String, FocusNode> _mountedItemNodes = {};
   Timer? _debounceTimer;
   Timer? _scopeAnnouncementTimer;
   List<LibraryCatalogItem> _items = const [];
@@ -181,9 +224,7 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
     _clearFocus.dispose();
     _errorRetryFocus.dispose();
     _pageRetryFocus.dispose();
-    for (final node in _itemNodes.values) {
-      node.dispose();
-    }
+    widget.session.mountedItemFocusCount = 0;
     widget.scopeController.removeListener(_onScopeChanged);
     super.dispose();
   }
@@ -350,6 +391,12 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
     }
   }
 
+  Future<void> _retryCatalogScope() async {
+    await widget.scopeController.initialize();
+    // A successful initialization advances the shared controller revision;
+    // [_onScopeChanged] owns the single catalog request for that revision.
+  }
+
   bool _sameScope(LibraryScope a, LibraryScope b) => a.sourceId == b.sourceId;
 
   void _rememberPosition() {
@@ -374,9 +421,9 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
     final id = widget.session.focusedItemId;
     final index = _items.indexWhere((item) => item.libraryItemId == id);
     if (!mounted || id == null || index < 0) return;
-    final node = _itemFocus(_items[index], index);
-    _focusRow(index, node);
-    if (node.context != null || attempts == 0) {
+    _focusRow(index);
+    final node = _mountedItemNodes[id];
+    if (node?.context != null || attempts == 0) {
       _restoringFocus = false;
       return;
     }
@@ -448,14 +495,17 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
     widget.initialFocus.requestFocus();
   }
 
-  FocusNode _itemFocus(LibraryCatalogItem item, int index) {
-    return _itemNodes.putIfAbsent(
-      item.libraryItemId,
-      () => FocusNode(debugLabel: 'search ${item.libraryItemId}'),
-    );
+  void _mountItemNode(String id, FocusNode node) {
+    _mountedItemNodes[id] = node;
+    widget.session.mountedItemFocusCount = _mountedItemNodes.length;
   }
 
-  void _focusRow(int index, FocusNode node) {
+  void _unmountItemNode(String id, FocusNode node) {
+    if (identical(_mountedItemNodes[id], node)) _mountedItemNodes.remove(id);
+    widget.session.mountedItemFocusCount = _mountedItemNodes.length;
+  }
+
+  void _focusRow(int index) {
     if (index < 0 || index >= _items.length) return;
     void reveal() {
       if (!mounted || !_scrollController.hasClients) return;
@@ -473,10 +523,12 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
           ),
         );
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) node.requestFocus();
+          if (mounted) {
+            _mountedItemNodes[_items[index].libraryItemId]?.requestFocus();
+          }
         });
       } else {
-        node.requestFocus();
+        _mountedItemNodes[_items[index].libraryItemId]?.requestFocus();
       }
     }
 
@@ -502,7 +554,7 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (done && _items.isNotEmpty) {
-        _focusRow(0, _itemFocus(_items.first, 0));
+        _focusRow(0);
       } else {
         widget.initialFocus.requestFocus();
       }
@@ -670,7 +722,7 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
                           onFocused: widget.onContentFocus,
                           onDown: widget.initialFocus.requestFocus,
                         ),
-                        const SizedBox(height: 22),
+                        const SizedBox(height: 10),
                         _SearchField(
                           controller: _queryController,
                           focusNode: widget.initialFocus,
@@ -730,6 +782,11 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
         _MovieSearchContinuation(:final item, :final handoff) =>
           MovieContinuation(
             title: item.title,
+            artworkLocator: item.artworkLocator,
+            artworkLoader: widget.artworkLoader,
+            onOrganize: widget.onOrganizeItem == null
+                ? null
+                : () => widget.onOrganizeItem!(item),
             onBack: _returnToSearch,
             onPlay: () {
               widget.onPlaybackHandoff?.call(handoff);
@@ -743,6 +800,11 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
         ) =>
           SeriesContinuation(
             title: item.title,
+            artworkLocator: item.artworkLocator,
+            artworkLoader: widget.artworkLoader,
+            onOrganize: widget.onOrganizeItem == null
+                ? null
+                : () => widget.onOrganizeItem!(item),
             loading: loading,
             info: info,
             failure: failure,
@@ -755,6 +817,7 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
                   title: episode.title,
                   providerItemId: episode.providerItemId,
                   extension: episode.extension,
+                  libraryItemId: item.libraryItemId,
                 ),
               );
             },
@@ -769,6 +832,18 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
       };
 
   Widget _buildBody() {
+    if (widget.scopeController.loading) return const _SearchSkeleton();
+    if (widget.scopeController.error != null &&
+        widget.scopeController.sources.isEmpty) {
+      return _SearchMessage(
+        key: const ValueKey('search-catalog-error'),
+        title: 'Catalog unavailable',
+        message: 'Could not load the local source list. Try again.',
+        actionLabel: 'Try again',
+        onPressed: _retryCatalogScope,
+        actionFocusNode: _errorRetryFocus,
+      );
+    }
     if (!_hasQuery) {
       return const _SearchMessage(
         key: ValueKey('search-empty'),
@@ -849,38 +924,26 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
                   return const _SearchRowSkeleton();
                 }
                 final item = _items[index];
-                final node = _itemFocus(item, index);
-                if (_restoringFocus &&
-                    item.libraryItemId == widget.session.focusedItemId) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) {
-                      node.requestFocus();
-                      _restoringFocus = false;
-                    }
-                  });
-                }
                 return _SearchRow(
+                  key: ValueKey('search-row-${item.libraryItemId}'),
                   item: item,
                   showSource: _scope.isAll,
-                  focusNode: node,
                   autofocus: index == 0 && !_restoringFocus,
+                  artworkLoader: widget.artworkLoader,
+                  onNodeMounted: _mountItemNode,
+                  onNodeUnmounted: _unmountItemNode,
                   onContentFocus: (focusedNode) {
+                    _restoringFocus = false;
                     widget.session.focusedItemId = item.libraryItemId;
                     widget.onContentFocus(focusedNode);
                   },
                   onLeft: widget.onOpenRail,
                   onUp: index == 0
                       ? () => widget.initialFocus.requestFocus()
-                      : () => _focusRow(
-                          index - 1,
-                          _itemFocus(_items[index - 1], index - 1),
-                        ),
+                      : () => _focusRow(index - 1),
                   onDown: () {
                     if (index + 1 < _items.length) {
-                      _focusRow(
-                        index + 1,
-                        _itemFocus(_items[index + 1], index + 1),
-                      );
+                      _focusRow(index + 1);
                     } else if (_pageError) {
                       _pageRetryFocus.requestFocus();
                     } else if (_nextCursor != null) {
@@ -888,6 +951,9 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
                     }
                   },
                   onActivate: () => _activateItem(item),
+                  onOrganize: widget.onOrganizeItem == null
+                      ? null
+                      : () => widget.onOrganizeItem!(item),
                 );
               },
             ),
@@ -948,30 +1014,65 @@ class _SearchHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: scopeController,
-    builder: (context, _) => Row(
-      children: [
-        const Expanded(
-          child: Text(
-            'Search',
-            style: TextStyle(
-              color: _warmWhite,
-              fontSize: 31,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -0.7,
+    builder: (context, _) {
+      final sourceState = _catalogScopeState(scopeController);
+      final stateHeight = (MediaQuery.textScalerOf(context).scale(13) + 5)
+          .clamp(18, 30)
+          .toDouble();
+      return Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Search',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _warmWhite,
+                    fontSize: 31,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.7,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                SizedBox(
+                  height: stateHeight,
+                  child: sourceState == null
+                      ? null
+                      : Align(
+                          alignment: Alignment.centerLeft,
+                          child: Semantics(
+                            liveRegion: true,
+                            child: Text(
+                              sourceState,
+                              key: const ValueKey('search-catalog-state'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: _quietText,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ),
+                ),
+              ],
             ),
           ),
-        ),
-        const SizedBox(width: 12),
-        _ScopeMenu(
-          key: const ValueKey('search-scope-menu'),
-          scopeController: scopeController,
-          focusNode: focusNode,
-          onFocused: onFocused,
-          compact: narrow,
-          onDown: onDown,
-        ),
-      ],
-    ),
+          const SizedBox(width: 12),
+          _ScopeMenu(
+            key: const ValueKey('search-scope-menu'),
+            scopeController: scopeController,
+            focusNode: focusNode,
+            onFocused: onFocused,
+            compact: narrow,
+            onDown: onDown,
+          ),
+        ],
+      );
+    },
   );
 }
 
@@ -1282,25 +1383,32 @@ class _TextActionState extends State<_TextAction> {
 
 class _SearchRow extends StatefulWidget {
   const _SearchRow({
+    super.key,
     required this.item,
     required this.showSource,
-    required this.focusNode,
     required this.autofocus,
+    required this.artworkLoader,
+    required this.onNodeMounted,
+    required this.onNodeUnmounted,
     required this.onContentFocus,
     required this.onLeft,
     required this.onUp,
     required this.onDown,
     required this.onActivate,
+    this.onOrganize,
   });
   final LibraryCatalogItem item;
   final bool showSource;
-  final FocusNode focusNode;
   final bool autofocus;
+  final ArtworkProvider? artworkLoader;
+  final void Function(String id, FocusNode node) onNodeMounted;
+  final void Function(String id, FocusNode node) onNodeUnmounted;
   final ValueChanged<FocusNode> onContentFocus;
   final VoidCallback onLeft;
   final VoidCallback onUp;
   final VoidCallback onDown;
   final VoidCallback onActivate;
+  final VoidCallback? onOrganize;
 
   @override
   State<_SearchRow> createState() => _SearchRowState();
@@ -1308,14 +1416,38 @@ class _SearchRow extends StatefulWidget {
 
 class _SearchRowState extends State<_SearchRow> {
   bool _focused = false;
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode(debugLabel: 'search ${widget.item.libraryItemId}');
+    widget.onNodeMounted(widget.item.libraryItemId, _focusNode);
+  }
+
+  @override
+  void didUpdateWidget(covariant _SearchRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.libraryItemId != widget.item.libraryItemId) {
+      oldWidget.onNodeUnmounted(oldWidget.item.libraryItemId, _focusNode);
+      widget.onNodeMounted(widget.item.libraryItemId, _focusNode);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.onNodeUnmounted(widget.item.libraryItemId, _focusNode);
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => Focus(
-    focusNode: widget.focusNode,
+    focusNode: _focusNode,
     autofocus: widget.autofocus,
     onFocusChange: (focused) {
       setState(() => _focused = focused);
-      if (focused) widget.onContentFocus(widget.focusNode);
+      if (focused) widget.onContentFocus(_focusNode);
     },
     onKeyEvent: (_, event) {
       if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -1329,6 +1461,12 @@ class _SearchRowState extends State<_SearchRow> {
         case LogicalKeyboardKey.arrowDown:
           widget.onDown();
           return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowRight:
+        case LogicalKeyboardKey.contextMenu:
+          widget.onOrganize?.call();
+          return widget.onOrganize == null
+              ? KeyEventResult.ignored
+              : KeyEventResult.handled;
         case LogicalKeyboardKey.enter:
         case LogicalKeyboardKey.select:
           widget.onActivate();
@@ -1341,9 +1479,15 @@ class _SearchRowState extends State<_SearchRow> {
       button: true,
       label:
           '${widget.item.title}, ${widget.item.kind.label}${widget.showSource ? ', ${widget.item.sourceDisplayName}' : ''}',
+      customSemanticsActions: widget.onOrganize == null
+          ? null
+          : {
+              const CustomSemanticsAction(label: 'Organize item'):
+                  widget.onOrganize!,
+            },
       child: GestureDetector(
         onTap: () {
-          widget.focusNode.requestFocus();
+          _focusNode.requestFocus();
           widget.onActivate();
         },
         child: Container(
@@ -1360,7 +1504,14 @@ class _SearchRowState extends State<_SearchRow> {
           ),
           child: Row(
             children: [
-              _Artwork(kind: widget.item.kind, item: widget.item),
+              SourceArtwork(
+                key: ValueKey('search-artwork-${widget.item.libraryItemId}'),
+                locator: widget.item.artworkLocator,
+                kind: widget.item.kind,
+                loader: widget.artworkLoader,
+                focused: _focused,
+                loadWhenVisible: true,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -1395,37 +1546,31 @@ class _SearchRowState extends State<_SearchRow> {
                   ),
                 ),
               ],
+              if (widget.onOrganize != null) ...[
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: 'Organize',
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      _focusNode.requestFocus();
+                      widget.onOrganize!();
+                    },
+                    child: const Padding(
+                      padding: EdgeInsets.all(7),
+                      child: Icon(
+                        Icons.bookmark_add_outlined,
+                        size: 18,
+                        color: _quietText,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
       ),
-    ),
-  );
-}
-
-class _Artwork extends StatelessWidget {
-  const _Artwork({required this.kind, required this.item});
-  final SourceMediaKind kind;
-  final LibraryCatalogItem item;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    key: ValueKey('search-artwork-${item.libraryItemId}'),
-    width: 50,
-    height: 36,
-    alignment: Alignment.center,
-    decoration: BoxDecoration(
-      color: _raised,
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Icon(
-      switch (kind) {
-        SourceMediaKind.live => Icons.live_tv_outlined,
-        SourceMediaKind.movies => Icons.movie_outlined,
-        SourceMediaKind.series => Icons.tv_outlined,
-      },
-      color: _quietText,
-      size: 20,
     ),
   );
 }

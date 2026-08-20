@@ -68,6 +68,7 @@ void main() {
     final handoff = playbackHandoffForLibrary(library);
     expect(handoff, isA<MoviePlaybackHandoff>());
     expect(handoff.sourceId, 'source-b');
+    expect(handoff.libraryItemId, 'identity');
     expect((handoff as MoviePlaybackHandoff).extension, 'mkv');
   });
 
@@ -85,6 +86,7 @@ void main() {
       ),
     );
     expect(reference.providerItemId, 'series-42');
+    expect(reference.libraryItemId, 'identity');
     expect(reference.toString(), 'SeriesReference(redacted)');
   });
 }

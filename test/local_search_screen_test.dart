@@ -34,6 +34,50 @@ void main() {
     expect((border.border! as Border).top.width, 2);
   });
 
+  testWidgets(
+    'source-list initialization failure is retryable, not no matches',
+    (tester) async {
+      final data = _FakeSearchData();
+      final port = _FailingInitialScopePort();
+      final controller = CatalogScopeController(port: port);
+      addTearDown(controller.dispose);
+      final session = LocalSearchSession()..query = 'Fox';
+
+      await tester.pumpWidget(
+        _screen(data: data, controller: controller, session: session),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('search-catalog-error')),
+        findsOneWidget,
+      );
+      expect(find.text('No local matches'), findsNothing);
+      expect(data.searchCalls, 0);
+
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+
+      expect(data.searchCalls, 1);
+      expect(find.text('Café Live'), findsOneWidget);
+    },
+  );
+
+  testWidgets('source-list failure is truthful before a query is entered', (
+    tester,
+  ) async {
+    final controller = CatalogScopeController(port: _FailingInitialScopePort());
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _screen(data: _FakeSearchData(), controller: controller),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('search-catalog-error')), findsOneWidget);
+    expect(find.byKey(const ValueKey('search-empty')), findsNothing);
+  });
+
   testWidgets('physical Unicode search yields one mixed local ledger', (
     tester,
   ) async {
@@ -147,6 +191,115 @@ void main() {
     );
     expect(find.byIcon(Icons.layers_outlined), findsNothing);
     expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+  });
+
+  testWidgets(
+    'named Search scope distinguishes refreshing and failed last-good results',
+    (tester) async {
+      final port = _ScopePort()
+        .._scope = const LibraryScope.source('strong')
+        ..sources = const [
+          SourceRosterEntry(
+            id: 'strong',
+            name: 'Strong',
+            kind: 'xtream',
+            enabled: true,
+            status: 'refreshing',
+            counts: {SourceMediaKind.live: 3},
+          ),
+        ];
+      final controller = CatalogScopeController(port: port);
+      final session = LocalSearchSession()
+        ..query = 'Cafe'
+        ..scopeId = 'strong';
+
+      await tester.pumpWidget(
+        _screen(
+          data: _FakeSearchData(),
+          controller: controller,
+          session: session,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('search-item-live-1')), findsOneWidget);
+      expect(find.text('Refreshing · showing saved catalog'), findsOneWidget);
+      expect(find.byKey(const ValueKey('search-error')), findsNothing);
+
+      port.sources = const [
+        SourceRosterEntry(
+          id: 'strong',
+          name: 'Strong',
+          kind: 'xtream',
+          enabled: true,
+          status: 'refresh_failed',
+          counts: {SourceMediaKind.live: 3},
+        ),
+      ];
+      await controller.refresh();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('search-item-live-1')), findsOneWidget);
+      expect(
+        find.text('Refresh failed · showing saved catalog'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('search-error')), findsNothing);
+    },
+  );
+
+  testWidgets('All-source Search reports mixed active source status', (
+    tester,
+  ) async {
+    final port = _ScopePort()
+      ..sources = const [
+        SourceRosterEntry(
+          id: 'strong',
+          name: 'Strong',
+          kind: 'xtream',
+          enabled: true,
+          status: 'refreshing',
+          counts: {SourceMediaKind.live: 3},
+        ),
+        SourceRosterEntry(
+          id: 'backup',
+          name: 'M3U backup',
+          kind: 'm3u_url',
+          enabled: true,
+          status: 'refresh_failed',
+          counts: {SourceMediaKind.movies: 2},
+        ),
+      ];
+    final session = LocalSearchSession()..query = 'Cafe';
+
+    await tester.pumpWidget(
+      _screen(
+        data: _FakeSearchData(),
+        controller: CatalogScopeController(port: port),
+        session: session,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('search-item-live-1')), findsOneWidget);
+    expect(
+      find.text(
+        '1 source refreshing · 1 source refresh failed · saved catalogs remain available',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('search-error')), findsNothing);
+  });
+
+  testWidgets('ready Search scope omits the last-good status line', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_screen(data: _FakeSearchData()));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('search-catalog-state')), findsNothing);
+    expect(find.textContaining('showing saved catalog'), findsNothing);
+    expect(find.textContaining('remains available'), findsNothing);
   });
 
   testWidgets(
@@ -523,6 +676,29 @@ void main() {
     expect(find.byKey(const ValueKey('search-item-large-0')), findsOneWidget);
   });
 
+  testWidgets('virtual Search rows retain focus nodes only while mounted', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 520));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final session = LocalSearchSession();
+    await tester.pumpWidget(
+      _screen(data: _LargeSearchData(), session: session),
+    );
+    await tester.enterText(find.byType(TextField), 'Spider');
+    await tester.pump(const Duration(milliseconds: 220));
+    await tester.pumpAndSettle();
+
+    expect(session.mountedItemFocusCount, inInclusiveRange(1, 24));
+    await tester.drag(
+      find.byKey(const ValueKey('search-results')),
+      const Offset(0, -3200),
+    );
+    await tester.pumpAndSettle();
+
+    expect(session.mountedItemFocusCount, inInclusiveRange(1, 24));
+  });
+
   testWidgets('the first result page is usable before its total finishes', (
     tester,
   ) async {
@@ -589,6 +765,7 @@ Widget _screen({
     ),
     home: Scaffold(
       body: LocalSearchScreen(
+        key: ValueKey(data),
         scopeController: scopeController,
         initialFocus: FocusNode(debugLabel: 'search field'),
         onContentFocus: (_) {},
@@ -882,5 +1059,16 @@ class _ScopePort implements CatalogScopePort {
   Future<LibraryScope> saveCatalogScope(LibraryScope scope) async {
     _scope = scope;
     return scope;
+  }
+}
+
+class _FailingInitialScopePort extends _ScopePort {
+  var attempts = 0;
+
+  @override
+  Future<List<SourceRosterEntry>> loadSourceRoster() async {
+    attempts++;
+    if (attempts == 1) throw StateError('local roster unavailable');
+    return super.loadSourceRoster();
   }
 }

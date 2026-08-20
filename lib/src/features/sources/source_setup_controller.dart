@@ -65,6 +65,16 @@ class SourceSetupService {
   Future<PersistedSource?> loadReady() => _database.loadReadySource();
   Future<List<SourceRosterEntry>> loadSourceRoster() =>
       _database.loadSourceRoster();
+  Future<SourceConnectionAllowance?> loadSourceConnectionAllowance(
+    String sourceId,
+  ) => _database.loadSourceConnectionAllowance(sourceId);
+  Future<SourceConnectionAllowance?> setSourceConnectionLimitOverride({
+    required String sourceId,
+    required int? overrideLimit,
+  }) => _database.setSourceConnectionLimitOverride(
+    sourceId: sourceId,
+    overrideLimit: overrideLimit,
+  );
   Future<void> renameSource(String sourceId, String name) =>
       renameSourceForTest?.call(sourceId, name) ??
       _database.renameSource(sourceId, name);
@@ -575,6 +585,18 @@ class SourceSetupController extends ChangeNotifier {
 
   Future<List<SourceRosterEntry>> loadSourceRoster() async =>
       _service == null ? const [] : _service.loadSourceRoster();
+
+  Future<SourceConnectionAllowance?> loadSourceConnectionAllowance(
+    String sourceId,
+  ) async => _service?.loadSourceConnectionAllowance(sourceId);
+
+  Future<SourceConnectionAllowance?> setSourceConnectionLimitOverride({
+    required String sourceId,
+    required int? overrideLimit,
+  }) async => _service?.setSourceConnectionLimitOverride(
+    sourceId: sourceId,
+    overrideLimit: overrideLimit,
+  );
 
   /// Loads a selected source's secret values only into the in-memory editor.
   /// Nothing from this draft is written until [saveEditor] validates it.

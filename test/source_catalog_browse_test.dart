@@ -48,6 +48,10 @@ void main() {
         limit: 2,
       );
       expect(firstPage.items.map((item) => item.title), ['Apple', 'Bravo']);
+      expect(firstPage.items.map((item) => item.libraryItemId), [
+        'primary:live:uncategorized',
+        'primary:live:bravo',
+      ]);
       expect(
         firstPage.items
             .singleWhere((item) => item.title == 'Bravo')
@@ -97,6 +101,120 @@ void main() {
         kind: SourceMediaKind.movies,
       );
       expect(wrongKind.items.map((item) => item.title), ['Movie only']);
+    },
+  );
+
+  test(
+    'exact visible lookup honors source category and visibility boundaries',
+    () async {
+      final fixture = await _BrowseFixture.create();
+      addTearDown(fixture.dispose);
+      await fixture.seedSmallCatalog();
+
+      final categories = await fixture.database.browseCategories(
+        sourceId: fixture.primary.id,
+        kind: SourceMediaKind.live,
+      );
+      final alpha = categories.singleWhere(
+        (category) => category.name == 'Alpha',
+      );
+      final zebra = categories.singleWhere(
+        (category) => category.name == 'Zebra',
+      );
+      final exact = await fixture.database.loadVisibleCatalogItem(
+        sourceId: fixture.primary.id,
+        kind: SourceMediaKind.live,
+        selection: alpha.selection,
+        catalogItemId: 'primary:live:bravo',
+      );
+
+      expect(exact?.title, 'Bravo');
+      expect(exact?.libraryItemId, 'primary:live:bravo');
+      expect(
+        await fixture.database.loadVisibleCatalogItem(
+          sourceId: fixture.primary.id,
+          kind: SourceMediaKind.live,
+          selection: zebra.selection,
+          catalogItemId: 'primary:live:bravo',
+        ),
+        isNull,
+      );
+      expect(
+        await fixture.database.loadVisibleCatalogItem(
+          sourceId: fixture.primary.id,
+          kind: SourceMediaKind.live,
+          selection: const BrowseCategorySelection.all(),
+          catalogItemId: 'primary:live:offline',
+        ),
+        isNull,
+      );
+      expect(
+        await fixture.database.loadVisibleCatalogItem(
+          sourceId: fixture.secondary.id,
+          kind: SourceMediaKind.live,
+          selection: const BrowseCategorySelection.all(),
+          catalogItemId: 'secondary:live:other',
+        ),
+        isNull,
+      );
+
+      final tailWindow = await fixture.database.browseWindowAroundCatalogItem(
+        sourceId: fixture.primary.id,
+        kind: SourceMediaKind.live,
+        selection: const BrowseCategorySelection.all(),
+        catalogItemId: 'primary:live:same-2',
+        limit: 3,
+      );
+      expect(tailWindow?.items.map((item) => item.id), [
+        'primary:live:same-1',
+        'primary:live:same-2',
+      ]);
+      expect(tailWindow?.previousCursor?.id, 'primary:live:same-1');
+      expect(tailWindow?.nextCursor, isNull);
+      final head = await fixture.database.browsePageBefore(
+        sourceId: fixture.primary.id,
+        kind: SourceMediaKind.live,
+        selection: const BrowseCategorySelection.all(),
+        cursor: tailWindow!.previousCursor!,
+        limit: 2,
+      );
+      expect(head.items.map((item) => item.id), [
+        'primary:live:uncategorized',
+        'primary:live:bravo',
+      ]);
+      expect(head.previousCursor, isNull);
+
+      await fixture.database.setCatalogItemHidden(
+        sourceId: fixture.primary.id,
+        catalogItemId: 'primary:live:uncategorized',
+        hidden: true,
+      );
+      final revalidated = await fixture.database.browseWindowAroundCatalogItem(
+        sourceId: fixture.primary.id,
+        kind: SourceMediaKind.live,
+        selection: const BrowseCategorySelection.all(),
+        catalogItemId: 'primary:live:bravo',
+        limit: 3,
+      );
+      expect(
+        revalidated?.items.map((item) => item.id),
+        isNot(contains('primary:live:uncategorized')),
+      );
+
+      await fixture.database.setCatalogItemHidden(
+        sourceId: fixture.primary.id,
+        catalogItemId: 'primary:live:bravo',
+        hidden: true,
+      );
+      expect(
+        await fixture.database.loadVisibleCatalogItem(
+          sourceId: fixture.primary.id,
+          kind: SourceMediaKind.live,
+          selection: const BrowseCategorySelection.all(),
+          catalogItemId: 'primary:live:bravo',
+        ),
+        isNull,
+      );
     },
   );
 
@@ -156,6 +274,9 @@ void main() {
       await fixture.seedSmallCatalog();
       final db = sqlite3.open(await fixture.database.resolvedPath());
       try {
+        db.execute('DROP TRIGGER sources_connection_override_insert');
+        db.execute('DROP TRIGGER sources_connection_override_update');
+        db.execute('DROP TABLE playback_progress');
         db.execute('DROP INDEX catalog_items_browse_all');
         db.execute('DROP INDEX catalog_items_parent');
         db.execute('DROP INDEX catalog_items_source_group');
@@ -192,7 +313,7 @@ void main() {
           upgraded
               .select('SELECT MAX(version) AS version FROM schema_migrations')
               .single['version'],
-          7,
+          12,
         );
       } finally {
         upgraded.close();

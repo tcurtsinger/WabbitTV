@@ -1,14 +1,14 @@
 # Wabbit TV Master Plan
 
-**Status:** Planning baseline complete; Phases 0–2 complete  
-**Last updated:** 2026-08-18  
+**Status:** Planning baseline and Phases 0–6 complete; Windows V1 accepted. UI/UX polish continues as ongoing unnumbered maintenance, not Phase 7
+**Last updated:** 2026-08-19  
 **Product authority:** [`PRODUCT.md`](./PRODUCT.md)  
 **Process authority:** [`ORCHESTRATION.md`](./ORCHESTRATION.md)  
 **License:** AGPL-3.0  
 
 ## 1. Mission
 
-Build a Windows 11 daily-driver IPTV player that makes a real, very large Strong IPTV catalog feel organized, fast, and intentionally designed. Wabbit supplies no content. Its product value is user-controlled sources, unified or source-scoped browsing, favorites, ordered mixed custom groups, conservative duplicate handling, and a polished desk-and-couch viewing experience.
+Build a Windows 11 daily-driver IPTV player that makes a real, very large Strong IPTV catalog feel organized, fast, and intentionally designed. Wabbit supplies no content. Its product value is user-controlled sources, unified or source-scoped browsing, favorites, ordered mixed custom groups, and a polished desk-and-couch viewing experience.
 
 The Windows daily driver is the only active delivery target. Android TV, Fire TV, and macOS are architectural considerations, not current implementation work.
 
@@ -48,7 +48,7 @@ The primary Codex agent is the lead and manager.
 - Live, Movies, and Series are all part of the Windows daily-driver release.
 - Multiple sources can be viewed separately or in one unified library.
 - Favorites and ordered custom groups are first-class. One group may mix live channels, movies, and series and may be pinned to Home.
-- Genuine duplicates may share one library identity while retaining each playable source variant. Ambiguous items remain separate.
+- Imported source items remain separate library identities. Automatic and manual duplicate merging are not product features.
 - Required advanced viewing features: picture-in-picture and multiview.
 - First multiview release is two simultaneous live streams. A 2x2 layout is deferred until measurements justify it.
 - First PiP release is an in-app overlay that allows continued browsing. A detached always-on-top native window is deferred.
@@ -83,10 +83,9 @@ The selected scope persists locally and never changes the imported data.
 
 Home is the user's launch board, not a provider feed.
 
-1. Pinned custom groups in user-defined order
-2. Favorites when nonempty
-3. Continue Watching when nonempty
-4. Recently Watched when nonempty
+1. Pinned Favorites and custom groups in one user-defined order
+2. Continue Watching when nonempty
+3. Recently Watched when nonempty
 
 No recommendation engine, promotional hero, or automatic flood of provider category rows belongs on Home. A no-source Home teaches the single next action: add a source. If sources exist but personalized rows are still empty, Home offers direct Live, Movies, and Series entry points and teaches Favorite/Create Group without pretending to recommend content.
 
@@ -105,7 +104,7 @@ No recommendation engine, promotional hero, or automatic flood of provider categ
 - Back/Escape dismisses the topmost transient surface, then returns through navigation.
 - Closing a menu or dialog restores focus to its launcher.
 - A card is one focus target; decorative badges and artwork are not separate stops.
-- Secondary click or a context/menu action exposes Favorite, Add to Group, and source-variant actions.
+- Secondary click or a context/menu action exposes Favorite and Add to Group actions.
 - Mouse hover may add context but must never reveal the only path to an action.
 - Returning from details or playback restores prior scope, scroll position, and focus when practical.
 
@@ -134,7 +133,7 @@ References:
 1. **UI:** screens, focus, navigation, presentation state
 2. **Sources:** Xtream and M3U fetch/parse behavior
 3. **Catalog:** SQLite migrations, refresh, browse, search, and source scope
-4. **Organization:** favorites, library identities, custom groups, Home pins, and merge/unmerge
+4. **Organization:** favorites, library identities, custom groups, and Home pins
 5. **Playback:** player adapter, active sessions, stream admission, progress, PiP, and multiview
 6. **Credentials:** read/write/delete secrets by source key
 
@@ -198,20 +197,19 @@ Constraints and indexes are added only for actual queries: source/provider ident
 
 No job scheduler, outbox, refresh history service, or recovery daemon is needed.
 
-### Duplicate rule
+### Library identity rule
 
 - Start one `library_item` per imported `catalog_item`.
-- Auto-merge only on deterministic, high-confidence identifiers such as the same nonempty TVG/external identifier with compatible media type.
-- Do not build fuzzy or ML matching.
-- Keep every source member as a visible variant.
-- Removing or disabling a source cannot destroy another source's variant or the user's custom group.
+- Keep imported source items as separate library identities even when titles or external identifiers match.
+- Do not build automatic, manual, fuzzy, or ML duplicate merging.
+- Removing or disabling a source cannot destroy another source's identity or the user's custom group membership.
 
 ### Playback rule
 
 - One `PlaybackManager` owns active sessions and the selected audible session.
-- One quiet retry is allowed for a failed stream; then show redacted technical diagnostics and available source variants. Dispose the prior transport before retrying.
+- One quiet retry is allowed for a failed stream; then show redacted technical diagnostics and a recovery action. Dispose the prior transport before retrying.
 - Parse a provider-reported connection limit when available. Otherwise assume one until the user sets a local override.
-- Every new transport, including a retry or source-variant switch, passes source-limit admission after the prior transport is disposed. Multiview admission is checked before opening another provider stream.
+- Every new transport, including a retry, passes source-limit admission after the prior transport is disposed. Multiview admission is checked before opening another provider stream.
 - V1 PiP is an in-app movable overlay. V1 multiview is a fixed two-stream layout with one audible tile.
 
 ## 7. Phase Plan
@@ -299,7 +297,7 @@ Every visible work item below begins with the confirmed Shape gate in `ORCHESTRA
 
 **Not in this phase**
 
-- Final visuals, multi-source unification, M3U, custom groups, automatic duplicate merging, or advanced playback
+- Final visuals, multi-source unification, M3U, personal library organization, or advanced playback
 
 ---
 
@@ -350,6 +348,8 @@ Every visible work item below begins with the confirmed Shape gate in `ORCHESTRA
 
 ### Phase 3 — App Shell and Browsing Experience
 
+**Status:** Complete — the finished shell, runtime Home, read-only My Library, bounded artwork, catalog states, continuations, and return behavior passed automated, review, render, Windows build, and packaged Strong verification
+
 **Objective:** replace the functional spike UI with the approved premium, restrained Windows viewing experience.
 
 **Work**
@@ -363,6 +363,10 @@ Every visible work item below begins with the confirmed Shape gate in `ORCHESTRA
 7. Add missing-artwork, no-result, stale-source, importing, and source-error presentation.
 8. Run the bounded Impeccable visual inspection required for the implemented surfaces.
 
+**Implementation checkpoint — 2026-08-18:** The persistent seven-destination shell now routes runtime Home, Live, Movies, Series, Search, read-only My Library, and Settings without replacing the verified Phase 1/2 source and player boundaries. Home records a credential-free Recently Watched occurrence only after usable video and restores practical focus on return; progress seeking remains Phase 5. My Library reads Favorites and custom groups through bounded membership-first keyset pages, keeps unavailable memberships truthful, and opens the existing Live/Movie/Series continuations without adding Phase 4 mutation actions. Browse and Search show last-good source state, bounded fixed artwork, and actionable continuation failures. Artwork requests are sourced only from imported HTTP(S) locators, use a bounded disk cache and two-request maximum, and are cancelled when virtual rows leave the mounted window.
+
+**Verification checkpoint — 2026-08-18:** `flutter analyze` is clean and the full serial suite passes **360/360**. The Release build passed at `build/windows/x64/runner/Release/wabbit_tv.exe` (2026-08-18 16:05 local). Nine credential-free Flutter renders cover Home, My Library, Browse, Search, and Movie/Series continuations at reference and constrained sizes. Independent Impeccable and generic Flutter native-source closure reviews report no remaining P1/P2 findings. Evidence and its synthetic boundary are recorded in `docs/evidence/phase3-browsing-experience/README.md`.
+
 **Acceptance gate**
 
 - Every primary screen is reachable and usable with keyboard/remote alone.
@@ -371,13 +375,15 @@ Every visible work item below begins with the confirmed Shape gate in `ORCHESTRA
 - Large grids do not render the entire catalog at once or lock the UI during artwork loading.
 - The rendered app matches the approved direction at the target Windows viewport and passes the bounded design review with no unresolved material navigation or hierarchy defect.
 
+**Gate status — PASS (2026-08-18):** In the packaged Strong Release exercise, the user found that only the initially focused artwork loaded automatically. The correction lets only the mounted virtual-row window begin artwork after a short dwell, without click/focus, while preserving two-request concurrency, cache bounds, and cancellation during fast scrolling. After rebuilding Release, the user reported `Ok way better. Pass`. This is user-supplied runtime acceptance; no provider title, locator, or credential was recorded.
+
 **Not in this phase**
 
 - Visual experiments outside the approved direction or a generalized component library unrelated to current screens
 
 ---
 
-### Phase 4 — Personal Organization and Unified Identities
+### Phase 4 — Personal Library Organization
 
 **Objective:** deliver Wabbit's primary differentiator.
 
@@ -385,35 +391,41 @@ Every visible work item below begins with the confirmed Shape gate in `ORCHESTRA
 
 1. Favorites backed by `library_items`.
 2. Create, rename, delete, reorder, pin, and unpin mixed custom groups.
-3. Add an item to a group from a card, detail view, or search result.
-4. Pin groups to Home in explicit user order.
-5. Introduce deterministic high-confidence auto-merge.
-6. Show all source variants for a merged identity.
-7. Keep ambiguous matches separate.
+3. Add an item to Favorites and multiple custom groups in one save from Browse, Search, Home, My Library, or a detail continuation.
+4. Pin Favorites and custom groups to Home in one explicit user order.
+5. Preserve one separate library identity per imported source item; do not add automatic or manual merging.
 
 **Acceptance gate**
 
-- Favorites and custom group order survive refresh and restart.
+- Favorites, custom group order, group item order, and Home shelf order survive refresh and restart.
 - One group can contain and display live, movie, and series items.
-- Pin/unpin changes Home without deleting the group.
+- Pin/unpin changes Home without deleting Favorites, the group, or its memberships.
 - Removing an item from a group never removes it from its source.
-- A merge retains every playable variant.
-- No fuzzy auto-merge combines merely similar titles.
+- One organizer save can update Favorite plus several custom-group memberships atomically.
+- No automatic or manual duplicate merging is present.
 
 **Not in this phase**
 
 - Smart/rule-based groups, recommendations, metadata enrichment, or ML matching
 
+**Shape checkpoint — 2026-08-18:** The user confirmed Favorites as a pinnable Home shelf, rejected automatic and manual merging, approved multi-group selection in one save, and selected **A — Direct Organizer Drawer**. The implementation contract is `docs/shapes/10-phase4-personal-library-organization.md`.
+
+**Implementation checkpoint — 2026-08-18:** Schema v10 and the organization port now keep Favorites, ordered mixed custom groups, explicit group-item order, and one shared Favorites/group Home-shelf order against stable `library_items`. The shared Direct Organizer Drawer is reachable from Home, Browse, Search, My Library, and Movie/Series continuations and applies Favorite plus the complete checked-group set in one local transaction. My Library adds quiet Create/Manage continuations; group administration covers naming, pinning, directory/Home/item movement, membership removal, and truthful deletion without changing source data. Home loads only bounded pinned shelves/pages. Six credential-free actual-Flutter renders, including the 360 px drawer, 460 px manager, pinned Home, confirmation, and 600 px constrained state, pass and are recorded in `docs/evidence/phase4-personal-library-organization/README.md`. Final repository verification is clean: format is stable, `flutter analyze --no-pub` reports no issues, the serial suite passes 400/400, both Windows Debug and Release builds pass, and the independent native-source re-audit reports no remaining P1/P2 findings.
+
+**Gate status — PASS (2026-08-18):** Implementation, bounded automated/render verification, independent review, and Windows builds are complete. The user then ran the packaged Strong Release checklist and confirmed Favorites plus two custom groups in one Save, membership visibility, pinned Home order before Recently Watched, non-destructive unpin and membership removal, refresh/restart persistence, and mouse/keyboard/remote return behavior with `Pass, confirmed`. This is user-supplied runtime acceptance; no provider title, locator, credential, screenshot, or timing was recorded.
+
 ---
 
 ### Phase 5 — Playback, PiP, and Multiview
+
+**Status:** Complete — bounded evidence and user-supplied packaged Strong/Windows acceptance pass
 
 **Objective:** complete the required advanced viewing experience within measured provider and hardware limits.
 
 **Work**
 
 1. Finalize player controls, audio/subtitle selection, fullscreen, and movie/episode resume state.
-2. Add one quiet retry followed by a diagnostics surface with a redacted error and alternate source variants.
+2. Keep one quiet retry followed by redacted diagnostics and recovery; offer only an exact pre-existing source variant when one genuinely exists.
 3. Add in-app PiP overlay while browsing.
 4. Add fixed two-stream live multiview.
 5. Keep one tile audible; selecting another tile moves audio focus.
@@ -427,75 +439,113 @@ Every visible work item below begins with the confirmed Shape gate in `ORCHESTRA
 - PiP continues while the user navigates supported browse surfaces and returns cleanly to full player.
 - Two-view multiview is stable when the provider and hardware allow it.
 - Attempts beyond the configured source limit are blocked before creating a new connection and explain the next action.
-- Retry and source-variant attempts dispose their prior transport and pass the same connection-admission check.
+- Retry and exact pre-existing source-variant attempts dispose their prior transport and pass the same connection-admission check.
 - A stream failure never enters an unbounded reconnect loop.
 
 **Not in this phase**
 
 - Detached native-window PiP, 2x2 multiview, casting, transcoding, downloads, or DVR
 
+**Shape checkpoint — 2026-08-19:** The user selected automatic resume with Start over, Corner Signal in-app PiP across content destinations with stop-confirm before Settings/management, and active Live → Add channel → existing Live directory → equal two-up multiview. The confirmed implementation contract is `docs/shapes/11-phase5-playback-pip-multiview.md`. The permanent no-merge rule excludes fuzzy/title-derived alternate variants.
+
+**Implementation checkpoint — 2026-08-19:** Schema v11 and the production playback boundary now persist truthful Movie/Episode progress against stable library identities, automatically resume eligible items, retain Start over, and restart near-finished items. One `PlaybackManager` owns sessions, retry, selected audio, and source-limit admission using local override → provider-reported limit → conservative one. The Broadcast Deck exposes real available audio/subtitle tracks, redacted bounded recovery, PiP, and Live-only Add channel without creating fuzzy/title-derived variants. Corner Signal is a movable fixed-corner 16:9 in-app overlay across Home, Live, Movies, Series, Search, and My Library; Settings and management require the stop-playback confirmation. Admitted multiview is an equal side-by-side Live pair with one shared deck and exactly one audible tile. Source Settings exposes Automatic, 1, and 2 without claiming provider permission.
+
+**Bounded verification checkpoint — 2026-08-19:** Format, `flutter analyze --no-pub`, and `git diff --check` are clean; the serial suite passes 469/469; Windows Debug and Release builds pass. Eleven deterministic credential-free actual-Flutter renders plus the targeted corrected constrained multiview recapture pass and were inspected. Independent Impeccable review reports PASS, and the generic Flutter native-source audit passes 16/16. The synthetic/local evidence boundary is recorded in `docs/evidence/phase5-playback-pip-multiview/README.md`.
+
+**Credential-free packaged measurement attempt — 2026-08-19:** A temporary Release fixture attempted local, network-free `media_kit` playback from a generated lavfi input. The native input produced no video, so the run is recorded as unsupported and makes no playback, PiP, two-surface, CPU, memory, decoder, startup, transition, or stability claim. The aggregate ignored evidence is `build/verification/phase5-windows-packaged-measurement.json`; teardown reported zero active sessions and no lingering measured process. The normal production Release was rebuilt successfully afterward, replacing the fixture entry point. Real Strong playback and target-hardware measurements remain pending.
+
+**Gate status — PASS (user-supplied, 2026-08-19):** The user ran the packaged Phase 5 Strong/Windows checklist and reported `Ok pass`. Strong's reported one-stream allowance made the correct pre-open second-stream block the real-provider multiview admission evidence; actual two-stream success was not exercised and remains conditionally unavailable without a genuinely permitted source. This acceptance does not invent or record provider titles, timings, CPU or memory values, decoder details, available tracks, or two-stream success. The unsupported lavfi attempt remains non-evidence. The user accepted this bounded/conditional evidence boundary and Phase 5 is complete.
+
 ---
 
-### Phase 6 — Windows Daily-Driver Gate
+### Phase 6 — Windows Daily-Driver and Xtream Live Guide Gate
 
-**Objective:** prove Wabbit is ready for sustained personal use rather than expand the feature list.
+**Status:** Complete — implementation, audits, synthetic renders, final automation, Windows Debug/Release packages, corrected packaged Strong Guide behavior, representative M3U URL and local-file readiness, and final daily-driver user acceptance passed
+
+**Objective:** finish the Xtream-only Live Guide and prove Wabbit is ready for sustained Windows personal use. This is the final numbered implementation phase.
 
 **Work**
 
-1. Add the user-selectable startup target.
-2. Run real Strong regression passes for add, refresh, browse, search, organize, play, PiP, and multiview.
-3. Test a representative M3U URL and local M3U file.
-4. Run focused unit tests for parsing, migrations, deterministic merge rules, group ordering, and playback connection admission.
-5. Run focused widget/integration tests for the primary remote navigation flows.
-6. Run Flutter analysis, tests, a release build, and the bounded Impeccable finish workflow.
-7. Fix material daily-driver defects; do not begin future-platform or deferred-feature work.
+1. Complete and obtain user confirmation for the mandatory Impeccable Shape brief before implementing visible Live Guide UI.
+2. Import provider EPG data only when an active Xtream source exposes it.
+3. Match programs to channels with provider identifiers; do not add fuzzy or title-derived cross-source merging.
+4. Add truthful Now/Next and one simple remote-friendly timeline guide.
+5. Keep missing or malformed guide data independent from catalog refresh and channel playback.
+6. Add the user-selectable startup target.
+7. Run real Strong regression passes for add, refresh, browse, search, organize, play, PiP, connection admission, and the available Xtream guide path.
+8. Test a representative M3U URL and local M3U file for source/import/browse/playback readiness only. M3U is not an EPG input in Windows V1.
+9. Run focused unit tests for Xtream guide parsing/matching, migrations, favorite/group ordering, and playback connection admission.
+10. Run focused widget/integration tests for the primary guide and daily-driver remote-navigation flows.
+11. Run Flutter analysis, tests, a release build, and the bounded Impeccable finish workflow.
+12. Fix material daily-driver defects; do not begin future-platform or deferred-feature work.
+
+**Shape checkpoint — 2026-08-19:** The user selected and confirmed a dedicated `Guide` rail destination after Live, a classic channel-by-time matrix scoped to one enabled Xtream source and one visible provider category at a time with `All Live`, quiet exact Now/Next in Live rows, and exact Last channel automatic startup with a truthful Home fallback. UTC persistence/local-time display, lazy bounded `get_short_epg`, focus/Back, responsive, failure, and evidence contracts are recorded in `docs/shapes/12-phase6-xtream-live-guide-startup.md`. Confirmation starts Phase 6 but does not verify implementation or provider behavior.
+
+**Implementation checkpoint — 2026-08-19:** Schema v12, exact source/provider-channel EPG state and last-good programs, lazy viewport-bounded Xtream `get_short_epg`, UTC persistence/local display, source-wide credential/authentication retry truth, cached Live Now/Next, the classic Guide matrix, and Home/Previous screen/exact Last channel startup are implemented. Guide absence or failure remains independent from catalog use and playback; M3U XMLTV input, fuzzy matching, merging, and bulk full-guide acquisition were not added. Independent UI, native-source, and security audits report **PASS** with no remaining P0/P1/P2 findings. Seven credential-free actual-Flutter states pass deterministically and retain identical recorded hashes in `docs/evidence/phase6-xtream-live-guide/`.
+
+**Packaged Strong discovery/correction checkpoint — 2026-08-19:** The user's packaged run settled 149 channel states: 148 `empty`, 1 `available`, 0 `error`, and 0 `refreshing`, with 4 cached programs overlapping the Guide window. This proves Strong's short EPG works sparsely and that the run left no stuck lease; it does not accept the original presentation. The run exposed a real repeated/stuck `Preparing` defect caused by replacing the viewport map and deriving status globally, compounded by lifecycle and parser-truth gaps. The corrected tree derives status from only the active viewport, retains a bounded three-view by 40-row LRU (120 channel IDs), distinguishes malformed responses from valid empty schedules, releases obsolete work through prompt generation-safe cancellation and lease cleanup, lets explicit manual Retry bypass only persisted errors without stealing an active lease or bypassing successful/empty TTL, exposes typed local-persistence recovery, and corrects paging, category, and `Go to now` lifecycle behavior.
+
+**Final automated/package checkpoint — 2026-08-19:** formatting checked 100 files with 0 changes; `flutter analyze` reports no issues; the full serial suite passes 581/581 in 80.125 seconds; and `git diff --check` passes. Independent closure and the picker correction review report **PASS**. The workstation MSBuild C++ FileTracker workaround remains process-scoped: `$env:TrackFileAccess='false'`. It enabled a cold/default Debug build in 42.132 seconds at `build/windows/x64/runner/Debug/wabbit_tv.exe` (1,140,736 bytes; 2026-08-19 14:22:29.022 -05:00; SHA-256 `77C8EF3FA4884EC9470828BC0D8347C12292D600818D73C1ADE51F1054AFF341`) and a normal/default Release build in 48.068 seconds at `build/windows/x64/runner/Release/wabbit_tv.exe` (183,296 bytes; 2026-08-19 14:23:51.199 -05:00; SHA-256 `D112C13F8FF39927C50A86A0E4CE96F890E99DF1811E120164A81A971BEB2B7F`). Both used `FLUTTER_TARGET=lib/main.dart`; decoded defines contained only standard Flutter metadata and no WABBIT fixture/probe defines. No Flutter, Dart, Wabbit, MSBuild, or compiler process remained.
+
+**Corrected packaged Strong Guide rerun — PASS (user-supplied, 2026-08-19):** After running the corrected Release, the user reported `Ok pass`. At the user-observed level, this closes the repeated/stuck `Preparing`, reverse-scroll, and rapid category/scope packaged behavior. No provider title, timing, screenshot, program-coverage result, resource measurement, or credential was recorded or inferred.
+
+**Packaged local M3U picker correction — PASS for selection only (2026-08-19):** The user reported that choosing `Choose M3U file` froze the packaged app in a Windows `Not Responding` state and required Alt+F4. Wabbit does not read a playlist before selection: the runtime picker returns only a path, the form stores that path, and local-file acquisition begins only after `Connect`. The correction is deliberately UI-only: one in-flight picker request, an `endOfFrame` barrier so pending truth paints before the owned Windows modal opens, disabled conflicting actions while pending, redacted retryable error truth, and exact focus restoration after cancel, failure, or selection. No file-selector adapter, plugin, runner, parser, or import behavior changed. Independent review reports **PASS**. In the rebuilt Release, the lead observed the owned Windows dialog, saw the pending state paint, pressed Escape and returned to a responsive form with exact `Choose M3U file` focus, reopened the dialog, selected the Downloads test playlist, and saw the field populate. The app was then closed without importing or adding a source, so this checkpoint proves only the corrected picker lifecycle—not local-file source/import/browse/playback readiness.
+
+**Corrected packaged local-file chooser acceptance — PASS (user-supplied, 2026-08-19):** After being asked to retry the corrected local M3U file flow in the new packaged Release, the user replied exactly `Pass`. This narrowly accepts the picker defect correction and corrected packaged chooser flow. The one-word result supplied no steps, timings, screenshots, or import/browse/playback evidence, so no broader M3U readiness claim is inferred.
+
+**Final M3U and daily-driver acceptance — PASS (user-supplied, 2026-08-19):** The representative M3U URL was previously user-reported to have worked great. For the corrected local-file path, the required full flow was then stated exactly as `Connect → import → browse → playback`, and the user replied exactly `Yes, full flow passed`. This closes the representative M3U readiness and final daily-driver user gates without adding timings, screenshots, titles, resource measurements, provider coverage, or credential-bearing evidence beyond what the user supplied.
+
+**Gate status — PASS:** Phase 6 and Windows V1 are complete. UI/UX polish continues as ongoing unnumbered maintenance rather than Phase 7.
 
 **Acceptance gate — Windows V1**
 
 - A fresh install can add each supported source form and play supported content.
 - The real large catalog stays responsive through refresh, search, and browsing.
-- Unified/source scopes, favorites, mixed custom groups, Home pins, and deterministic merging persist correctly.
+- An Xtream source with provider EPG data exposes truthful Now/Next and the shaped simple timeline; absent or malformed guide data never blocks catalog use or playback.
+- M3U URL and local-file sources remain verified for source/import/browse/playback readiness without exposing XMLTV URL/file guide configuration or claiming guide support.
+- Unified/source scopes, favorites, mixed custom groups, and Home pins persist correctly.
 - PiP and two-view multiview meet the recorded behavior.
-- All primary flows work from keyboard/remote with visible focus and predictable Back/Escape.
+- All primary flows, including the Guide, work from keyboard/remote with visible focus and predictable Back/Escape.
 - No source username, password, or credential-bearing playlist URL appears in source control, ordinary logs, or committed fixtures. Provider-supplied M3U item URLs remain confined to the local catalog.
 - Required checks pass and the lead has independently inspected the final diff and exercised the core flows.
 
----
+**Not in this phase or Windows V1**
 
-### Phase 7 — Live Guide (Not Scheduled)
+- M3U XMLTV URL or file input and any M3U guide path
+- Recording, reminders, catch-up, DVR, archival behavior, or elaborate guide customization
+- Detached native-window PiP, 2x2 multiview, casting, transcoding, or downloads
 
-Begin only after Windows V1 is accepted and the user explicitly activates the phase.
+### Post-V1 UI/UX polish (ongoing, unnumbered)
 
-1. Import provider EPG data where an active source exposes it.
-2. Add an optional XMLTV URL for M3U sources only when needed by a real source.
-3. Match programs to channels using provider identifiers before narrow name fallbacks.
-4. Add Now/Next and a simple remote-friendly timeline guide.
-5. Keep missing or malformed guide data independent from catalog refresh and channel playback.
+After Phase 6 closes Windows V1, UI/UX refinement continues as ongoing maintenance: fix real usability defects, improve clarity, and preserve the confirmed product/design contracts. It is not another numbered feature phase and does not authorize hidden product scope.
 
-This phase does not include recording, reminders, catch-up, archival behavior, or elaborate guide customization.
+**Left-sidebar polish checkpoint — complete and user-approved (2026-08-20):** The user authorized all five findings from the bounded left-rail critique, explicitly chose remote/accessibility correctness rather than a visual-only pass, and chose bottom-anchored Settings behind a restrained separator. The implemented correction (1) adds the documented shell-level remote Menu route while preserving contextual Menu ownership such as My Library Organize, (2) adds a persistent 2 px resting selected-location marker without spending signal amber, (3) makes destination rows 48 px minimum with complete wrapping, scrolling, and focused-row reveal at 1.5x/2x text and short heights, (4) exposes each destination and Now Playing once through authoritative button/selected semantics, and (5) adds quiet per-row pointer hover plus the click cursor while separating Settings at the bottom utility seam. The passive playmark now uses quiet text so amber remains an interaction signal.
 
----
+The initial independent critique reported exactly those five priority gaps: missing remote Menu entry, weak collapsed selected orientation, incomplete high-text/television-distance behavior, duplicate expanded announcements, and under-articulated pointer/utility hierarchy. The corrections received a final independent **PASS** with no remaining P0/P1/P2 findings. Formatting checked 100 files with 0 changes, `flutter analyze --no-pub` is clean, the full serial suite passes 587/587 in 81.055 seconds, and scoped diff-check passes. Four deterministic credential-free actual-Flutter sidebar renders pass 4/4 and are recorded in `docs/evidence/sidebar-polish/README.md`.
 
-### Phase 8 — Future Platforms (Not Scheduled)
+Fresh production packages also pass: Debug completed in 46.187 seconds at `build/windows/x64/runner/Debug/wabbit_tv.exe` (1,140,736 bytes; 2026-08-20 10:36:58.778 -05:00; SHA-256 `41CA311CF6D1DE92A5FA16B45E1E1B5A817B09F80C3945071E0E2639AB529919`) and Release completed in 47.954 seconds at `build/windows/x64/runner/Release/wabbit_tv.exe` (183,296 bytes; 2026-08-20 10:38:04.592 -05:00; SHA-256 `411B7E51BEA6779EFF51A5E3C97356066B59B142D6FC2479986A7F25A2603E1B`). Both target `lib/main.dart` with no custom WABBIT defines. After this corrected Release and its evidence were presented, the user replied exactly `Approved`; this closes the packaged sidebar-polish gate without inferring any additional timings, screenshots, or interaction details.
 
-Begin only after Windows V1 is accepted and the user explicitly activates the phase.
+### Deferred platform backlog (not scheduled; not a phase)
 
-1. Android TV and Fire TV platform setup, remote focus verification, Android Back behavior, and playback validation
-2. macOS platform setup, window behavior, keychain configuration, and playback validation
-3. Platform-specific visual adaptation where system conventions require it
-4. Reuse the shared Dart catalog and source layers; add only the smallest platform adapters required
+Future platform work may be reconsidered only through an explicit later product decision; it is not a numbered next phase:
 
-This phase does not automatically include mobile-phone layouts, store submission, cloud synchronization, or distribution automation.
+- Android TV and Fire TV platform setup, remote focus verification, Android Back behavior, and playback validation
+- macOS platform setup, window behavior, keychain configuration, and playback validation
+- Platform-specific visual adaptation where system conventions require it
+- Reuse of the shared Dart catalog and source layers with only the smallest necessary platform adapters
+
+This backlog does not automatically include mobile-phone layouts, store submission, cloud synchronization, distribution automation, or a commitment to implement any platform.
 
 ## 8. Verification Strategy
 
 ### Automated checks with high value
 
 - Xtream and M3U parser fixtures, including the few malformed forms observed in real use
+- Xtream provider EPG parsing, provider-identifier channel matching, and absent/malformed guide isolation
 - SQLite migration tests
 - Refresh idempotence and last-good rollback
 - Custom group order and persistence
-- Deterministic merge/unmerge invariants
+- Favorite, mixed-group, item-order, and Home-pin invariants
 - Search against a generated large fixture
 - Playback connection-limit admission
 - Essential keyboard/remote focus flows
@@ -506,6 +556,7 @@ This phase does not automatically include mobile-phone layouts, store submission
 - Import, search, first-play, CPU, and memory observations on the actual Windows machine
 - Screenshots for the Impeccable visual review
 - PiP and multiview behavior on the target display and hardware
+- Xtream Now/Next and timeline behavior when the real provider exposes EPG data
 
 ### Explicitly unnecessary
 
@@ -523,7 +574,7 @@ The reviewed Fred TV Next code is useful as a checklist for Xtream actions, tole
 
 - Its Rust/FFI core conflicts with the Dart-first decision.
 - Its groups are source-bound provider categories rather than ordered mixed user collections.
-- Its catalog is per-source and does not model unified identities with retained variants.
+- Its catalog is per-source and does not model Wabbit's local personal-library organization.
 - Its playback surface is single-player and does not supply Wabbit PiP or multiview.
 - Its current credential storage and generated stream URLs are not behavior to inherit.
 
@@ -538,10 +589,10 @@ Not part of Windows V1:
 - Detached always-on-top native PiP window
 - 2x2 or larger multiview
 - Recording, timeshift, and catch-up
-- Provider failover automation beyond user-visible variants
+- Provider failover automation
 - Profiles, parental controls, and cloud sync
-- Manual duplicate merge/unmerge controls
-- Live EPG/guide until Phase 7 is explicitly activated
+- M3U XMLTV URL/file guide input or guide support
+- Guide recording, reminders, catch-up, DVR, archival behavior, or elaborate customization
 - Smart groups and recommendations
 - Metadata enrichment services
 - Plugin/provider marketplace
@@ -558,19 +609,17 @@ Not part of Windows V1:
 | 0 — Direction and feasibility | Complete |
 | 1 — Strong end-to-end slice | Complete |
 | 2 — Catalog and source management | Complete |
-| 3 — App shell and browsing | Not started |
-| 4 — Personal organization | Not started |
-| 5 — Playback, PiP, and multiview | Not started |
-| 6 — Windows daily-driver gate | Not started |
-| 7 — Live guide | Not scheduled |
-| 8 — Future platforms | Not scheduled |
+| 3 — App shell and browsing | Complete |
+| 4 — Personal organization | Complete |
+| 5 — Playback, PiP, and multiview | Complete — user-supplied packaged Strong/Windows acceptance |
+| 6 — Windows daily-driver and Xtream Live Guide gate | Complete — implementation, audits, renders, 581/581 automation, Windows Debug/Release packages, corrected packaged Strong Guide behavior, representative M3U URL/local-file readiness, and final daily-driver user acceptance passed; Windows V1 is complete |
 
 ## 12. Plan Change Log
 
 | Date | Change | Reason |
 |---|---|---|
 | 2026-08-16 | Initial master plan recorded | Product discovery and lead reconciliation of three Terra planning reviews |
-| 2026-08-16 | Corrected credential locator rules, preserved global mixed-group order, moved EPG after Windows V1, made Phase 1 scale-safe, tightened retry admission, and removed hidden V1 actions | Independent Terra verification findings |
+| 2026-08-16 | Corrected credential locator rules, preserved global mixed-group order, initially deferred EPG work, made Phase 1 scale-safe, tightened retry admission, and removed hidden V1 actions | Independent Terra verification findings; the later Phase 6 consolidation supersedes the original guide timing |
 | 2026-08-16 | Added durable orchestration authority and mandatory Impeccable Shape gate for every new visible feature | User locked the lead/delegation process and Impeccable lifecycle |
 | 2026-08-16 | Corrected Shape direction/confirmation order, target-specific compaction recovery, and Windows-versus-mobile native audit boundaries | Independent Terra verification of orchestration policy |
 | 2026-08-16 | Started Phase 0 with the mandatory Windows app-shell Shape gate | User authorized implementation to begin |
@@ -588,3 +637,17 @@ Not part of Windows V1:
 | 2026-08-17 | Implemented Library Visibility after its explicitly confirmed viewport | Schema v6 preserves local category/item choices; synthetic, audit, package, and copy-only Strong-scale evidence pass. Packaged real Strong hide/restore and Browse/Search propagation remain before Phase 2 closes |
 | 2026-08-18 | Implemented the confirmed bulk-category visibility toolbar | Atomic source/kind updates, failure truth, busy-shell containment, 283 tests, audit, renders, and both Windows builds pass. Packaged Strong propagation and refresh retention remain before Phase 2 closes |
 | 2026-08-18 | Closed the Phase 2 gate after the packaged Strong visibility exercise | User reported `Perfect, pass` after Hide all, desired Live-category restoration, Browse/Search propagation, and refresh retention; no screenshots, timings, or provider titles were recorded |
+| 2026-08-18 | Started Phase 3 with the mandatory app-shell and browsing Shape gate | User authorized the lead to begin Phase 3 after Phases 0–2 and the post-merge review fixes were merged |
+| 2026-08-18 | Confirmed the Phase 3 browsing boundary and My Library composition A | User approved read-only My Library, Recently Watched after usable video, Phase 5 resume, bounded source-supplied artwork, and the direct directory-plus-ledger viewport |
+| 2026-08-18 | Closed the Phase 3 gate after the packaged Strong artwork correction | Automated, render, build, Impeccable, and native audit evidence passed; mounted virtual rows now fill artwork without clicks while fast-scroll cancellation and two-request admission remain bounded, and the user reported `Ok way better. Pass` |
+| 2026-08-18 | Completed Phase 4 personal library organization | Transactional Favorite/multi-group changes, ordered mixed groups, pinned personal Home shelves, group management, 400 passing tests, inspected renders, independent review, Windows builds, and the user-confirmed packaged Strong checklist close the phase |
+| 2026-08-19 | Implemented and bounded-verified the confirmed Phase 5 playback extension | Schema v11 progress, resume/Start over, tracks, admission, Corner Signal, source-limit controls, and equal two-up Live multiview pass 469 tests, inspected renders, independent reviews, and Windows builds; packaged Strong/resource measurements and genuinely permitted real two-stream proof remain |
+| 2026-08-19 | Closed the Phase 5 gate after the packaged Strong/Windows checklist | User reported `Ok pass`; Strong's reported one-stream allowance correctly blocked stream two before open, so real two-stream success was not exercised and no provider titles, timings, resource values, track availability, or two-stream success were recorded |
+| 2026-08-19 | Combined the Windows daily-driver gate and Xtream Live Guide into the final Phase 6 | User made the next phase the last numbered phase, excluded every M3U XMLTV guide path, retained M3U source/playback regression, moved future platforms to an unscheduled backlog, and made post-V1 UI/UX polish ongoing unnumbered work |
+| 2026-08-19 | Confirmed the Phase 6 Xtream Live Guide and startup Shape | User selected the dedicated Guide rail and classic source-local matrix, one Xtream source/category with All Live, quiet Now/Next, and exact Last channel automatic startup; implementation and verification were still pending at that checkpoint and completed later |
+| 2026-08-19 | Corrected and bounded-verified the confirmed Phase 6 surface and data foundation after the first packaged Strong guide run | The run proved sparse short-EPG availability (149 settled: 148 empty, 1 available, 0 error, 0 refreshing, 4 programs) and no stuck lease while exposing a real repeated `Preparing` defect. Active-viewport truth, the bounded 120-ID LRU, parser/lifecycle/retry/persistence corrections, automation, independent closure, renders, and Windows packages pass. The corrected packaged Strong rerun passed later; the M3U and final acceptance gates were closed separately afterward |
+| 2026-08-19 | Passed the corrected packaged Strong Guide rerun | User reported `Ok pass`; repeated/stuck `Preparing`, reverse-scroll, and rapid category/scope packaged behavior close at the user-observed level. No title, timing, screenshot, program-coverage, resource, or credential claim was added. M3U readiness and final daily-driver acceptance were verified separately afterward |
+| 2026-08-19 | Corrected and packaged-verified the local M3U picker lifecycle | The user-reported `Choose M3U file` freeze/`Not Responding` state required Alt+F4. A UI-only single-flight, pending-frame, error, and focus correction passed independent review, 581/581 automation, fresh Windows packages, and the lead's owned-dialog cancel/reopen/select exercise. The Downloads test playlist populated the field, but that bounded lead exercise ended before `Connect`; the full local-file flow was accepted separately afterward |
+| 2026-08-19 | User accepted the corrected packaged local-file chooser | When asked to retry the corrected local M3U file flow in the new packaged Release, the user replied exactly `Pass`. That one-word checkpoint closed only the picker defect and chooser-flow correction; the full local-file readiness gate was explicitly closed later |
+| 2026-08-19 | Closed Phase 6 and Windows V1 | The representative M3U URL was user-reported to have worked great. After the required local-file flow was defined as `Connect → import → browse → playback`, the user replied exactly `Yes, full flow passed`. This closes representative M3U readiness and final daily-driver acceptance without inventing timings, screenshots, titles, resource data, provider coverage, or credentials. UI/UX polish continues as ongoing unnumbered maintenance, not Phase 7 |
+| 2026-08-20 | Completed and received packaged user approval for the left-sidebar polish | All five critique findings were corrected with remote/accessibility correctness and bottom-anchored separated Settings. Independent final review, 587/587 automation, four inspected Flutter renders, and fresh Debug/Release packages pass; the user then replied exactly `Approved`, closing this bounded polish gate |

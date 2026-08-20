@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wabbit_tv/src/features/artwork/source_artwork.dart';
 import 'package:wabbit_tv/src/features/browse/basic_browse_screen.dart';
 import 'package:wabbit_tv/src/features/browse/catalog_scope_controller.dart';
 import 'package:wabbit_tv/src/features/browse/playback_handoff.dart';
@@ -209,12 +210,13 @@ void main() {
     expect(missingArtwork, findsOneWidget);
     expect(tester.getSize(artwork), const Size(50, 36));
     expect(tester.getSize(missingArtwork), const Size(50, 36));
-    final remoteDecoration =
-        tester.widget<Container>(artwork).decoration! as BoxDecoration;
-    final missingDecoration =
-        tester.widget<Container>(missingArtwork).decoration! as BoxDecoration;
-    expect(remoteDecoration.color, const Color(0xFF222321));
-    expect(missingDecoration.color, const Color(0xFF222321));
+    expect(tester.widget<SourceArtwork>(artwork).loader, isNull);
+    expect(tester.widget<SourceArtwork>(missingArtwork).loader, isNull);
+    expect(tester.widget<SourceArtwork>(artwork).loadWhenVisible, isTrue);
+    expect(
+      tester.widget<SourceArtwork>(missingArtwork).loadWhenVisible,
+      isTrue,
+    );
     expect(find.byType(Image), findsNothing);
     expect(find.byIcon(Icons.movie_outlined), findsAtLeastNWidgets(1));
   });
@@ -249,6 +251,31 @@ void main() {
       expect(row.bottom, lessThanOrEqualTo(600));
     },
   );
+
+  testWidgets('virtual browse rows retain focus nodes only while mounted', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 520));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final session = BasicBrowseSession();
+    await tester.pumpWidget(
+      _screen(
+        kind: SourceMediaKind.live,
+        data: _FakeData.withItems(SourceMediaKind.live, 100),
+        session: session,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(session.mountedItemFocusCount, inInclusiveRange(1, 24));
+    await tester.drag(
+      find.byKey(const ValueKey('browse-items-live')),
+      const Offset(0, -3200),
+    );
+    await tester.pumpAndSettle();
+
+    expect(session.mountedItemFocusCount, inInclusiveRange(1, 24));
+  });
 
   testWidgets(
     'wide category focus scrolls across virtual-list cache boundaries',
@@ -384,6 +411,63 @@ void main() {
       expect(fixture.scopedData.pageLimits, everyElement(100));
     },
   );
+
+  testWidgets('named source keeps populated last-good rows while refreshing', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture(
+      initialScope: const LibraryScope.source('harbor'),
+    );
+    fixture.port.sources = [
+      _scopeRoster('harbor', 'Harbor North', status: 'refreshing'),
+      _scopeRoster('weekend', 'Weekend List'),
+    ];
+
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('browse-item-harbor-0')), findsOneWidget);
+    expect(
+      find.text('Refreshing · showing saved catalog · 3 items · Harbor North'),
+      findsOneWidget,
+    );
+    expect(find.text('Catalog unavailable'), findsNothing);
+  });
+
+  testWidgets('All sources quietly reports mixed last-good source status', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture(itemCount: 150);
+    fixture.port.sources = [
+      _scopeRoster('harbor', 'Harbor North', status: 'refreshing'),
+      _scopeRoster('weekend', 'Weekend List', status: 'refresh_failed'),
+    ];
+
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('browse-item-library-0')), findsOneWidget);
+    expect(
+      find.text(
+        '1 source refreshing · 1 source refresh failed · saved catalogs remain available · 150 available across 2 sources',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Catalog unavailable'), findsNothing);
+  });
+
+  testWidgets('ready Browse scope does not show a last-good status signal', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture();
+
+    await tester.pumpWidget(_scopedScreen(fixture: fixture));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('showing saved catalog'), findsNothing);
+    expect(find.textContaining('refresh failed'), findsNothing);
+    expect(find.textContaining('remains available'), findsNothing);
+  });
 
   testWidgets('All-sources loading skeleton is one full-width panel', (
     tester,
@@ -739,6 +823,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(fixture.controller.scope.sourceId, 'harbor');
     expect(find.text('Categories'), findsOneWidget);
+    expect(find.byKey(const ValueKey('browse-item-harbor-0')), findsOneWidget);
+    expect(
+      find.text(
+        'Refresh failed · showing saved catalog · 3 items · Harbor North',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Catalog unavailable'), findsNothing);
   });
 
   testWidgets('All scope activation carries the selected playable variant', (
@@ -754,6 +846,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('browse-item-library-0')));
 
     expect(activated?.sourceId, 'harbor');
+    expect(activated?.libraryItemId, 'library-0');
     expect(activated?.playbackRef, contains('providerId'));
   });
 
@@ -775,6 +868,35 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(loader.sourceId, 'harbor');
+  });
+
+  testWidgets('Series source resolution failure stays actionable', (
+    tester,
+  ) async {
+    final fixture = _ScopeFixture();
+    final gate = Completer<PersistedSource?>();
+    fixture.port.resolveGates['harbor'] = gate;
+    await tester.pumpWidget(
+      _scopedScreen(
+        fixture: fixture,
+        kind: SourceMediaKind.series,
+        seriesInfoLoader: _CapturingSeriesLoader(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('browse-item-library-0')));
+    await tester.pump();
+    expect(find.text('Loading episodes…'), findsOneWidget);
+
+    gate.complete(null);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('series-error-copy')), findsOneWidget);
+    expect(find.byKey(const ValueKey('series-retry')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('continuation-visible-back')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('scope header fits a 480px shell content width and large text', (

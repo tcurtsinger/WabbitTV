@@ -1,9 +1,19 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import '../../home_fixture_mode.dart';
+import '../artwork/artwork_loader.dart';
+import '../artwork/source_artwork.dart';
+import '../browse/minimal_continuations.dart';
+import '../browse/playback_handoff.dart';
+import '../browse/series_info_loader.dart';
+import '../sources/credential_store.dart';
+import '../sources/source_catalog_database.dart';
+import '../sources/source_models.dart';
 
 const _graphite = Color(0xFF111212);
 const _surface = Color(0xFF191A1A);
@@ -12,6 +22,193 @@ const _line = Color(0xFF343534);
 const _warmWhite = Color(0xFFF4F0E7);
 const _quietText = Color(0xFFAAA8A2);
 const _amber = Color(0xFFFFB347);
+
+abstract interface class HomeData {
+  Future<bool> hasSources();
+  Future<List<RecentlyWatchedItem>> loadRecentlyWatched({required int limit});
+  Future<List<HomePersonalShelf>> loadPinnedShelves({
+    required int shelfLimit,
+    required int itemLimit,
+  });
+  Future<PersistedSource?> loadReadySourceById(String sourceId);
+}
+
+class HomePersonalShelf {
+  const HomePersonalShelf({required this.collection, required this.items});
+
+  final PersonalLibraryDirectoryEntry collection;
+  final List<PersonalLibraryItem> items;
+}
+
+class DatabaseHomeData implements HomeData {
+  const DatabaseHomeData(this.database);
+
+  final SourceCatalogDatabase database;
+
+  @override
+  Future<bool> hasSources() => database.hasAnySource();
+
+  @override
+  Future<List<RecentlyWatchedItem>> loadRecentlyWatched({required int limit}) =>
+      database.loadRecentlyWatched(limit: limit);
+
+  @override
+  Future<List<HomePersonalShelf>> loadPinnedShelves({
+    required int shelfLimit,
+    required int itemLimit,
+  }) async {
+    final collections = await database.loadPinnedPersonalLibraryDirectory(
+      limit: shelfLimit.clamp(1, 24),
+    );
+    final shelves = <HomePersonalShelf>[];
+    for (final collection in collections) {
+      final List<PersonalLibraryItem> items;
+      if (collection.kind == PersonalLibraryDirectoryKind.favorites) {
+        items = (await database.loadFavoriteLibraryPage(
+          limit: itemLimit.clamp(1, 24),
+        )).items;
+      } else {
+        items = (await database.loadCustomGroupLibraryPage(
+          customGroupId: collection.collectionId!,
+          limit: itemLimit.clamp(1, 24),
+        )).items;
+      }
+      shelves.add(
+        HomePersonalShelf(
+          collection: collection,
+          items: List.unmodifiable(items),
+        ),
+      );
+    }
+    return List.unmodifiable(shelves);
+  }
+
+  @override
+  Future<PersistedSource?> loadReadySourceById(String sourceId) =>
+      database.loadReadySourceById(sourceId);
+}
+
+enum HomeLoadPhase { initializing, noSources, noHistory, ready, failure }
+
+class HomeController extends ChangeNotifier {
+  HomeController({
+    required this.data,
+    this.historyLimit = 24,
+    this.pinnedShelfLimit = 12,
+    this.pinnedItemLimit = 12,
+  });
+
+  final HomeData data;
+  final int historyLimit;
+  final int pinnedShelfLimit;
+  final int pinnedItemLimit;
+  HomeLoadPhase _phase = HomeLoadPhase.initializing;
+  List<RecentlyWatchedItem> _recentlyWatched = const [];
+  List<HomePersonalShelf> _pinnedShelves = const [];
+  bool _showingSavedHistory = false;
+  int _generation = 0;
+  bool _started = false;
+  bool _disposed = false;
+
+  HomeLoadPhase get phase => _phase;
+  List<RecentlyWatchedItem> get recentlyWatched => _recentlyWatched;
+  List<HomePersonalShelf> get pinnedShelves => _pinnedShelves;
+  bool get showingSavedHistory => _showingSavedHistory;
+
+  Future<void> initialize() async {
+    if (_disposed || _started) return;
+    _started = true;
+    await _load();
+  }
+
+  /// Reloads local Home state after a successful history write or source
+  /// lifecycle change. Stale completions cannot replace a newer result.
+  Future<void> refresh() {
+    if (_disposed) return Future<void>.value();
+    _started = true;
+    return _load();
+  }
+
+  Future<void> retry() {
+    if (_disposed) return Future<void>.value();
+    _started = true;
+    return _load(showInitializing: true);
+  }
+
+  Future<void> _load({bool showInitializing = false}) async {
+    final generation = ++_generation;
+    if (showInitializing) {
+      _phase = HomeLoadPhase.initializing;
+      _notify();
+    }
+    try {
+      if (!await data.hasSources()) {
+        if (!_accepts(generation)) return;
+        _recentlyWatched = const [];
+        _pinnedShelves = const [];
+        _showingSavedHistory = false;
+        _phase = HomeLoadPhase.noSources;
+        _notify();
+        return;
+      }
+      final recent = await data.loadRecentlyWatched(
+        limit: historyLimit.clamp(1, 48),
+      );
+      final pinned = await data.loadPinnedShelves(
+        shelfLimit: pinnedShelfLimit.clamp(1, 24),
+        itemLimit: pinnedItemLimit.clamp(1, 24),
+      );
+      if (!_accepts(generation)) return;
+      _recentlyWatched = List.unmodifiable(recent);
+      _pinnedShelves = List.unmodifiable(pinned);
+      _showingSavedHistory = false;
+      _phase = recent.isEmpty && pinned.isEmpty
+          ? HomeLoadPhase.noHistory
+          : HomeLoadPhase.ready;
+      _notify();
+    } catch (_) {
+      if (!_accepts(generation)) return;
+      if (_recentlyWatched.isNotEmpty || _pinnedShelves.isNotEmpty) {
+        _showingSavedHistory = true;
+        _phase = HomeLoadPhase.ready;
+      } else {
+        _recentlyWatched = const [];
+        _pinnedShelves = const [];
+        _showingSavedHistory = false;
+        _phase = HomeLoadPhase.failure;
+      }
+      _notify();
+    }
+  }
+
+  bool _accepts(int generation) => !_disposed && generation == _generation;
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _generation += 1;
+    super.dispose();
+  }
+}
+
+/// App-owned, bounded restoration state for the single Phase 3 continuity
+/// shelf. It contains no provider locator or playback credential.
+class HomeSession {
+  String? focusedLibraryItemId;
+  String? focusedShelfKey;
+  double horizontalOffset = 0;
+  final Map<String, double> pinnedOffsets = {};
+}
+
+typedef HomeArtworkBuilder = Widget Function(
+  BuildContext context,
+  RecentlyWatchedItem item,
+  bool focused,
+);
 
 enum FixtureKind { live, movie, series }
 
@@ -156,6 +353,17 @@ class HomeScreen extends StatefulWidget {
     required this.onBrowseMovies,
     required this.onBrowseSeries,
     required this.onAddSource,
+    this.controller,
+    this.session,
+    this.artworkBuilder,
+    this.artworkLoader,
+    this.onActivateLibraryItem,
+    this.onPlaybackHandoff,
+    this.onOrganizeItem,
+    this.onOrganizePersonalItem,
+    this.credentialStore,
+    this.seriesInfoLoader,
+    this.initializeController = true,
   });
 
   final HomeFixtureMode fixtureMode;
@@ -167,6 +375,17 @@ class HomeScreen extends StatefulWidget {
   final VoidCallback onBrowseMovies;
   final VoidCallback onBrowseSeries;
   final VoidCallback onAddSource;
+  final HomeController? controller;
+  final HomeSession? session;
+  final HomeArtworkBuilder? artworkBuilder;
+  final ArtworkProvider? artworkLoader;
+  final ValueChanged<LibraryCatalogItem>? onActivateLibraryItem;
+  final ValueChanged<PlaybackHandoff>? onPlaybackHandoff;
+  final ValueChanged<LibraryCatalogItem>? onOrganizeItem;
+  final ValueChanged<PersonalLibraryItem>? onOrganizePersonalItem;
+  final CredentialStore? credentialStore;
+  final SeriesInfoLoader? seriesInfoLoader;
+  final bool initializeController;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -174,6 +393,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   late final List<List<FocusNode>> _focusNodes;
+  late final HomeSession _fallbackSession = HomeSession();
   FixtureItem _selectedItem = _shelves.first.items.first;
 
   @override
@@ -243,6 +463,33 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.fixtureMode == HomeFixtureMode.runtime) {
+      final controller = widget.controller;
+      assert(controller != null, 'Runtime Home requires a HomeController.');
+      if (controller == null) {
+        return const ColoredBox(color: _graphite);
+      }
+      return _ProductionHome(
+        controller: controller,
+        session: widget.session ?? _fallbackSession,
+        artworkBuilder: widget.artworkBuilder,
+        artworkLoader: widget.artworkLoader,
+        initialFocus: widget.initialFocus,
+        onContentFocus: widget.onContentFocus,
+        onOpenRail: widget.onOpenRail,
+        onBrowseLive: widget.onBrowseLive,
+        onBrowseMovies: widget.onBrowseMovies,
+        onBrowseSeries: widget.onBrowseSeries,
+        onAddSource: widget.onAddSource,
+        onActivate: widget.onActivateLibraryItem,
+        onPlaybackHandoff: widget.onPlaybackHandoff,
+        onOrganizeItem: widget.onOrganizeItem,
+        onOrganizePersonalItem: widget.onOrganizePersonalItem,
+        credentialStore: widget.credentialStore,
+        seriesInfoLoader: widget.seriesInfoLoader,
+        initializeController: widget.initializeController,
+      );
+    }
     if (widget.fixtureMode == HomeFixtureMode.noSources) {
       return _NoSourceHome(
         focusNode: widget.initialFocus,
@@ -266,7 +513,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final narrow = constraints.maxWidth < 780;
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final narrow = constraints.maxWidth < 780 || textScale > 1.35;
         return ColoredBox(
           color: _graphite,
           child: SafeArea(
@@ -318,6 +566,1637 @@ class _HomeScreenState extends State<HomeScreen> {
       },
     );
   }
+}
+
+class _ProductionHome extends StatefulWidget {
+  const _ProductionHome({
+    required this.controller,
+    required this.session,
+    required this.initialFocus,
+    required this.onContentFocus,
+    required this.onOpenRail,
+    required this.onBrowseLive,
+    required this.onBrowseMovies,
+    required this.onBrowseSeries,
+    required this.onAddSource,
+    required this.onActivate,
+    required this.onPlaybackHandoff,
+    required this.onOrganizeItem,
+    required this.onOrganizePersonalItem,
+    required this.credentialStore,
+    required this.seriesInfoLoader,
+    required this.initializeController,
+    this.artworkBuilder,
+    this.artworkLoader,
+  });
+
+  final HomeController controller;
+  final HomeSession session;
+  final FocusNode initialFocus;
+  final ValueChanged<FocusNode> onContentFocus;
+  final VoidCallback onOpenRail;
+  final VoidCallback onBrowseLive;
+  final VoidCallback onBrowseMovies;
+  final VoidCallback onBrowseSeries;
+  final VoidCallback onAddSource;
+  final ValueChanged<LibraryCatalogItem>? onActivate;
+  final ValueChanged<PlaybackHandoff>? onPlaybackHandoff;
+  final ValueChanged<LibraryCatalogItem>? onOrganizeItem;
+  final ValueChanged<PersonalLibraryItem>? onOrganizePersonalItem;
+  final CredentialStore? credentialStore;
+  final SeriesInfoLoader? seriesInfoLoader;
+  final bool initializeController;
+  final HomeArtworkBuilder? artworkBuilder;
+  final ArtworkProvider? artworkLoader;
+
+  @override
+  State<_ProductionHome> createState() => _ProductionHomeState();
+}
+
+class _ProductionHomeState extends State<_ProductionHome> {
+  late final ScrollController _horizontalController;
+  List<FocusNode> _nodes = const [];
+  List<String> _nodeItemIds = const [];
+  final Map<String, List<FocusNode>> _pinnedNodes = {};
+  final Map<String, List<String>> _pinnedItemIds = {};
+  final Map<String, ScrollController> _pinnedScroll = {};
+  _HomeContinuation? _continuation;
+  late SeriesInfoLoader _seriesInfoLoader;
+  int _seriesRequest = 0;
+  int _focusRepairGeneration = 0;
+  bool _repairingContentFocus = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _horizontalController = ScrollController(
+      initialScrollOffset: widget.session.horizontalOffset,
+    )..addListener(_rememberOffset);
+    _seriesInfoLoader =
+        widget.seriesInfoLoader ??
+        XtreamSeriesInfoLoader(credentialStore: widget.credentialStore);
+    widget.controller.addListener(_controllerChanged);
+    _repairSessionSelection();
+    _syncFocusNodes();
+    _syncPinnedFocusNodes();
+    if (widget.initializeController) {
+      unawaited(widget.controller.initialize());
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProductionHome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_controllerChanged);
+      widget.controller.addListener(_controllerChanged);
+      _repairSessionSelection();
+      _syncFocusNodes();
+      _syncPinnedFocusNodes();
+      if (widget.initializeController) {
+        unawaited(widget.controller.initialize());
+      }
+    }
+    if (oldWidget.seriesInfoLoader != widget.seriesInfoLoader ||
+        oldWidget.credentialStore != widget.credentialStore) {
+      _cancelSeriesRequest();
+      _seriesInfoLoader =
+          widget.seriesInfoLoader ??
+          XtreamSeriesInfoLoader(credentialStore: widget.credentialStore);
+    }
+  }
+
+  void _controllerChanged() {
+    if (!mounted) return;
+    final repairGeneration = ++_focusRepairGeneration;
+    _repairingContentFocus = true;
+    final selectedNode = _selectedPinnedNode;
+    final restorePinnedFocus = selectedNode?.hasFocus ?? false;
+    final previousShelfKeys = _pinnedItemIds.keys.toList(growable: false);
+    final previousItems = {
+      for (final entry in _pinnedItemIds.entries)
+        entry.key: List<String>.of(entry.value),
+    };
+    _repairSessionSelection(
+      previousShelfKeys: previousShelfKeys,
+      previousItems: previousItems,
+    );
+    _syncFocusNodes();
+    _syncPinnedFocusNodes();
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || repairGeneration != _focusRepairGeneration) return;
+      _repairingContentFocus = false;
+      if (restorePinnedFocus) _requestSessionFocus();
+    });
+  }
+
+  FocusNode? get _selectedPinnedNode {
+    final key = widget.session.focusedShelfKey;
+    final itemId = widget.session.focusedLibraryItemId;
+    if (key == null || key == 'recent' || itemId == null) return null;
+    final index = (_pinnedItemIds[key] ?? const <String>[]).indexOf(itemId);
+    final nodes = _pinnedNodes[key] ?? const <FocusNode>[];
+    return index >= 0 && index < nodes.length ? nodes[index] : null;
+  }
+
+  void _repairSessionSelection({
+    List<String> previousShelfKeys = const [],
+    Map<String, List<String>> previousItems = const {},
+  }) {
+    if (widget.controller.phase != HomeLoadPhase.ready) return;
+    final recentIds = widget.controller.recentlyWatched
+        .map((entry) => entry.item.libraryItemId)
+        .toList(growable: false);
+    final shelves = widget.controller.pinnedShelves;
+    final selectedKey = widget.session.focusedShelfKey;
+    final selectedId = widget.session.focusedLibraryItemId;
+
+    if (selectedKey == 'recent' && recentIds.contains(selectedId)) return;
+    final selectedShelfIndex = shelves.indexWhere(
+      (shelf) => shelf.collection.reference.key == selectedKey,
+    );
+    if (selectedShelfIndex >= 0 &&
+        shelves[selectedShelfIndex].items.any(
+          (item) => item.libraryItemId == selectedId,
+        )) {
+      return;
+    }
+
+    final previousShelfIndex = previousShelfKeys.indexOf(selectedKey ?? '');
+    final previousItemIndex =
+        previousItems[selectedKey]?.indexOf(selectedId ?? '') ?? -1;
+    if (selectedShelfIndex >= 0 &&
+        shelves[selectedShelfIndex].items.isNotEmpty) {
+      final items = shelves[selectedShelfIndex].items;
+      _selectPersonalItem(
+        shelves[selectedShelfIndex],
+        items[math.min(math.max(previousItemIndex, 0), items.length - 1)],
+      );
+      return;
+    }
+
+    if (shelves.isNotEmpty) {
+      final start = previousShelfIndex < 0
+          ? 0
+          : math.min(previousShelfIndex, shelves.length - 1);
+      for (var index = start; index < shelves.length; index++) {
+        if (shelves[index].items.isNotEmpty) {
+          _selectPersonalItem(shelves[index], shelves[index].items.first);
+          return;
+        }
+      }
+      for (var index = start - 1; index >= 0; index--) {
+        if (shelves[index].items.isNotEmpty) {
+          _selectPersonalItem(shelves[index], shelves[index].items.first);
+          return;
+        }
+      }
+    }
+    if (recentIds.isNotEmpty) {
+      widget.session
+        ..focusedShelfKey = 'recent'
+        ..focusedLibraryItemId = recentIds.first;
+      return;
+    }
+    if (shelves.isNotEmpty) {
+      widget.session
+        ..focusedShelfKey = shelves.first.collection.reference.key
+        ..focusedLibraryItemId = null;
+    }
+  }
+
+  void _selectPersonalItem(HomePersonalShelf shelf, PersonalLibraryItem item) {
+    widget.session
+      ..focusedShelfKey = shelf.collection.reference.key
+      ..focusedLibraryItemId = item.libraryItemId;
+  }
+
+  void _syncFocusNodes() {
+    final items = widget.controller.phase == HomeLoadPhase.ready
+        ? widget.controller.recentlyWatched
+        : const <RecentlyWatchedItem>[];
+    final ids = items
+        .map((entry) => entry.item.libraryItemId)
+        .toList(growable: false);
+    if (_sameStrings(ids, _nodeItemIds)) return;
+    final previous = <String, FocusNode>{
+      for (var index = 0; index < _nodeItemIds.length; index++)
+        _nodeItemIds[index]: _nodes[index],
+    };
+    if (ids.isEmpty) {
+      for (final node in previous.values) {
+        if (node != widget.initialFocus) node.dispose();
+      }
+      _nodes = const [];
+      _nodeItemIds = const [];
+      return;
+    }
+    final pinsOwnInitial = widget.controller.pinnedShelves.isNotEmpty;
+    final selectedId =
+        widget.session.focusedShelfKey == 'recent' &&
+            ids.contains(widget.session.focusedLibraryItemId)
+        ? widget.session.focusedLibraryItemId!
+        : ids.first;
+    final initialId = previous.entries
+        .where((entry) => identical(entry.value, widget.initialFocus))
+        .map((entry) => entry.key)
+        .firstOrNull;
+    final initialTarget =
+        !pinsOwnInitial && initialId != null && ids.contains(initialId)
+        ? initialId
+        : selectedId;
+    final nextNodes = <FocusNode>[];
+    final retained = <FocusNode>{};
+    for (var index = 0; index < ids.length; index++) {
+      final id = ids[index];
+      FocusNode node;
+      if (!pinsOwnInitial && id == initialTarget) {
+        node = widget.initialFocus;
+      } else {
+        final existing = previous[id];
+        node = existing != null && existing != widget.initialFocus
+            ? existing
+            : FocusNode(debugLabel: 'home recent item $index');
+      }
+      nextNodes.add(node);
+      retained.add(node);
+    }
+    for (final node in previous.values) {
+      if (node != widget.initialFocus && !retained.contains(node)) {
+        node.dispose();
+      }
+    }
+    _nodes = List.unmodifiable(nextNodes);
+    _nodeItemIds = ids;
+  }
+
+  void _syncPinnedFocusNodes() {
+    final shelves = widget.controller.phase == HomeLoadPhase.ready
+        ? widget.controller.pinnedShelves
+        : const <HomePersonalShelf>[];
+    final activeKeys = shelves
+        .map((shelf) => shelf.collection.reference.key)
+        .toSet();
+    for (final key in _pinnedNodes.keys.toList()) {
+      if (activeKeys.contains(key)) continue;
+      for (final node in _pinnedNodes.remove(key)!) {
+        if (node != widget.initialFocus) node.dispose();
+      }
+      _pinnedItemIds.remove(key);
+      _pinnedScroll.remove(key)?.dispose();
+    }
+    for (final shelf in shelves) {
+      final key = shelf.collection.reference.key;
+      final ids = shelf.items.map((item) => item.libraryItemId).toList();
+      final previousIds = _pinnedItemIds[key] ?? const <String>[];
+      final previousNodes = _pinnedNodes[key] ?? const <FocusNode>[];
+      final previous = <String, FocusNode>{
+        for (var index = 0; index < previousIds.length; index++)
+          previousIds[index]: previousNodes[index],
+      };
+      final firstPinnedShelf = shelves.first.collection.reference.key == key;
+      final selectedKey = widget.session.focusedShelfKey;
+      final selectedId = widget.session.focusedLibraryItemId;
+      final preferredId = selectedKey == key && ids.contains(selectedId)
+          ? selectedId
+          : ids.firstOrNull;
+      final next = <FocusNode>[];
+      final retained = <FocusNode>{};
+      for (var index = 0; index < ids.length; index++) {
+        final id = ids[index];
+        final shouldOwnInitial = firstPinnedShelf && id == preferredId;
+        final old = previous[id];
+        final node = shouldOwnInitial
+            ? widget.initialFocus
+            : old != null && old != widget.initialFocus
+            ? old
+            : FocusNode(debugLabel: 'home pinned $key item $index');
+        next.add(node);
+        retained.add(node);
+      }
+      for (final node in previous.values) {
+        if (node != widget.initialFocus && !retained.contains(node)) {
+          node.dispose();
+        }
+      }
+      _pinnedNodes[key] = List.unmodifiable(next);
+      _pinnedItemIds[key] = List.unmodifiable(ids);
+      _pinnedScroll.putIfAbsent(
+        key,
+        () =>
+            ScrollController(
+              initialScrollOffset: widget.session.pinnedOffsets[key] ?? 0,
+            )..addListener(() {
+              final controller = _pinnedScroll[key];
+              if (controller?.hasClients == true) {
+                widget.session.pinnedOffsets[key] = controller!.offset;
+              }
+            }),
+      );
+    }
+  }
+
+  void _rememberOffset() {
+    if (_horizontalController.hasClients) {
+      widget.session.horizontalOffset = _horizontalController.offset;
+    }
+  }
+
+  void _moveFocus(int index, LogicalKeyboardKey key) {
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      if (index == 0) {
+        widget.onOpenRail();
+      } else {
+        _nodes[index - 1].requestFocus();
+      }
+    } else if (key == LogicalKeyboardKey.arrowRight &&
+        index < _nodes.length - 1) {
+      _nodes[index + 1].requestFocus();
+    } else if (key == LogicalKeyboardKey.arrowUp &&
+        widget.controller.pinnedShelves.isNotEmpty) {
+      final last = widget.controller.pinnedShelves.last;
+      final nodes = _pinnedNodes[last.collection.reference.key] ?? const [];
+      if (nodes.isNotEmpty) {
+        nodes[math.min(index, nodes.length - 1)].requestFocus();
+      }
+    }
+  }
+
+  void _movePinnedFocus(int shelfIndex, int itemIndex, LogicalKeyboardKey key) {
+    final shelves = widget.controller.pinnedShelves;
+    final shelf = shelves[shelfIndex];
+    final nodes = _pinnedNodes[shelf.collection.reference.key] ?? const [];
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      if (itemIndex == 0) {
+        widget.onOpenRail();
+      } else {
+        nodes[itemIndex - 1].requestFocus();
+      }
+      return;
+    }
+    if (key == LogicalKeyboardKey.arrowRight && itemIndex + 1 < nodes.length) {
+      nodes[itemIndex + 1].requestFocus();
+      return;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      if (shelfIndex > 0) {
+        final prior = shelves[shelfIndex - 1];
+        final priorNodes =
+            _pinnedNodes[prior.collection.reference.key] ?? const [];
+        if (priorNodes.isNotEmpty) {
+          priorNodes[math.min(itemIndex, priorNodes.length - 1)].requestFocus();
+        }
+      }
+      return;
+    }
+    if (key == LogicalKeyboardKey.arrowDown) {
+      if (shelfIndex + 1 < shelves.length) {
+        final next = shelves[shelfIndex + 1];
+        final nextNodes =
+            _pinnedNodes[next.collection.reference.key] ?? const [];
+        if (nextNodes.isNotEmpty) {
+          nextNodes[math.min(itemIndex, nextNodes.length - 1)].requestFocus();
+        }
+      } else if (_nodes.isNotEmpty) {
+        _nodes[math.min(itemIndex, _nodes.length - 1)].requestFocus();
+      }
+    }
+  }
+
+  void _focusItem(int index, BuildContext cardContext) {
+    if (_repairingContentFocus) return;
+    final item = widget.controller.recentlyWatched[index];
+    widget.session
+      ..focusedShelfKey = 'recent'
+      ..focusedLibraryItemId = item.item.libraryItemId;
+    widget.onContentFocus(_nodes[index]);
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Scrollable.ensureVisible(
+        cardContext,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutCubic,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      );
+    });
+  }
+
+  void _focusPinnedItem(
+    HomePersonalShelf shelf,
+    int index,
+    BuildContext cardContext,
+  ) {
+    if (_repairingContentFocus) return;
+    final item = shelf.items[index];
+    final key = shelf.collection.reference.key;
+    widget.session
+      ..focusedShelfKey = key
+      ..focusedLibraryItemId = item.libraryItemId;
+    final node = _pinnedNodes[key]![index];
+    widget.onContentFocus(node);
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Scrollable.ensureVisible(
+        cardContext,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutCubic,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      );
+    });
+  }
+
+  void _activateItem(LibraryCatalogItem item) {
+    widget.session.focusedLibraryItemId = item.libraryItemId;
+    widget.onActivate?.call(item);
+    switch (item.kind) {
+      case SourceMediaKind.live:
+        _activateLive(item);
+      case SourceMediaKind.movies:
+        _openMovie(item);
+      case SourceMediaKind.series:
+        _openSeries(item);
+    }
+  }
+
+  void _activateLive(LibraryCatalogItem item) {
+    try {
+      widget.onPlaybackHandoff?.call(playbackHandoffForLibrary(item));
+    } on ContinuationException catch (error) {
+      setState(
+        () => _continuation = _FailureHomeContinuation(item, error.failure),
+      );
+    }
+  }
+
+  void _openMovie(LibraryCatalogItem item) {
+    try {
+      final handoff = playbackHandoffForLibrary(item);
+      if (handoff is! MoviePlaybackHandoff) {
+        throw const ContinuationException(ContinuationFailure.invalidReference);
+      }
+      setState(() => _continuation = _MovieHomeContinuation(item, handoff));
+    } on ContinuationException catch (error) {
+      setState(
+        () => _continuation = _FailureHomeContinuation(item, error.failure),
+      );
+    }
+  }
+
+  void _openSeries(LibraryCatalogItem item) {
+    _cancelSeriesRequest();
+    try {
+      seriesReferenceForLibrary(item);
+    } on ContinuationException catch (error) {
+      setState(
+        () => _continuation = _FailureHomeContinuation(item, error.failure),
+      );
+      return;
+    }
+    unawaited(_loadSeries(item));
+  }
+
+  Future<void> _loadSeries(LibraryCatalogItem item) async {
+    final request = ++_seriesRequest;
+    setState(
+      () => _continuation = _SeriesHomeContinuation(item, loading: true),
+    );
+    try {
+      final source = await widget.controller.data.loadReadySourceById(
+        item.sourceId,
+      );
+      if (source == null) {
+        throw const ContinuationException(
+          ContinuationFailure.credentialsUnavailable,
+        );
+      }
+      final info = await _seriesInfoLoader.load(
+        source: source,
+        series: _browseItem(item),
+      );
+      if (!mounted || request != _seriesRequest) return;
+      setState(
+        () => _continuation = _SeriesHomeContinuation(
+          item,
+          loading: false,
+          info: info,
+        ),
+      );
+    } on ContinuationException catch (error) {
+      if (mounted && request == _seriesRequest) {
+        setState(
+          () => _continuation = _SeriesHomeContinuation(
+            item,
+            loading: false,
+            failure: error.failure,
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted && request == _seriesRequest) {
+        setState(
+          () => _continuation = _SeriesHomeContinuation(
+            item,
+            loading: false,
+            failure: ContinuationFailure.unavailable,
+          ),
+        );
+      }
+    }
+  }
+
+  BrowseCatalogItem _browseItem(LibraryCatalogItem item) => BrowseCatalogItem(
+    id: item.catalogItemId,
+    sourceId: item.sourceId,
+    kind: item.kind,
+    title: item.title,
+    artworkLocator: item.artworkLocator,
+    playbackRef: item.playbackRef,
+  );
+
+  void _cancelSeriesRequest() {
+    ++_seriesRequest;
+    _seriesInfoLoader.cancel();
+  }
+
+  void _returnToHome() {
+    _cancelSeriesRequest();
+    setState(() => _continuation = null);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _requestSessionFocus();
+    });
+  }
+
+  void _requestSessionFocus() {
+    final selectedId = widget.session.focusedLibraryItemId;
+    final shelfKey = widget.session.focusedShelfKey;
+    if (shelfKey != null && shelfKey != 'recent') {
+      final index = (_pinnedItemIds[shelfKey] ?? const <String>[]).indexOf(
+        selectedId ?? '',
+      );
+      final nodes = _pinnedNodes[shelfKey] ?? const <FocusNode>[];
+      if (index >= 0 && index < nodes.length) {
+        nodes[index].requestFocus();
+        return;
+      }
+    }
+    if (_nodes.isNotEmpty) {
+      final index = _nodeItemIds.indexOf(selectedId ?? '');
+      _nodes[index < 0 ? 0 : index].requestFocus();
+      return;
+    }
+    final firstPinned = widget.controller.pinnedShelves.firstOrNull;
+    if (firstPinned != null) {
+      final nodes =
+          _pinnedNodes[firstPinned.collection.reference.key] ?? const [];
+      (nodes.firstOrNull ?? widget.initialFocus).requestFocus();
+    }
+  }
+
+  @override
+  void dispose() {
+    _cancelSeriesRequest();
+    widget.controller.removeListener(_controllerChanged);
+    for (final node in _nodes) {
+      if (node != widget.initialFocus) node.dispose();
+    }
+    for (final nodes in _pinnedNodes.values) {
+      for (final node in nodes) {
+        if (node != widget.initialFocus) node.dispose();
+      }
+    }
+    for (final controller in _pinnedScroll.values) {
+      controller.dispose();
+    }
+    _horizontalController
+      ..removeListener(_rememberOffset)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final continuation = _continuation;
+    if (continuation != null) return _buildContinuation(continuation);
+    return switch (widget.controller.phase) {
+      HomeLoadPhase.initializing => _HomeLoading(
+        focusNode: widget.initialFocus,
+        onContentFocus: widget.onContentFocus,
+        onOpenRail: widget.onOpenRail,
+      ),
+      HomeLoadPhase.noSources => _NoSourceHome(
+        focusNode: widget.initialFocus,
+        onContentFocus: widget.onContentFocus,
+        onOpenRail: widget.onOpenRail,
+        onAddSource: widget.onAddSource,
+      ),
+      HomeLoadPhase.noHistory => _NoPersonalizationHome(
+        showFixtureCopy: false,
+        focusNode: widget.initialFocus,
+        onContentFocus: widget.onContentFocus,
+        onOpenRail: widget.onOpenRail,
+        onBrowseLive: widget.onBrowseLive,
+        onBrowseMovies: widget.onBrowseMovies,
+        onBrowseSeries: widget.onBrowseSeries,
+      ),
+      HomeLoadPhase.failure => _HomeReadFailure(
+        focusNode: widget.initialFocus,
+        onContentFocus: widget.onContentFocus,
+        onOpenRail: widget.onOpenRail,
+        onRetry: () => unawaited(widget.controller.retry()),
+      ),
+      HomeLoadPhase.ready => _buildHome(context),
+    };
+  }
+
+  Widget _buildContinuation(_HomeContinuation continuation) =>
+      switch (continuation) {
+        _MovieHomeContinuation(:final item, :final handoff) =>
+          MovieContinuation(
+            title: item.title,
+            artworkLocator: item.artworkLocator,
+            artworkLoader: widget.artworkLoader,
+            onOrganize: widget.onOrganizeItem == null
+                ? null
+                : () => widget.onOrganizeItem!(item),
+            onBack: _returnToHome,
+            onPlay: () => widget.onPlaybackHandoff?.call(handoff),
+          ),
+        _SeriesHomeContinuation(
+          :final item,
+          :final loading,
+          :final info,
+          :final failure,
+        ) =>
+          SeriesContinuation(
+            title: item.title,
+            artworkLocator: item.artworkLocator,
+            artworkLoader: widget.artworkLoader,
+            onOrganize: widget.onOrganizeItem == null
+                ? null
+                : () => widget.onOrganizeItem!(item),
+            loading: loading,
+            info: info,
+            failure: failure,
+            onBack: _returnToHome,
+            onRetry: () => _openSeries(item),
+            onEpisodeActivated: (episode) => widget.onPlaybackHandoff?.call(
+              EpisodePlaybackHandoff(
+                sourceId: item.sourceId,
+                title: episode.title,
+                providerItemId: episode.providerItemId,
+                extension: episode.extension,
+                libraryItemId: item.libraryItemId,
+              ),
+            ),
+          ),
+        _FailureHomeContinuation(:final item, :final failure) =>
+          ContinuationFailureView(
+            title: item.title,
+            failure: failure,
+            onBack: _returnToHome,
+            onRetry: () => _activateItem(item),
+          ),
+      };
+
+  Widget _buildHome(BuildContext context) {
+    if (widget.controller.recentlyWatched.isEmpty) {
+      return _buildPinnedOnly(context);
+    }
+    return _buildRecentlyWatched(context);
+  }
+
+  Widget _buildPinnedOnly(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final textScale = MediaQuery.textScalerOf(context).scale(1);
+      final narrow = constraints.maxWidth < 780 || textScale > 1.35;
+      return ColoredBox(
+        color: _graphite,
+        child: SafeArea(
+          left: false,
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(narrow ? 24 : 48, 22, 32, 48),
+            children: [
+              _HomeHeader(narrow: narrow, showFixtureCopy: false),
+              if (widget.controller.showingSavedHistory) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  'Could not refresh Home. Showing saved local shelves.',
+                  style: TextStyle(color: _quietText, fontSize: 13),
+                ),
+              ],
+              const SizedBox(height: 30),
+              ..._buildPinnedShelfWidgets(narrow),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+
+  List<Widget> _buildPinnedShelfWidgets(bool narrow) {
+    final shelves = widget.controller.pinnedShelves;
+    return [
+      for (var shelfIndex = 0; shelfIndex < shelves.length; shelfIndex++) ...[
+        _PinnedHomeShelf(
+          shelf: shelves[shelfIndex],
+          nodes:
+              _pinnedNodes[shelves[shelfIndex].collection.reference.key] ??
+              const [],
+          controller:
+              _pinnedScroll[shelves[shelfIndex].collection.reference.key],
+          selectedLibraryItemId:
+              widget.session.focusedShelfKey ==
+                  shelves[shelfIndex].collection.reference.key
+              ? widget.session.focusedLibraryItemId
+              : null,
+          narrow: narrow,
+          artworkLoader: widget.artworkLoader,
+          onFocused: (index, context) =>
+              _focusPinnedItem(shelves[shelfIndex], index, context),
+          onMove: (index, key) => _movePinnedFocus(shelfIndex, index, key),
+          onOpenRail: widget.onOpenRail,
+          onActivate: (item) {
+            final exact = item.playableItem;
+            if (exact != null) _activateItem(exact);
+          },
+          onOrganize: widget.onOrganizePersonalItem,
+          emptyFocus:
+              widget.controller.recentlyWatched.isEmpty && shelfIndex == 0
+              ? widget.initialFocus
+              : null,
+        ),
+        const SizedBox(height: 32),
+      ],
+    ];
+  }
+
+  Widget _buildRecentlyWatched(BuildContext context) {
+    final items = widget.controller.recentlyWatched;
+    final selectedId = widget.session.focusedLibraryItemId;
+    final selected = items.firstWhere(
+      (entry) => entry.item.libraryItemId == selectedId,
+      orElse: () => items.first,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final narrow = constraints.maxWidth < 780 || textScale > 1.35;
+        final carouselHeight = 220 + ((textScale - 1).clamp(0.0, 1.0) * 100);
+        final details = _RecentShelfDetails(
+          item: selected,
+          fillHeight: !narrow,
+        );
+        final carousel = ListView.separated(
+          key: const PageStorageKey('home-recently-watched-carousel'),
+          controller: _horizontalController,
+          scrollDirection: Axis.horizontal,
+          itemCount: items.length,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          separatorBuilder: (_, _) => const SizedBox(width: 14),
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return SizedBox(
+              width: narrow ? 144 : 172,
+              child: _RecentCard(
+                item: item,
+                focusNode: _nodes[index],
+                autofocus:
+                    item.item.libraryItemId ==
+                    widget.session.focusedLibraryItemId,
+                artworkBuilder: widget.artworkBuilder,
+                onFocused: (cardContext) => _focusItem(index, cardContext),
+                onMove: (key) => _moveFocus(index, key),
+                onOpenRail: widget.onOpenRail,
+                onActivate: () => _activateItem(item.item),
+                onOrganize: widget.onOrganizeItem == null
+                    ? null
+                    : () => widget.onOrganizeItem!(item.item),
+              ),
+            );
+          },
+        );
+        return ColoredBox(
+          color: _graphite,
+          child: SafeArea(
+            left: false,
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(narrow ? 24 : 48, 22, 32, 48),
+              children: [
+                _HomeHeader(narrow: narrow, showFixtureCopy: false),
+                if (widget.controller.showingSavedHistory) ...[
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Could not refresh Home. Showing saved local shelves.',
+                    style: TextStyle(color: _quietText, fontSize: 13),
+                  ),
+                ],
+                const SizedBox(height: 30),
+                if (widget.controller.pinnedShelves.isNotEmpty) ...[
+                  ..._buildPinnedShelfWidgets(narrow),
+                  const SizedBox(height: 2),
+                ],
+                if (narrow) ...[
+                  details,
+                  const SizedBox(height: 18),
+                  SizedBox(height: carouselHeight, child: carousel),
+                ] else
+                  SizedBox(
+                    height: 264,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(width: 248, child: details),
+                        const SizedBox(width: 24),
+                        Expanded(child: carousel),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PinnedHomeShelf extends StatelessWidget {
+  const _PinnedHomeShelf({
+    required this.shelf,
+    required this.nodes,
+    required this.controller,
+    required this.selectedLibraryItemId,
+    required this.narrow,
+    required this.artworkLoader,
+    required this.onFocused,
+    required this.onMove,
+    required this.onOpenRail,
+    required this.onActivate,
+    required this.onOrganize,
+    required this.emptyFocus,
+  });
+
+  final HomePersonalShelf shelf;
+  final List<FocusNode> nodes;
+  final ScrollController? controller;
+  final String? selectedLibraryItemId;
+  final bool narrow;
+  final ArtworkProvider? artworkLoader;
+  final void Function(int index, BuildContext context) onFocused;
+  final void Function(int index, LogicalKeyboardKey key) onMove;
+  final VoidCallback onOpenRail;
+  final ValueChanged<PersonalLibraryItem> onActivate;
+  final ValueChanged<PersonalLibraryItem>? onOrganize;
+  final FocusNode? emptyFocus;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              shelf.collection.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _warmWhite,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Text(
+            '${shelf.collection.itemCount} items',
+            style: const TextStyle(color: _quietText, fontSize: 13),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      if (shelf.items.isEmpty)
+        Focus(
+          focusNode: emptyFocus,
+          onKeyEvent: (_, event) {
+            if (event is KeyDownEvent &&
+                (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+                    event.logicalKey == LogicalKeyboardKey.escape ||
+                    event.logicalKey == LogicalKeyboardKey.browserBack)) {
+              onOpenRail();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: const DecoratedBox(
+            decoration: BoxDecoration(
+              color: _surface,
+              border: Border.fromBorderSide(BorderSide(color: _line)),
+              borderRadius: BorderRadius.all(Radius.circular(8)),
+            ),
+            child: SizedBox(
+              height: 82,
+              child: Center(
+                child: Text(
+                  'This pinned collection is empty.',
+                  style: TextStyle(color: _quietText, fontSize: 14),
+                ),
+              ),
+            ),
+          ),
+        )
+      else
+        SizedBox(
+          height: 196,
+          child: ListView.separated(
+            controller: controller,
+            scrollDirection: Axis.horizontal,
+            itemCount: shelf.items.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 14),
+            itemBuilder: (context, index) {
+              final item = shelf.items[index];
+              return SizedBox(
+                width: narrow ? 144 : 172,
+                child: _PinnedHomeCard(
+                  item: item,
+                  focusNode: nodes[index],
+                  autofocus: item.libraryItemId == selectedLibraryItemId,
+                  artworkLoader: artworkLoader,
+                  onFocused: (cardContext) => onFocused(index, cardContext),
+                  onMove: (key) => onMove(index, key),
+                  onOpenRail: onOpenRail,
+                  onActivate: () => onActivate(item),
+                  onOrganize: onOrganize == null
+                      ? null
+                      : () => onOrganize!(item),
+                ),
+              );
+            },
+          ),
+        ),
+    ],
+  );
+}
+
+class _PinnedHomeCard extends StatefulWidget {
+  const _PinnedHomeCard({
+    required this.item,
+    required this.focusNode,
+    required this.autofocus,
+    required this.artworkLoader,
+    required this.onFocused,
+    required this.onMove,
+    required this.onOpenRail,
+    required this.onActivate,
+    required this.onOrganize,
+  });
+
+  final PersonalLibraryItem item;
+  final FocusNode focusNode;
+  final bool autofocus;
+  final ArtworkProvider? artworkLoader;
+  final ValueChanged<BuildContext> onFocused;
+  final ValueChanged<LogicalKeyboardKey> onMove;
+  final VoidCallback onOpenRail;
+  final VoidCallback onActivate;
+  final VoidCallback? onOrganize;
+
+  @override
+  State<_PinnedHomeCard> createState() => _PinnedHomeCardState();
+}
+
+class _PinnedHomeCardState extends State<_PinnedHomeCard> {
+  bool _focused = false;
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = _focused || _hovered || widget.focusNode.hasFocus;
+    return Focus(
+      focusNode: widget.focusNode,
+      autofocus: widget.autofocus,
+      onFocusChange: (focused) {
+        setState(() => _focused = focused);
+        if (focused) widget.onFocused(context);
+      },
+      onKeyEvent: (_, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        final key = event.logicalKey;
+        if (key == LogicalKeyboardKey.escape ||
+            key == LogicalKeyboardKey.browserBack) {
+          widget.onOpenRail();
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.select) {
+          if (widget.item.isAvailable) widget.onActivate();
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.contextMenu) {
+          widget.onOrganize?.call();
+          return widget.onOrganize == null
+              ? KeyEventResult.ignored
+              : KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.arrowLeft ||
+            key == LogicalKeyboardKey.arrowRight ||
+            key == LogicalKeyboardKey.arrowUp ||
+            key == LogicalKeyboardKey.arrowDown) {
+          widget.onMove(key);
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Semantics(
+        button: widget.item.isAvailable,
+        enabled: widget.item.isAvailable,
+        label:
+            '${widget.item.title}, ${widget.item.kind.label}, ${widget.item.isAvailable ? widget.item.sourceDisplayName : 'Source unavailable'}',
+        customSemanticsActions: widget.onOrganize == null
+            ? null
+            : {
+                const CustomSemanticsAction(label: 'Organize item'):
+                    widget.onOrganize!,
+              },
+        child: MouseRegion(
+          cursor: widget.item.isAvailable
+              ? SystemMouseCursors.click
+              : MouseCursor.defer,
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: GestureDetector(
+            onTap: widget.item.isAvailable
+                ? () {
+                    widget.focusNode.requestFocus();
+                    widget.onActivate();
+                  }
+                : null,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: AnimatedScale(
+                    scale: active ? 1.025 : 1,
+                    duration: const Duration(milliseconds: 120),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: _surface,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _focused ? _amber : _line,
+                          width: 2,
+                        ),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(
+                              child: SourceArtwork(
+                                locator: widget.item.isAvailable
+                                    ? widget.item.artworkLocator
+                                    : null,
+                                kind: widget.item.kind,
+                                loader: widget.artworkLoader,
+                                focused: _focused,
+                                loadWhenVisible: true,
+                                width: double.infinity,
+                                height: double.infinity,
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(10, 8, 10, 9),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    widget.item.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: _warmWhite,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    widget.item.isAvailable
+                                        ? widget.item.kind.label
+                                        : 'Source unavailable',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: _quietText,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                if (widget.onOrganize != null && active)
+                  Positioned(
+                    right: 7,
+                    top: 7,
+                    child: Tooltip(
+                      message: 'Organize item',
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          widget.focusNode.requestFocus();
+                          widget.onOrganize!();
+                        },
+                        child: const SizedBox.square(
+                          dimension: 48,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Color(0xDD343534),
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(24),
+                              ),
+                            ),
+                            child: Center(
+                              child: Icon(
+                                Icons.bookmark_add_outlined,
+                                size: 18,
+                                color: _warmWhite,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+sealed class _HomeContinuation {
+  const _HomeContinuation(this.item);
+
+  final LibraryCatalogItem item;
+}
+
+final class _MovieHomeContinuation extends _HomeContinuation {
+  const _MovieHomeContinuation(super.item, this.handoff);
+
+  final MoviePlaybackHandoff handoff;
+}
+
+final class _SeriesHomeContinuation extends _HomeContinuation {
+  const _SeriesHomeContinuation(
+    super.item, {
+    required this.loading,
+    this.info,
+    this.failure,
+  });
+
+  final bool loading;
+  final SeriesInfo? info;
+  final ContinuationFailure? failure;
+}
+
+final class _FailureHomeContinuation extends _HomeContinuation {
+  const _FailureHomeContinuation(super.item, this.failure);
+
+  final ContinuationFailure failure;
+}
+
+bool _sameStrings(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
+class _HomeLoading extends StatelessWidget {
+  const _HomeLoading({
+    required this.focusNode,
+    required this.onContentFocus,
+    required this.onOpenRail,
+  });
+
+  final FocusNode focusNode;
+  final ValueChanged<FocusNode> onContentFocus;
+  final VoidCallback onOpenRail;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: _graphite,
+    child: SafeArea(
+      left: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(48, 22, 32, 48),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _HomeHeader(narrow: false, showFixtureCopy: false),
+            const Spacer(),
+            Focus(
+              focusNode: focusNode,
+              autofocus: true,
+              onFocusChange: (focused) {
+                if (focused) onContentFocus(focusNode);
+              },
+              onKeyEvent: (_, event) {
+                if (event is KeyDownEvent &&
+                    (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+                        event.logicalKey == LogicalKeyboardKey.escape ||
+                        event.logicalKey == LogicalKeyboardKey.browserBack)) {
+                  onOpenRail();
+                  return KeyEventResult.handled;
+                }
+                return KeyEventResult.ignored;
+              },
+              child: Semantics(
+                liveRegion: true,
+                label: 'Loading Home',
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox.square(
+                      dimension: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _amber,
+                      ),
+                    ),
+                    SizedBox(width: 12),
+                    Text(
+                      'Loading Home',
+                      style: TextStyle(color: _quietText, fontSize: 16),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const Spacer(),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _HomeReadFailure extends StatelessWidget {
+  const _HomeReadFailure({
+    required this.focusNode,
+    required this.onContentFocus,
+    required this.onOpenRail,
+    required this.onRetry,
+  });
+
+  final FocusNode focusNode;
+  final ValueChanged<FocusNode> onContentFocus;
+  final VoidCallback onOpenRail;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: _graphite,
+    child: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Padding(
+          padding: const EdgeInsets.all(40),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.history_toggle_off, color: _quietText, size: 34),
+              const SizedBox(height: 20),
+              const Text(
+                'Home could not be loaded',
+                style: TextStyle(
+                  color: _warmWhite,
+                  fontSize: 30,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Your local catalog and watch history are unchanged.',
+                style: TextStyle(color: _quietText, fontSize: 16, height: 1.45),
+              ),
+              const SizedBox(height: 26),
+              _FocusedAction(
+                label: 'Retry',
+                focusNode: focusNode,
+                onFocused: () => onContentFocus(focusNode),
+                onLeft: onOpenRail,
+                onPressed: onRetry,
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _RecentShelfDetails extends StatelessWidget {
+  const _RecentShelfDetails({required this.item, required this.fillHeight});
+
+  final RecentlyWatchedItem item;
+  final bool fillHeight;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: _surface,
+      border: Border.all(color: _line),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Recently Watched',
+            style: TextStyle(
+              color: _warmWhite,
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            item.item.kind.label.toUpperCase(),
+            style: const TextStyle(
+              color: _amber,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.7,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            item.item.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _warmWhite,
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            item.item.sourceDisplayName,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: _quietText, fontSize: 14),
+          ),
+          if (fillHeight) const Spacer() else const SizedBox(height: 24),
+          const Text(
+            'Local watch history',
+            style: TextStyle(color: _quietText, fontSize: 12),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _RecentCard extends StatefulWidget {
+  const _RecentCard({
+    required this.item,
+    required this.focusNode,
+    required this.autofocus,
+    required this.onFocused,
+    required this.onMove,
+    required this.onOpenRail,
+    required this.onActivate,
+    this.onOrganize,
+    this.artworkBuilder,
+  });
+
+  final RecentlyWatchedItem item;
+  final FocusNode focusNode;
+  final bool autofocus;
+  final ValueChanged<BuildContext> onFocused;
+  final ValueChanged<LogicalKeyboardKey> onMove;
+  final VoidCallback onOpenRail;
+  final VoidCallback onActivate;
+  final VoidCallback? onOrganize;
+  final HomeArtworkBuilder? artworkBuilder;
+
+  @override
+  State<_RecentCard> createState() => _RecentCardState();
+}
+
+class _RecentCardState extends State<_RecentCard> {
+  bool _focused = false;
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final focused = _focused || widget.focusNode.hasFocus;
+    final active = focused || _hovered;
+    return Focus(
+      focusNode: widget.focusNode,
+      autofocus: widget.autofocus,
+      onFocusChange: (focused) {
+        setState(() => _focused = focused);
+        if (focused) widget.onFocused(context);
+      },
+      onKeyEvent: (_, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        final key = event.logicalKey;
+        if (key == LogicalKeyboardKey.escape ||
+            key == LogicalKeyboardKey.browserBack) {
+          widget.onOpenRail();
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.select) {
+          widget.onActivate();
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.contextMenu) {
+          widget.onOrganize?.call();
+          return widget.onOrganize == null
+              ? KeyEventResult.ignored
+              : KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.arrowLeft ||
+            key == LogicalKeyboardKey.arrowRight ||
+            key == LogicalKeyboardKey.arrowUp ||
+            key == LogicalKeyboardKey.arrowDown) {
+          widget.onMove(key);
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Semantics(
+        button: true,
+        label:
+            '${widget.item.item.title}, ${widget.item.item.kind.label}, ${widget.item.item.sourceDisplayName}',
+        customSemanticsActions: widget.onOrganize == null
+            ? null
+            : {
+                const CustomSemanticsAction(label: 'Organize item'):
+                    widget.onOrganize!,
+              },
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: GestureDetector(
+            onTap: () {
+              widget.focusNode.requestFocus();
+              widget.onActivate();
+            },
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: AnimatedScale(
+                    scale: active ? 1.025 : 1,
+                    duration: const Duration(milliseconds: 130),
+                    curve: Curves.easeOutCubic,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 130),
+                      curve: Curves.easeOutCubic,
+                      decoration: BoxDecoration(
+                        color: _raised,
+                        borderRadius: BorderRadius.circular(7),
+                        border: Border.all(
+                          color: focused ? _amber : _line,
+                          width: focused ? 2 : 1,
+                        ),
+                        boxShadow: active
+                            ? const [
+                                BoxShadow(
+                                  color: Color(0x55000000),
+                                  offset: Offset(0, 8),
+                                  blurRadius: 16,
+                                ),
+                              ]
+                            : null,
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: SizedBox.expand(
+                              child: RepaintBoundary(
+                                child:
+                                    widget.artworkBuilder?.call(
+                                      context,
+                                      widget.item,
+                                      focused,
+                                    ) ??
+                                    _HomeArtworkPlaceholder(
+                                      kind: widget.item.item.kind,
+                                    ),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.item.item.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: _warmWhite,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  widget.item.item.kind.label,
+                                  style: const TextStyle(
+                                    color: _quietText,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (widget.onOrganize != null)
+                  Positioned(
+                    top: 7,
+                    right: 7,
+                    child: Tooltip(
+                      message: 'Organize',
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          widget.focusNode.requestFocus();
+                          widget.onOrganize!();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(7),
+                          decoration: BoxDecoration(
+                            color: const Color(0xCC111212),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: _line),
+                          ),
+                          child: const Icon(
+                            Icons.bookmark_add_outlined,
+                            size: 18,
+                            color: _warmWhite,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeArtworkPlaceholder extends StatelessWidget {
+  const _HomeArtworkPlaceholder({required this.kind});
+
+  final SourceMediaKind kind;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: _surface,
+    child: Center(
+      child: Icon(
+        switch (kind) {
+          SourceMediaKind.live => Icons.live_tv_outlined,
+          SourceMediaKind.movies => Icons.movie_outlined,
+          SourceMediaKind.series => Icons.tv_outlined,
+        },
+        color: _quietText,
+        size: 34,
+      ),
+    ),
+  );
 }
 
 class _HomeHeader extends StatelessWidget {
@@ -1147,7 +3026,7 @@ class _NoSourceHome extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'Wabbit TV supplies no content. Connect your Xtream account to begin.',
+                  'Connect an Xtream or M3U source to begin.',
                   style: TextStyle(
                     color: _quietText,
                     fontSize: 16,

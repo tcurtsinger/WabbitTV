@@ -18,6 +18,35 @@ abstract interface class PlaybackTransport {
   Future<void> dispose();
 }
 
+/// Optional transport capability used by the Phase 5 Tracks ledger.
+///
+/// Keeping this separate from [PlaybackTransport] preserves the small player
+/// seam used by older fixtures while allowing the shell-lifetime playback
+/// manager to expose media-kit-free track values.
+abstract interface class PlaybackTrackTransport implements PlaybackTransport {
+  Future<void> selectAudioTrack(String id);
+  Future<void> selectSubtitleTrack(String id);
+}
+
+/// A safe track value for presentation. Engine objects never leave the
+/// transport boundary and the string form deliberately omits provider data.
+class PlaybackMediaTrack {
+  const PlaybackMediaTrack({
+    required this.id,
+    required this.label,
+    this.language,
+    this.isDefault = false,
+  });
+
+  final String id;
+  final String label;
+  final String? language;
+  final bool isDefault;
+
+  @override
+  String toString() => 'PlaybackMediaTrack(redacted)';
+}
+
 class PlaybackTransportState {
   const PlaybackTransportState({
     this.isPlaying = false,
@@ -28,6 +57,10 @@ class PlaybackTransportState {
     this.volume = 100,
     this.muted = false,
     this.hasError = false,
+    this.audioTracks = const [],
+    this.subtitleTracks = const [],
+    this.selectedAudioTrackId,
+    this.selectedSubtitleTrackId,
   });
 
   final bool isPlaying;
@@ -38,9 +71,45 @@ class PlaybackTransportState {
   final double volume;
   final bool muted;
   final bool hasError;
+  final List<PlaybackMediaTrack> audioTracks;
+  final List<PlaybackMediaTrack> subtitleTracks;
+  final String? selectedAudioTrackId;
+  final String? selectedSubtitleTrackId;
+
+  PlaybackTransportState copyWith({
+    bool? isPlaying,
+    bool? isBuffering,
+    bool? hasVideo,
+    Duration? position,
+    Duration? duration,
+    double? volume,
+    bool? muted,
+    bool? hasError,
+    List<PlaybackMediaTrack>? audioTracks,
+    List<PlaybackMediaTrack>? subtitleTracks,
+    String? selectedAudioTrackId,
+    String? selectedSubtitleTrackId,
+  }) => PlaybackTransportState(
+    isPlaying: isPlaying ?? this.isPlaying,
+    isBuffering: isBuffering ?? this.isBuffering,
+    hasVideo: hasVideo ?? this.hasVideo,
+    position: position ?? this.position,
+    duration: duration ?? this.duration,
+    volume: volume ?? this.volume,
+    muted: muted ?? this.muted,
+    hasError: hasError ?? this.hasError,
+    audioTracks: audioTracks ?? this.audioTracks,
+    subtitleTracks: subtitleTracks ?? this.subtitleTracks,
+    selectedAudioTrackId: selectedAudioTrackId ?? this.selectedAudioTrackId,
+    selectedSubtitleTrackId:
+        selectedSubtitleTrackId ?? this.selectedSubtitleTrackId,
+  );
+
+  @override
+  String toString() => 'PlaybackTransportState(redacted)';
 }
 
-class MediaKitPlaybackTransport implements PlaybackTransport {
+class MediaKitPlaybackTransport implements PlaybackTrackTransport {
   MediaKitPlaybackTransport._(this._player, this._controller);
 
   factory MediaKitPlaybackTransport.create() {
@@ -67,6 +136,8 @@ class MediaKitPlaybackTransport implements PlaybackTransport {
     var duration = _player.state.duration;
     var volume = _player.state.volume;
     var muted = _player.state.volume == 0;
+    var tracks = _player.state.tracks;
+    var selectedTrack = _player.state.track;
     var errored = false;
     final controller = StreamController<PlaybackTransportState>();
     void emit() => controller.add(
@@ -79,6 +150,10 @@ class MediaKitPlaybackTransport implements PlaybackTransport {
         volume: volume,
         muted: muted,
         hasError: errored,
+        audioTracks: tracks.audio.map(_safeTrack).toList(growable: false),
+        subtitleTracks: tracks.subtitle.map(_safeTrack).toList(growable: false),
+        selectedAudioTrackId: selectedTrack.audio.id,
+        selectedSubtitleTrackId: selectedTrack.subtitle.id,
       ),
     );
     final subscriptions = <StreamSubscription<dynamic>>[
@@ -109,6 +184,14 @@ class MediaKitPlaybackTransport implements PlaybackTransport {
       _player.stream.volume.listen((value) {
         volume = value;
         muted = value == 0;
+        emit();
+      }),
+      _player.stream.tracks.listen((value) {
+        tracks = value;
+        emit();
+      }),
+      _player.stream.track.listen((value) {
+        selectedTrack = value;
         emit();
       }),
       _player.stream.error.listen((_) {
@@ -164,5 +247,58 @@ class MediaKitPlaybackTransport implements PlaybackTransport {
       _player.setVolume(volume.clamp(0, 100));
 
   @override
+  Future<void> selectAudioTrack(String id) async {
+    if (id == 'auto') {
+      await _player.setAudioTrack(AudioTrack.auto());
+      return;
+    }
+    final track = _player.state.tracks.audio
+        .where((candidate) => candidate.id == id)
+        .firstOrNull;
+    if (track == null) return;
+    await _player.setAudioTrack(track);
+  }
+
+  @override
+  Future<void> selectSubtitleTrack(String id) async {
+    if (id == 'no') {
+      await _player.setSubtitleTrack(SubtitleTrack.no());
+      return;
+    }
+    if (id == 'auto') {
+      await _player.setSubtitleTrack(SubtitleTrack.auto());
+      return;
+    }
+    final track = _player.state.tracks.subtitle
+        .where((candidate) => candidate.id == id)
+        .firstOrNull;
+    if (track == null) return;
+    await _player.setSubtitleTrack(track);
+  }
+
+  @override
   Future<void> dispose() => _player.dispose();
+}
+
+PlaybackMediaTrack _safeTrack(dynamic track) {
+  final id = track.id as String;
+  final language = _safeTrackText(track.language as String?);
+  final title = _safeTrackText(track.title as String?);
+  final fallback = switch (id) {
+    'auto' => 'Automatic',
+    'no' => 'Off',
+    _ => language ?? 'Track',
+  };
+  return PlaybackMediaTrack(
+    id: id,
+    label: title ?? fallback,
+    language: language,
+    isDefault: track.isDefault == true,
+  );
+}
+
+String? _safeTrackText(String? value) {
+  final normalized = value?.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), ' ').trim();
+  if (normalized == null || normalized.isEmpty) return null;
+  return normalized.length <= 128 ? normalized : normalized.substring(0, 128);
 }

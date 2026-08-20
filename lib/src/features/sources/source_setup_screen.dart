@@ -72,6 +72,8 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
   SourceEditorKind _kind = SourceEditorKind.xtream;
   SourceEditorDraft? _editorDraft;
   bool _loadingEditor = false;
+  bool _selectingM3uFile = false;
+  bool _m3uFilePickerFailed = false;
 
   bool get _editing => widget.editRequest != null;
 
@@ -189,22 +191,57 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
   }
 
   Future<void> _pickM3uFile() async {
-    final path = await widget.m3uFilePicker?.call();
-    if (path != null && mounted) setState(() => _server.text = path);
+    final picker = widget.m3uFilePicker;
+    if (picker == null || _selectingM3uFile) return;
+    _pickerFocus.requestFocus();
+    setState(() {
+      _selectingM3uFile = true;
+      _m3uFilePickerFailed = false;
+    });
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    final pendingFocus = FocusManager.instance.primaryFocus;
+
+    String? path;
+    var failed = false;
+    try {
+      path = await picker();
+    } catch (_) {
+      failed = true;
+    }
+    if (!mounted) return;
+    final restorePickerFocus = identical(
+      FocusManager.instance.primaryFocus,
+      pendingFocus,
+    );
+    setState(() {
+      _selectingM3uFile = false;
+      _m3uFilePickerFailed = failed;
+      if (!failed && path != null && path.isNotEmpty) {
+        _server.text = path;
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _kind == SourceEditorKind.m3uFile && restorePickerFocus) {
+        _pickerFocus.requestFocus();
+      }
+    });
   }
 
   void _selectKind(SourceEditorKind kind) {
-    if (_editing || _kind == kind) return;
+    if (_editing || _selectingM3uFile || _kind == kind) return;
     setState(() {
       _kind = kind;
       _server.clear();
       _username.clear();
       _password.clear();
+      _m3uFilePickerFailed = false;
       _controller.dismissFailure();
     });
   }
 
   void _handleBack() {
+    if (_selectingM3uFile) return;
     if (_controller.isImporting) {
       _cancelFocus.requestFocus();
       return;
@@ -287,6 +324,8 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
                                       onPickM3uFile: _pickM3uFile,
                                       pickerAvailable:
                                           widget.m3uFilePicker != null,
+                                      pickerBusy: _selectingM3uFile,
+                                      pickerFailed: _m3uFilePickerFailed,
                                       onCancel: _controller.isImporting
                                           ? _controller.cancel
                                           : widget.onExit,
@@ -460,6 +499,8 @@ class _SourceForm extends StatelessWidget {
     required this.onSelectKind,
     required this.onPickM3uFile,
     required this.pickerAvailable,
+    required this.pickerBusy,
+    required this.pickerFailed,
     required this.onCancel,
   });
 
@@ -485,12 +526,14 @@ class _SourceForm extends StatelessWidget {
   final ValueChanged<SourceEditorKind> onSelectKind;
   final Future<void> Function() onPickM3uFile;
   final bool pickerAvailable;
+  final bool pickerBusy;
+  final bool pickerFailed;
   final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
     final errors = controller.fieldErrors;
-    final disabled = controller.isImporting;
+    final disabled = controller.isImporting || pickerBusy;
     return DecoratedBox(
       decoration: const BoxDecoration(),
       child: Padding(
@@ -612,7 +655,9 @@ class _SourceForm extends StatelessWidget {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: _SourceButton(
-                    label: 'Choose M3U file',
+                    label: pickerBusy
+                        ? 'Opening file picker…'
+                        : 'Choose M3U file',
                     focusNode: pickerFocus,
                     primary: false,
                     enabled: !disabled && pickerAvailable,
@@ -622,6 +667,27 @@ class _SourceForm extends StatelessWidget {
                     },
                   ),
                 ),
+                if (pickerBusy) ...[
+                  const SizedBox(height: 8),
+                  Semantics(
+                    liveRegion: true,
+                    child: const Text(
+                      'Opening the Windows file picker…',
+                      key: ValueKey('source-m3u-picker-status'),
+                      style: TextStyle(color: _quietText, fontSize: 13),
+                    ),
+                  ),
+                ] else if (pickerFailed) ...[
+                  const SizedBox(height: 8),
+                  Semantics(
+                    liveRegion: true,
+                    child: const Text(
+                      'The Windows file picker could not be opened. Try again.',
+                      key: ValueKey('source-m3u-picker-failure'),
+                      style: TextStyle(color: Color(0xFFFFC1B3), fontSize: 13),
+                    ),
+                  ),
+                ],
               ],
             ],
             if (controller.failure != null) ...[
@@ -639,7 +705,7 @@ class _SourceForm extends StatelessWidget {
                       label: 'Cancel',
                       focusNode: cancelFocus,
                       primary: false,
-                      enabled: true,
+                      enabled: !pickerBusy,
                       onFocused: onFocused,
                       onPressed: onCancel,
                     ),

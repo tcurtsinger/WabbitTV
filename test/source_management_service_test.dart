@@ -65,6 +65,52 @@ void main() {
     });
 
     test(
+      'loads and saves the selected source connection allowance locally',
+      () async {
+        final fixture = await _Fixture.create();
+        addTearDown(fixture.dispose);
+        await fixture.seedXtream('one');
+        fixture.db.execute(
+          "UPDATE sources SET reported_connection_limit = 2 WHERE id = 'one'",
+        );
+
+        final automatic = await fixture.service.loadSourceConnectionAllowance(
+          'one',
+        );
+        expect(automatic.reportedLimit, 2);
+        expect(automatic.overrideLimit, isNull);
+        expect(automatic.effectiveLimit, 2);
+
+        final overridden = await fixture.service
+            .setSourceConnectionLimitOverride(
+              sourceId: 'one',
+              overrideLimit: 1,
+            );
+        expect(overridden.reportedLimit, 2);
+        expect(overridden.overrideLimit, 1);
+        expect(overridden.effectiveLimit, 1);
+
+        final restored = await fixture.service.setSourceConnectionLimitOverride(
+          sourceId: 'one',
+          overrideLimit: null,
+        );
+        expect(restored.overrideLimit, isNull);
+        expect(restored.effectiveLimit, 2);
+
+        await expectLater(
+          fixture.service.loadSourceConnectionAllowance('missing'),
+          throwsA(
+            isA<SourceManagementFailure>().having(
+              (failure) => failure.kind,
+              'kind',
+              SourceManagementFailureKind.sourceMissing,
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
       'delegates M3U refresh and leaves the last good catalog after failure',
       () async {
         final fixture = await _Fixture.create();

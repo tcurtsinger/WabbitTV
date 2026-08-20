@@ -8,6 +8,7 @@
 **Inherited direction:** Quiet Broadcast  
 **Selected composition:** A — Broadcast Deck  
 **Approved comp:** `.impeccable/mocks/quiet-broadcast-player-a-broadcast-deck.png`
+**Phase 5 extension:** Verified with user-supplied packaged Strong/Windows acceptance in `docs/shapes/11-phase5-playback-pip-multiview.md`
 
 ## Job and outcome
 
@@ -18,7 +19,8 @@ A Windows desk or couch user activates a Live channel, Movie, or Episode and imm
 - One full-client production playback takeover for the existing typed Live, Movie, and Episode handoffs.
 - Includes essential daily-use controls, explicit fullscreen, one bounded quiet retry, sanitized recovery, and a collapsed technical-details disclosure.
 - Keeps one active playback session and disposes every prior transport before an opening, retry, replacement, or return.
-- Excludes PiP, multiview, source variants, resume/history, audio and subtitle selection, channel zapping, next episode, detached windows, provider-limit settings, and any second session.
+- For the Phase 1 implementation, excludes PiP, multiview, source variants, resume/history, audio and subtitle selection, channel zapping, next episode, detached windows, provider-limit settings, and any second session.
+- Shape 11 owns automatic VOD resume with Start over, the Tracks ledger, Corner Signal in-app PiP, provider-limit admission, and fixed two-stream Live multiview. Those extensions are implemented and accepted through their own bounded packaged Strong/Windows gate; they remain outside this Phase 1 closure record.
 
 ## Selected direction and composition
 
@@ -80,6 +82,8 @@ The first usable video frame has a twenty-second deadline. A transport/start fai
 
 ## Acceptance evidence
 
+The evidence immediately below closes the Phase 1 single-session player only. Phase 5 implementation and bounded evidence are recorded separately in `docs/shapes/11-phase5-playback-pip-multiview.md` and `docs/evidence/phase5-playback-pip-multiview/README.md`; the Phase 1 evidence must not be relabeled as proof of that extension.
+
 - Widget coverage for Live versus VOD controls, four-second reveal/hide behavior, mouse and keyboard/remote traversal, timeline/volume adjustment, fullscreen Back behavior, retry/disposal ordering, redaction, and exact focus restoration.
 - Packaged Windows renders and interaction at 1265 × 713, larger/fullscreen, and constrained width.
 - **PASS:** A real Strong production run played one Live item, Movie, and Episode from the ordinary product flow.
@@ -88,6 +92,10 @@ The first usable video frame has a twenty-second deadline. A transport/start fai
 ## Closure record
 
 On 2026-08-17, the ordinary maintainer-local production run rendered visible video for one Live item, Movie, and Episode. Movie and Episode showed truthful VOD controls and timeline. Escape restored Live to browse and the Movie to its focused Play action before browse; the automated continuation suite covers the equivalent Episode return path. No recovery or error state surfaced during that successful sequential run. No provider title, identifier, URL, or credential was recorded.
+
+## Phase 5 extension state
+
+The same Broadcast Deck now exposes eligible Movie/Episode automatic resume with Start over, a focus-trapped Tracks ledger for real available audio/subtitle tracks, PiP, Live Add channel, and bounded redacted recovery. Session ownership, selected audio, retry, and source-limit admission sit behind one `PlaybackManager`. Corner Signal and equal side-by-side Live Multi-view are implemented without changing the Phase 1 full-player grammar. Automated, render, independent-review, Windows-build, and user-supplied packaged Strong/Windows acceptance pass. Strong's reported one-stream allowance correctly blocks a second open, so actual two-stream success was not exercised and no available-track or hardware-resource value was recorded.
 
 ## Confirmation record
 

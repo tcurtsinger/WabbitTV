@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../settings/general_settings_section.dart';
+import '../settings/startup_preferences_controller.dart';
 import 'source_models.dart';
 
 const _graphite = Color(0xFF111212);
@@ -17,6 +19,15 @@ const _amberInk = Color(0xFF17120A);
 void _noopManageVisibility(SourceRosterEntry _) {}
 
 enum SourceManagementLoadState { loading, ready, failed }
+
+enum SourceConnectionAllowanceState {
+  unavailable,
+  loading,
+  ready,
+  saving,
+  loadFailed,
+  saveFailed,
+}
 
 class _DirectoryMoveIntent extends Intent {
   const _DirectoryMoveIntent(this.direction);
@@ -41,6 +52,20 @@ abstract class SourceManagementPort {
   Future<void> remove(String sourceId);
 }
 
+/// Narrow Phase 5 seam for the selected source's local stream allowance.
+/// Source-management fixtures that predate the setting can keep implementing
+/// [SourceManagementPort] without pretending they can persist this value.
+abstract interface class SourceConnectionAllowancePort {
+  Future<SourceConnectionAllowance> loadSourceConnectionAllowance(
+    String sourceId,
+  );
+
+  Future<SourceConnectionAllowance> setSourceConnectionLimitOverride({
+    required String sourceId,
+    required int? overrideLimit,
+  });
+}
+
 class SourceManagementController extends ChangeNotifier {
   SourceManagementController({
     List<SourceRosterEntry> entries = const [],
@@ -57,11 +82,26 @@ class SourceManagementController extends ChangeNotifier {
   String? failedSourceId;
   String? recovery;
   bool refreshing = false;
+  SourceConnectionAllowanceState connectionAllowanceState =
+      SourceConnectionAllowanceState.unavailable;
+  SourceConnectionAllowance? connectionAllowance;
+  String? connectionRecovery;
+  int? _failedConnectionOverride;
+  int _connectionGeneration = 0;
   bool _working = false;
   Future<void>? _load;
 
   bool get isEmpty => entries.isEmpty;
   bool get isWorking => _working;
+  bool get canManageConnectionAllowance =>
+      port is SourceConnectionAllowancePort;
+  SourceConnectionAllowancePort? get _connectionPort {
+    final current = port;
+    return current is SourceConnectionAllowancePort
+        ? current as SourceConnectionAllowancePort
+        : null;
+  }
+
   SourceRosterEntry? get selected =>
       entries.where((entry) => entry.id == selectedId).firstOrNull ??
       entries.firstOrNull;
@@ -85,6 +125,47 @@ class SourceManagementController extends ChangeNotifier {
     failedSourceId = null;
     recovery = null;
     notifyListeners();
+    unawaited(_loadConnectionAllowance(id));
+  }
+
+  Future<void> retryConnectionAllowance() {
+    final source = selected;
+    if (source == null) return Future<void>.value();
+    if (connectionAllowanceState == SourceConnectionAllowanceState.saveFailed) {
+      return setConnectionLimitOverride(_failedConnectionOverride);
+    }
+    return _loadConnectionAllowance(source.id);
+  }
+
+  Future<void> setConnectionLimitOverride(int? overrideLimit) async {
+    final source = selected;
+    final currentPort = _connectionPort;
+    if (source == null || currentPort == null || !_beginAction()) {
+      return;
+    }
+    final sourceId = source.id;
+    final generation = ++_connectionGeneration;
+    connectionAllowanceState = SourceConnectionAllowanceState.saving;
+    connectionRecovery = null;
+    _failedConnectionOverride = null;
+    notifyListeners();
+    try {
+      final saved = await currentPort.setSourceConnectionLimitOverride(
+        sourceId: sourceId,
+        overrideLimit: overrideLimit,
+      );
+      if (selectedId != sourceId || generation != _connectionGeneration) return;
+      connectionAllowance = saved;
+      connectionAllowanceState = SourceConnectionAllowanceState.ready;
+    } catch (_) {
+      if (selectedId != sourceId || generation != _connectionGeneration) return;
+      _failedConnectionOverride = overrideLimit;
+      connectionAllowanceState = SourceConnectionAllowanceState.saveFailed;
+      connectionRecovery = 'The stream setting could not be saved. Your previous choice is unchanged.';
+    } finally {
+      _working = false;
+      notifyListeners();
+    }
   }
 
   Future<void> refresh() async {
@@ -215,6 +296,10 @@ class SourceManagementController extends ChangeNotifier {
       final roster = await current.loadRoster();
       _applyEntries(roster);
       state = SourceManagementLoadState.ready;
+      final selectedSourceId = selectedId;
+      if (selectedSourceId != null) {
+        await _loadConnectionAllowance(selectedSourceId);
+      }
     } catch (_) {
       if (entries.isEmpty) {
         state = SourceManagementLoadState.failed;
@@ -241,6 +326,44 @@ class SourceManagementController extends ChangeNotifier {
     selectedId = entries.any((entry) => entry.id == previousSelection)
         ? previousSelection
         : entries.firstOrNull?.id;
+    if (selectedId == null) {
+      _clearConnectionAllowance();
+    }
+  }
+
+  Future<void> _loadConnectionAllowance(String sourceId) async {
+    final currentPort = _connectionPort;
+    if (currentPort == null) {
+      _clearConnectionAllowance();
+      notifyListeners();
+      return;
+    }
+    final generation = ++_connectionGeneration;
+    connectionAllowanceState = SourceConnectionAllowanceState.loading;
+    connectionAllowance = null;
+    connectionRecovery = null;
+    _failedConnectionOverride = null;
+    notifyListeners();
+    try {
+      final loaded = await currentPort.loadSourceConnectionAllowance(sourceId);
+      if (selectedId != sourceId || generation != _connectionGeneration) return;
+      connectionAllowance = loaded;
+      connectionAllowanceState = SourceConnectionAllowanceState.ready;
+    } catch (_) {
+      if (selectedId != sourceId || generation != _connectionGeneration) return;
+      connectionAllowanceState = SourceConnectionAllowanceState.loadFailed;
+      connectionRecovery = 'The stream setting could not be loaded.';
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  void _clearConnectionAllowance() {
+    _connectionGeneration++;
+    connectionAllowanceState = SourceConnectionAllowanceState.unavailable;
+    connectionAllowance = null;
+    connectionRecovery = null;
+    _failedConnectionOverride = null;
   }
 }
 
@@ -253,6 +376,7 @@ class SourceManagementScreen extends StatefulWidget {
     required this.onAddSource,
     this.onManageVisibility = _noopManageVisibility,
     required this.controller,
+    this.startupPreferencesController,
     this.restoreSelectedFocusOnEntry = false,
     this.restoreVisibilityFocusOnEntry = false,
   });
@@ -262,6 +386,7 @@ class SourceManagementScreen extends StatefulWidget {
   final VoidCallback onAddSource;
   final ValueChanged<SourceRosterEntry> onManageVisibility;
   final SourceManagementController controller;
+  final StartupPreferencesController? startupPreferencesController;
 
   /// Shell requests this after the Source Ledger closes so the directory row
   /// that opened it—not merely the first row—receives focus again.
@@ -275,6 +400,8 @@ class SourceManagementScreen extends StatefulWidget {
 }
 
 class _SourceManagementScreenState extends State<SourceManagementScreen> {
+  final _generalSettingsKey = GlobalKey<GeneralSettingsSectionState>();
+  final _directoryKey = GlobalKey<_DirectoryState>();
   final _addFocus = FocusNode(debugLabel: 'source management add');
   final _refreshFocus = FocusNode(debugLabel: 'source management refresh');
   final _renameFocus = FocusNode(debugLabel: 'source management rename');
@@ -284,9 +411,22 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
   );
   final _toggleFocus = FocusNode(debugLabel: 'source management toggle');
   final _removeFocus = FocusNode(debugLabel: 'source management remove');
+  final _automaticStreamsFocus = FocusNode(
+    debugLabel: 'source management streams automatic',
+  );
+  final _oneStreamFocus = FocusNode(
+    debugLabel: 'source management streams one',
+  );
+  final _twoStreamsFocus = FocusNode(
+    debugLabel: 'source management streams two',
+  );
+  final _streamsRetryFocus = FocusNode(
+    debugLabel: 'source management streams retry',
+  );
   final _cancelRemoveFocus = FocusNode(
     debugLabel: 'source management cancel remove',
   );
+  FocusNode? _connectionFocusTarget;
   late final Map<String, FocusNode> _rows = {};
   late bool _restoreSelectedFocus = widget.restoreSelectedFocusOnEntry;
   late bool _restoreVisibilityFocus = widget.restoreVisibilityFocusOnEntry;
@@ -307,10 +447,24 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
       _visibilityFocus,
       _toggleFocus,
       _removeFocus,
+      _automaticStreamsFocus,
+      _oneStreamFocus,
+      _twoStreamsFocus,
+      _streamsRetryFocus,
       _cancelRemoveFocus,
     ]) {
       node.addListener(() {
-        if (node.hasFocus) widget.onContentFocus(node);
+        if (!node.hasFocus) return;
+        _connectionFocusTarget = switch (node) {
+          final current
+              when current == _automaticStreamsFocus ||
+                  current == _oneStreamFocus ||
+                  current == _twoStreamsFocus ||
+                  current == _streamsRetryFocus =>
+            current,
+          _ => null,
+        };
+        widget.onContentFocus(node);
       });
     }
   }
@@ -333,6 +487,10 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
     _visibilityFocus.dispose();
     _toggleFocus.dispose();
     _removeFocus.dispose();
+    _automaticStreamsFocus.dispose();
+    _oneStreamFocus.dispose();
+    _twoStreamsFocus.dispose();
+    _streamsRetryFocus.dispose();
     _cancelRemoveFocus.dispose();
     for (final n in _rows.values) {
       n.dispose();
@@ -342,9 +500,31 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
 
   void _changed() {
     if (!mounted) return;
+    final connectionTarget = _connectionFocusTarget;
     setState(() {});
+    if (connectionTarget != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _connectionFocusTarget != connectionTarget) return;
+        final target =
+            connectionTarget == _streamsRetryFocus &&
+                widget.controller.connectionAllowanceState ==
+                    SourceConnectionAllowanceState.ready
+            ? _focusForAllowance(widget.controller.connectionAllowance)
+            : connectionTarget;
+        if (target.context == null || !target.canRequestFocus) return;
+        _connectionFocusTarget = target;
+        target.requestFocus();
+      });
+    }
     _restoreEntryFocusIfNeeded();
   }
+
+  FocusNode _focusForAllowance(SourceConnectionAllowance? allowance) =>
+      switch (allowance?.overrideLimit) {
+        1 => _oneStreamFocus,
+        2 => _twoStreamsFocus,
+        _ => _automaticStreamsFocus,
+      };
 
   void _restoreEntryFocusIfNeeded() {
     if (_restoreVisibilityFocus && mounted) {
@@ -368,13 +548,49 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
         widget.controller.entries.first.id == id) {
       return widget.initialFocus;
     }
-    return _rows.putIfAbsent(id, () => FocusNode(debugLabel: 'source row $id'));
+    return _rows.putIfAbsent(id, () {
+      final node = FocusNode(debugLabel: 'source row $id');
+      node.addListener(() {
+        if (!node.hasFocus) return;
+        _connectionFocusTarget = null;
+        widget.onContentFocus(node);
+      });
+      return node;
+    });
+  }
+
+  void _focusSelectedStartupChoice() {
+    _generalSettingsKey.currentState?.focusSelectedChoice();
+  }
+
+  void _focusPrimarySourceTarget() {
+    final controller = widget.controller;
+    if (controller.state == SourceManagementLoadState.loading) {
+      _addFocus.requestFocus();
+      return;
+    }
+    if (controller.state == SourceManagementLoadState.failed) {
+      widget.initialFocus.requestFocus();
+      return;
+    }
+    final selected = controller.selected;
+    if (selected == null) {
+      widget.initialFocus.requestFocus();
+      return;
+    }
+    final target = _row(selected.id);
+    if (target.context != null && target.canRequestFocus) {
+      target.requestFocus();
+      return;
+    }
+    _directoryKey.currentState?.focusSource(selected.id);
   }
 
   void _back() {
     final selected = widget.controller.selected;
     if (selected != null &&
         FocusManager.instance.primaryFocus != _row(selected.id)) {
+      _connectionFocusTarget = null;
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => FocusScope.of(context).requestFocus(_row(selected.id)),
       );
@@ -538,10 +754,17 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
                       ],
                     );
               final directory = _Directory(
+                key: _directoryKey,
                 entries: c.entries,
                 selectedId: selected?.id,
                 focusFor: _row,
-                onSelected: c.select,
+                onSelected: (id) {
+                  _connectionFocusTarget = null;
+                  c.select(id);
+                },
+                onMoveBeforeFirst: widget.startupPreferencesController == null
+                    ? null
+                    : _focusSelectedStartupChoice,
                 scrollable: !narrow,
               );
               final detail = selected == null
@@ -579,8 +802,74 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
                       visibilityFocus: _visibilityFocus,
                       toggleFocus: _toggleFocus,
                       removeFocus: _removeFocus,
+                      connectionAllowance: c.connectionAllowance,
+                      connectionAllowanceState: c.connectionAllowanceState,
+                      connectionRecovery: c.connectionRecovery,
+                      automaticStreamsFocus: _automaticStreamsFocus,
+                      oneStreamFocus: _oneStreamFocus,
+                      twoStreamsFocus: _twoStreamsFocus,
+                      streamsRetryFocus: _streamsRetryFocus,
+                      onConnectionLimitChanged: c.setConnectionLimitOverride,
+                      onRetryConnectionAllowance: c.retryConnectionAllowance,
+                      showConnectionAllowance: c.canManageConnectionAllowance,
+                      keepConnectionRetryMounted:
+                          _connectionFocusTarget == _streamsRetryFocus,
                       narrow: narrow,
                     );
+              final loading = Center(
+                child: Semantics(
+                  liveRegion: true,
+                  label: 'Loading sources',
+                  child: const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(color: _amber),
+                      SizedBox(height: 14),
+                      Text(
+                        'Loading sources…',
+                        style: TextStyle(color: _quietText),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+              final sourceContent = c.state == SourceManagementLoadState.loading
+                  ? narrow
+                        ? Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 80),
+                            child: loading,
+                          )
+                        : loading
+                  : c.state == SourceManagementLoadState.failed
+                  ? _LoadFailure(
+                      onRetry: c.retryLoad,
+                      focusNode: widget.initialFocus,
+                    )
+                  : narrow
+                  ? Column(
+                      children: [directory, const SizedBox(height: 24), detail],
+                    )
+                  : Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(width: 340, child: directory),
+                        const VerticalDivider(color: _line, width: 44),
+                        Expanded(child: SingleChildScrollView(child: detail)),
+                      ],
+                    );
+              final content = <Widget>[
+                header,
+                if (widget.startupPreferencesController != null) ...[
+                  const SizedBox(height: 20),
+                  GeneralSettingsSection(
+                    key: _generalSettingsKey,
+                    controller: widget.startupPreferencesController!,
+                    onContentFocus: widget.onContentFocus,
+                    onMoveToSources: _focusPrimarySourceTarget,
+                  ),
+                ],
+                const SizedBox(height: 28),
+              ];
               return Padding(
                 padding: EdgeInsets.fromLTRB(
                   narrow ? 24 : 48,
@@ -588,56 +877,15 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
                   narrow ? 24 : 32,
                   32,
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    header,
-                    const SizedBox(height: 28),
-                    Expanded(
-                      child: c.state == SourceManagementLoadState.loading
-                          ? Center(
-                              child: Semantics(
-                                liveRegion: true,
-                                label: 'Loading sources',
-                                child: const Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    CircularProgressIndicator(color: _amber),
-                                    SizedBox(height: 14),
-                                    Text(
-                                      'Loading sources…',
-                                      style: TextStyle(color: _quietText),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            )
-                          : c.state == SourceManagementLoadState.failed
-                          ? _LoadFailure(
-                              onRetry: c.retryLoad,
-                              focusNode: widget.initialFocus,
-                            )
-                          : narrow
-                          ? ListView(
-                              children: [
-                                directory,
-                                const SizedBox(height: 24),
-                                detail,
-                              ],
-                            )
-                          : Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                SizedBox(width: 340, child: directory),
-                                const VerticalDivider(color: _line, width: 44),
-                                Expanded(
-                                  child: SingleChildScrollView(child: detail),
-                                ),
-                              ],
-                            ),
-                    ),
-                  ],
-                ),
+                child: narrow
+                    ? ListView(children: [...content, sourceContent])
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ...content,
+                          Expanded(child: sourceContent),
+                        ],
+                      ),
               );
             },
           ),
@@ -649,16 +897,19 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
 
 class _Directory extends StatefulWidget {
   const _Directory({
+    super.key,
     required this.entries,
     required this.selectedId,
     required this.focusFor,
     required this.onSelected,
+    required this.onMoveBeforeFirst,
     required this.scrollable,
   });
   final List<SourceRosterEntry> entries;
   final String? selectedId;
   final FocusNode Function(String) focusFor;
   final ValueChanged<String> onSelected;
+  final VoidCallback? onMoveBeforeFirst;
   final bool scrollable;
 
   @override
@@ -677,13 +928,28 @@ class _DirectoryState extends State<_Directory> {
 
   void _move(int index, int direction) {
     final next = (index + direction).clamp(0, widget.entries.length - 1);
-    if (next == index) return;
+    if (next == index) {
+      if (index == 0 && direction < 0) widget.onMoveBeforeFirst?.call();
+      return;
+    }
     final target = next * _rowExtent;
     if (_scroll.hasClients) {
       _scroll.jumpTo(target.clamp(0, _scroll.position.maxScrollExtent));
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) widget.focusFor(widget.entries[next].id).requestFocus();
+    });
+  }
+
+  void focusSource(String sourceId) {
+    final index = widget.entries.indexWhere((entry) => entry.id == sourceId);
+    if (index < 0) return;
+    final target = index * _rowExtent;
+    if (_scroll.hasClients) {
+      _scroll.jumpTo(target.clamp(0, _scroll.position.maxScrollExtent));
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.focusFor(sourceId).requestFocus();
     });
   }
 
@@ -859,6 +1125,17 @@ class _Detail extends StatelessWidget {
     required this.visibilityFocus,
     required this.toggleFocus,
     required this.removeFocus,
+    required this.connectionAllowance,
+    required this.connectionAllowanceState,
+    required this.connectionRecovery,
+    required this.automaticStreamsFocus,
+    required this.oneStreamFocus,
+    required this.twoStreamsFocus,
+    required this.streamsRetryFocus,
+    required this.onConnectionLimitChanged,
+    required this.onRetryConnectionAllowance,
+    required this.showConnectionAllowance,
+    required this.keepConnectionRetryMounted,
   });
   final SourceRosterEntry source;
   final bool refreshing, working, failed, narrow;
@@ -866,6 +1143,17 @@ class _Detail extends StatelessWidget {
   final FocusNode refreshFocus;
   final FocusNode renameFocus;
   final FocusNode editFocus, visibilityFocus, toggleFocus, removeFocus;
+  final FocusNode automaticStreamsFocus;
+  final FocusNode oneStreamFocus;
+  final FocusNode twoStreamsFocus;
+  final FocusNode streamsRetryFocus;
+  final SourceConnectionAllowance? connectionAllowance;
+  final SourceConnectionAllowanceState connectionAllowanceState;
+  final String? connectionRecovery;
+  final ValueChanged<int?> onConnectionLimitChanged;
+  final VoidCallback onRetryConnectionAllowance;
+  final bool showConnectionAllowance;
+  final bool keepConnectionRetryMounted;
   final Future<void> Function() onRefresh, onRename, onEdit, onToggle, onRemove;
   final VoidCallback onManageVisibility;
   @override
@@ -953,35 +1241,380 @@ class _Detail extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 28),
-        narrow
-            ? Column(
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final textScale = MediaQuery.textScalerOf(context)
+                .scale(1)
+                .clamp(1.0, 2.0);
+            final stackActions =
+                narrow || constraints.maxWidth < 260 * textScale;
+            if (stackActions) {
+              return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (final a in actions)
+                  for (final action in actions)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 10),
-                      child: a,
+                      child: action,
                     ),
                 ],
-              )
-            : Row(
+              );
+            }
+            if (constraints.maxWidth < 760 * textScale) {
+              Widget pair(Widget first, Widget second) => Row(
                 children: [
-                  for (final a in actions)
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.only(right: 12),
-                        child: a,
-                      ),
-                    ),
+                  Expanded(child: first),
+                  const SizedBox(width: 12),
+                  Expanded(child: second),
                 ],
-              ),
+              );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  pair(actions[0], actions[1]),
+                  const SizedBox(height: 10),
+                  actions[2],
+                  const SizedBox(height: 10),
+                  pair(actions[3], actions[4]),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                for (var index = 0; index < actions.length; index++)
+                  Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        right: index == actions.length - 1 ? 0 : 12,
+                      ),
+                      child: actions[index],
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
         const SizedBox(height: 30),
         const Divider(color: _line),
         const SizedBox(height: 28),
         _Counts(counts: source.counts, narrow: narrow),
+        if (showConnectionAllowance) ...[
+          const SizedBox(height: 28),
+          const Divider(color: _line),
+          const SizedBox(height: 24),
+          _ConnectionAllowanceLedger(
+            allowance: connectionAllowance,
+            state: connectionAllowanceState,
+            recovery: connectionRecovery,
+            working: working,
+            automaticFocus: automaticStreamsFocus,
+            oneFocus: oneStreamFocus,
+            twoFocus: twoStreamsFocus,
+            retryFocus: streamsRetryFocus,
+            onChanged: onConnectionLimitChanged,
+            onRetry: onRetryConnectionAllowance,
+            keepRetryMounted: keepConnectionRetryMounted,
+          ),
+        ],
       ],
     );
   }
+}
+
+class _ConnectionAllowanceLedger extends StatelessWidget {
+  const _ConnectionAllowanceLedger({
+    required this.allowance,
+    required this.state,
+    required this.recovery,
+    required this.working,
+    required this.automaticFocus,
+    required this.oneFocus,
+    required this.twoFocus,
+    required this.retryFocus,
+    required this.onChanged,
+    required this.onRetry,
+    required this.keepRetryMounted,
+  });
+
+  final SourceConnectionAllowance? allowance;
+  final SourceConnectionAllowanceState state;
+  final String? recovery;
+  final bool working;
+  final FocusNode automaticFocus, oneFocus, twoFocus, retryFocus;
+  final ValueChanged<int?> onChanged;
+  final VoidCallback onRetry;
+  final bool keepRetryMounted;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = allowance;
+    final busy = working || state == SourceConnectionAllowanceState.saving;
+    final failed =
+        state == SourceConnectionAllowanceState.loadFailed ||
+        state == SourceConnectionAllowanceState.saveFailed;
+    final showRetry =
+        failed ||
+        (keepRetryMounted &&
+            (state == SourceConnectionAllowanceState.loading ||
+                state == SourceConnectionAllowanceState.saving));
+    final status = current == null ? null : _allowanceStatus(current);
+    final semanticsLabel = StringBuffer('Simultaneous streams');
+    if (status != null) semanticsLabel.write('. $status');
+    if (recovery != null) semanticsLabel.write('. $recovery');
+    return Semantics(
+      key: const ValueKey('source-connection-allowance'),
+      container: true,
+      liveRegion: true,
+      label: semanticsLabel.toString(),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 278),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Simultaneous streams',
+              style: TextStyle(
+                color: _warmWhite,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Choose how many streams Wabbit may open from this source.',
+              style: TextStyle(color: _quietText, fontSize: 15),
+            ),
+            const SizedBox(height: 16),
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 24),
+              child: state == SourceConnectionAllowanceState.loading
+                  ? const Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(
+                            color: _amber,
+                            strokeWidth: 2,
+                          ),
+                        ),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Loading stream setting…',
+                            style: TextStyle(color: _quietText),
+                          ),
+                        ),
+                      ],
+                    )
+                  : Text(
+                      status ?? 'Stream setting unavailable',
+                      key: const ValueKey('source-connection-status'),
+                      style: const TextStyle(
+                        color: _warmWhite,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _AllowanceChoice(
+                    label: 'Automatic',
+                    selected: current != null && current.overrideLimit == null,
+                    focusNode: automaticFocus,
+                    enabled: !busy,
+                    onPressed: current == null ? null : () => onChanged(null),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _AllowanceChoice(
+                    label: '1',
+                    selected: current?.overrideLimit == 1,
+                    focusNode: oneFocus,
+                    enabled: !busy,
+                    onPressed: current == null ? null : () => onChanged(1),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _AllowanceChoice(
+                    label: '2',
+                    selected: current?.overrideLimit == 2,
+                    focusNode: twoFocus,
+                    enabled: !busy,
+                    onPressed: current == null ? null : () => onChanged(2),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: showRetry
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            failed
+                                ? (recovery ??
+                                      'The stream setting is unavailable.')
+                                : 'Retrying…',
+                            style: const TextStyle(
+                              color: _quietText,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        _FocusHoldingOutlinedAction(
+                          label: 'Retry',
+                          focusNode: retryFocus,
+                          enabled: failed && !busy,
+                          onPressed: onRetry,
+                        ),
+                      ],
+                    )
+                  : Align(
+                      alignment: Alignment.centerLeft,
+                      child: state == SourceConnectionAllowanceState.saving
+                          ? const Text(
+                              'Saving locally…',
+                              style: TextStyle(color: _quietText, fontSize: 14),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Wabbit cannot change your provider subscription. A higher local limit does not grant more streams. Lowering this setting does not stop sessions already playing.',
+              style: TextStyle(color: _quietText, fontSize: 14),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AllowanceChoice extends StatelessWidget {
+  const _AllowanceChoice({
+    required this.label,
+    required this.selected,
+    required this.focusNode,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final String label;
+  final bool selected;
+  final FocusNode focusNode;
+  final bool enabled;
+  final VoidCallback? onPressed;
+
+  void _invoke() {
+    focusNode.requestFocus();
+    if (enabled) onPressed?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    selected: selected,
+    button: true,
+    enabled: enabled && onPressed != null,
+    excludeSemantics: true,
+    label: '$label${selected ? ', selected' : ''}',
+    child: OutlinedButton(
+      key: ValueKey('source-connection-choice-$label'),
+      focusNode: focusNode,
+      onPressed: onPressed == null ? null : _invoke,
+      style: ButtonStyle(
+        foregroundColor: WidgetStatePropertyAll(
+          !enabled ? _quietText : (selected ? _amber : _warmWhite),
+        ),
+        backgroundColor: const WidgetStatePropertyAll(_raised),
+        minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+        ),
+        side: WidgetStateProperty.resolveWith(
+          (states) => BorderSide(
+            color: states.contains(WidgetState.focused) || selected
+                ? _amber
+                : _line,
+            width: states.contains(WidgetState.focused) || selected ? 2 : 1,
+          ),
+        ),
+      ),
+      child: Text(label),
+    ),
+  );
+}
+
+class _FocusHoldingOutlinedAction extends StatelessWidget {
+  const _FocusHoldingOutlinedAction({
+    required this.label,
+    required this.focusNode,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final String label;
+  final FocusNode focusNode;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  void _invoke() {
+    focusNode.requestFocus();
+    if (enabled) onPressed();
+  }
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    enabled: enabled,
+    excludeSemantics: true,
+    label: label,
+    child: OutlinedButton(
+      key: ValueKey('source-action-$label'),
+      focusNode: focusNode,
+      onPressed: _invoke,
+      style: ButtonStyle(
+        foregroundColor: WidgetStatePropertyAll(
+          enabled ? _warmWhite : _quietText,
+        ),
+        minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+        ),
+        side: WidgetStateProperty.resolveWith(
+          (states) => BorderSide(
+            color: states.contains(WidgetState.focused) ? _amber : _line,
+            width: states.contains(WidgetState.focused) ? 2 : 1,
+          ),
+        ),
+      ),
+      child: Text(label),
+    ),
+  );
+}
+
+String _allowanceStatus(SourceConnectionAllowance allowance) {
+  final override = allowance.overrideLimit;
+  if (override == null) {
+    final reported = allowance.reportedLimit;
+    return reported == null
+        ? 'Automatic · Assuming 1'
+        : 'Automatic · Reported $reported';
+  }
+  final reported = allowance.reportedLimit;
+  return reported == null
+      ? 'Local override $override · Provider limit not reported'
+      : 'Local override $override · Provider reports $reported';
 }
 
 class _Counts extends StatelessWidget {

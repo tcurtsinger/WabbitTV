@@ -1,9 +1,13 @@
+import 'dart:ui';
+
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:wabbit_tv/main.dart';
+import 'package:wabbit_tv/src/app_shell.dart';
 import 'package:wabbit_tv/src/features/browse/catalog_scope_controller.dart';
+import 'package:wabbit_tv/src/features/home/home_screen.dart';
 import 'package:wabbit_tv/src/home_fixture_mode.dart';
 import 'package:wabbit_tv/src/features/sources/credential_store.dart';
 import 'package:wabbit_tv/src/features/sources/source_catalog_database.dart';
@@ -90,6 +94,175 @@ void main() {
     expect(find.text('Wabbit TV'), findsNothing);
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'home first item');
   });
+
+  testWidgets(
+    'remote Menu opens the rail when content has no contextual Menu action',
+    (tester) async {
+      await tester.pumpWidget(
+        const WabbitApp(fixtureMode: HomeFixtureMode.noPersonalization),
+      );
+      await tester.pumpAndSettle();
+
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'home first item');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.contextMenu);
+      await tester.pumpAndSettle();
+
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'Home navigation');
+      expect(find.text('Wabbit TV'), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'Live navigation');
+      await tester.sendKeyEvent(LogicalKeyboardKey.contextMenu);
+      await tester.pump();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'Live navigation');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'home first item');
+    },
+  );
+
+  for (final textScale in const [1.5, 2.0]) {
+    testWidgets(
+      'expanded rail keeps complete labels reachable at ${textScale}x text in short height',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(600, 360));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: TextScaler.linear(textScale)),
+              child: child!,
+            ),
+            home: const WabbitShell(
+              fixtureMode: HomeFixtureMode.noPersonalization,
+              initialDestination: ShellDestination.home,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+
+        for (final destination in ShellDestination.values) {
+          final label = find.descendant(
+            of: find.byKey(ValueKey('shell-destination-${destination.name}')),
+            matching: find.text(destination.label),
+          );
+          expect(label, findsOneWidget);
+          expect(tester.widget<Text>(label).overflow, isNull);
+        }
+
+        for (var index = 1; index < ShellDestination.values.length; index++) {
+          await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+          await tester.pump();
+        }
+
+        expect(
+          FocusManager.instance.primaryFocus?.debugLabel,
+          'Settings navigation',
+        );
+        final settingsRect = tester.getRect(
+          find.byKey(const ValueKey('shell-destination-settings')),
+        );
+        expect(settingsRect.top, greaterThanOrEqualTo(0));
+        expect(settingsRect.bottom, lessThanOrEqualTo(360));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'rail exposes one semantic name, selected location, cursor, and utility group',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      await tester.binding.setSurfaceSize(const Size(1265, 713));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        const WabbitApp(fixtureMode: HomeFixtureMode.populated),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('rail-selected-location-marker')),
+        findsOneWidget,
+      );
+      final collapsedMarkerRect = tester.getRect(
+        find.byKey(const ValueKey('rail-selected-location-marker')),
+      );
+      final collapsedIconRect = tester.getRect(
+        find.byKey(const ValueKey('shell-destination-icon-home')),
+      );
+      expect(collapsedMarkerRect.width, 2);
+      expect(collapsedMarkerRect.right, lessThan(collapsedIconRect.left));
+      final collapsedHome = tester.widget<FocusableActionDetector>(
+        find.byKey(const ValueKey('shell-destination-home')),
+      );
+      expect(collapsedHome.mouseCursor, SystemMouseCursors.click);
+      expect(collapsedHome.onShowHoverHighlight, isNotNull);
+
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: const Offset(1000, 700));
+      await mouse.moveTo(const Offset(20, 20));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('Wabbit TV'), findsOneWidget);
+      final expandedMarkerRect = tester.getRect(
+        find.byKey(const ValueKey('rail-selected-location-marker')),
+      );
+      final expandedIconRect = tester.getRect(
+        find.byKey(const ValueKey('shell-destination-icon-home')),
+      );
+      expect(expandedMarkerRect.width, 2);
+      expect(expandedMarkerRect.right, lessThan(expandedIconRect.left));
+      await mouse.moveTo(const Offset(1000, 700));
+      await tester.pump(const Duration(milliseconds: 200));
+      await mouse.removePointer();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      final homeSemantics = tester
+          .getSemantics(find.byKey(const ValueKey('shell-destination-home')))
+          .getSemanticsData();
+      expect(homeSemantics.label, 'Home');
+      expect(homeSemantics.flagsCollection.isButton, isTrue);
+      expect(homeSemantics.flagsCollection.isSelected.toBoolOrNull(), isTrue);
+      expect(homeSemantics.hasAction(SemanticsAction.tap), isTrue);
+
+      final separatorRect = tester.getRect(
+        find.byKey(const ValueKey('rail-settings-separator')),
+      );
+      final libraryRect = tester.getRect(
+        find.byKey(const ValueKey('shell-destination-library')),
+      );
+      final settingsRect = tester.getRect(
+        find.byKey(const ValueKey('shell-destination-settings')),
+      );
+      expect(separatorRect.top, greaterThan(libraryRect.bottom));
+      expect(settingsRect.top, greaterThan(separatorRect.top));
+      expect(settingsRect.bottom, lessThanOrEqualTo(713));
+
+      final liveSemantics = tester.getSemantics(
+        find.byKey(const ValueKey('shell-destination-live')),
+      );
+      expect(
+        liveSemantics.getSemanticsData().hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+      tester.binding.renderViews.single.owner!.semanticsOwner!.performAction(
+        liveSemantics.id,
+        SemanticsAction.tap,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('No source ready'), findsOneWidget);
+      semantics.dispose();
+    },
+  );
+
   testWidgets(
     'catalog destination restores its no-source action focus after rail close',
     (tester) async {
@@ -202,12 +375,17 @@ void main() {
     (tester) async {
       final controller = _TrackingController(readyOnInitialize: true);
       final scope = CatalogScopeController(port: const _ImmediateScopePort());
+      final home = HomeController(
+        data: const _FixedHomeData(sourcePresent: true),
+      );
       addTearDown(scope.dispose);
+      addTearDown(home.dispose);
       await tester.pumpWidget(
         WabbitApp(
           fixtureMode: HomeFixtureMode.runtime,
           sourceController: controller,
           catalogScopeController: scope,
+          homeController: home,
         ),
       );
       await tester.pumpAndSettle();
@@ -239,12 +417,21 @@ void main() {
 
   testWidgets('runtime rail does not claim fixture content', (tester) async {
     final controller = _TrackingController();
+    final scope = CatalogScopeController(port: const _ImmediateScopePort());
+    final home = HomeController(
+      data: const _FixedHomeData(sourcePresent: false),
+    );
+    addTearDown(scope.dispose);
+    addTearDown(home.dispose);
     await tester.pumpWidget(
       WabbitApp(
         fixtureMode: HomeFixtureMode.runtime,
         sourceController: controller,
+        catalogScopeController: scope,
+        homeController: home,
       ),
     );
+    await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
 
@@ -325,4 +512,27 @@ class _ImmediateScopePort implements CatalogScopePort {
 
   @override
   Future<LibraryScope> saveCatalogScope(LibraryScope scope) async => scope;
+}
+
+class _FixedHomeData implements HomeData {
+  const _FixedHomeData({required this.sourcePresent});
+
+  final bool sourcePresent;
+
+  @override
+  Future<bool> hasSources() async => sourcePresent;
+
+  @override
+  Future<List<RecentlyWatchedItem>> loadRecentlyWatched({
+    required int limit,
+  }) async => const [];
+
+  @override
+  Future<List<HomePersonalShelf>> loadPinnedShelves({
+    required int shelfLimit,
+    required int itemLimit,
+  }) async => const [];
+
+  @override
+  Future<PersistedSource?> loadReadySourceById(String sourceId) async => null;
 }

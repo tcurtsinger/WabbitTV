@@ -1,0 +1,20 @@
+{
+  "status": "Not selected",
+  "approved": false,
+  "phase": "3 \u2014 App Shell and Browsing Experience",
+  "surface": "My Library",
+  "composition": "B \u2014 Summary directory + ledger",
+  "mode": "Operate",
+  "viewport": {
+    "width": 1265,
+    "height": 713
+  },
+  "syntheticEvidence": true,
+  "generatedBy": "built-in image_gen",
+  "references": [
+    ".impeccable/mocks/quiet-broadcast-basic-browse-hybrid-approved.png",
+    ".impeccable/mocks/quiet-broadcast-home-b-focused-shelf.png",
+    ".impeccable/mocks/quiet-broadcast-source-management-a-directory-detail.png"
+  ],
+  "prompt": "Use case: ui-mockup\nAsset type: high-fidelity native Windows Flutter app composition, option B for Wabbit TV My Library\nPrimary request: Design the complete first viewport of the Wabbit TV \"My Library\" destination at exactly a 1265 by 713 landscape window. This is an Operate surface, not marketing.\nInput images: use the three referenced approved Wabbit TV comps only for the fixed Quiet Broadcast visual system: native black title bar, collapsed 72px rail, graphite planes, Segoe UI-like type, compact 6-8px geometry, warm white, quiet gray, and one amber focus signal.\nStructure: title bar; collapsed rail with seven destination icons and My Library selected; content header \"My Library\" with subtitle \"Your saved library\"; a 250px left Library directory and a dominant right mixed ledger.\nOption B topology: the left directory is extra dense and scan-first. It lists \"Favorites\" selected, then a quiet \"Custom groups\" label followed by \"Living Room\", \"Weekend Movies\", \"News & Sports\", and \"Kids\", each with an aligned item count. The right begins with \"Favorites\" and a single low summary strip showing \"12 items\", \"4 Live\", \"5 Movies\", and \"3 Series\" separated by thin lines. Below is a dense mixed ledger of seven 58px rows with 50x36 artwork, synthetic title, LIVE/MOVIE/SERIES label, and quiet source. Focus is on the selected \"Favorites\" directory row with a crisp 2px amber edge; the ledger remains visible and stable. No create/edit/add/remove actions.\nStyle/medium: flat matte native product UI screenshot. Near-black graphite #111212, raised #222321, signal amber #FFB347, 1px separators, crisp almost-square controls, no decorative effects.\nComposition/framing: straight-on full-window screenshot, exact landscape viewport, television-readable but dense.\nConstraints: synthetic artwork and titles only. Preserve directory-not-storefront. No poster grid, hero, recommendations, promotional copy, gradients, glass, neon glow, large shadows, floating cards, rabbit illustration, provider logos, credentials, URLs, chips, pills, or mobile layout."
+}
