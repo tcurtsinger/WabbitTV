@@ -1,1 +1,3 @@
 *.md whitespace=-blank-at-eol
+# Keep the CA bundle byte-identical to curl.se so its sha256 can be checked.
+assets/tls/cacert.pem -text
