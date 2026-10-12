@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
@@ -218,8 +219,30 @@ class MediaKitPlaybackTransport implements PlaybackTrackTransport {
   );
 
   @override
-  Future<void> open(Uri uri, {Map<String, String> httpHeaders = const {}}) =>
-      _player.open(Media(uri.toString(), httpHeaders: httpHeaders), play: true);
+  Future<void> open(
+    Uri uri, {
+    Map<String, String> httpHeaders = const {},
+  }) async {
+    // The bundled FFmpeg uses mbedTLS: it verifies nothing by default and
+    // cannot read the Windows certificate store, so point it at the shipped
+    // Mozilla roots. Stream URLs carry Xtream credentials in the path.
+    // yagni: mbedTLS opens the CA file with the ANSI code page, so under a
+    // non-ASCII install path it loads no roots and https playback fails
+    // closed. Pass a GetShortPathNameW path or add a UTF-8 activeCodePage
+    // manifest if installs under non-ASCII paths become common.
+    final native = _player.platform;
+    if (native is NativePlayer) {
+      await native.setProperty(
+        'tls-ca-file',
+        bundledCaFilePath(Platform.resolvedExecutable),
+      );
+      await native.setProperty('tls-verify', 'yes');
+    }
+    await _player.open(
+      Media(uri.toString(), httpHeaders: httpHeaders),
+      play: true,
+    );
+  }
 
   @override
   Future<void> pause() => _player.pause();
@@ -302,3 +325,15 @@ String? _safeTrackText(String? value) {
   if (normalized == null || normalized.isEmpty) return null;
   return normalized.length <= 128 ? normalized : normalized.substring(0, 128);
 }
+
+/// Asset key of the Mozilla CA bundle the player verifies HTTPS against.
+/// Refresh it from https://curl.se/ca/cacert.pem before each release.
+const bundledCaAsset = 'assets/tls/cacert.pem';
+
+/// Where a Windows build places [bundledCaAsset] next to [executable].
+String bundledCaFilePath(String executable) => [
+  File(executable).parent.path,
+  'data',
+  'flutter_assets',
+  ...bundledCaAsset.split('/'),
+].join(Platform.pathSeparator);
