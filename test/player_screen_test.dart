@@ -331,6 +331,83 @@ void main() {
     },
     skip: !Platform.isWindows,
   );
+  testWidgets('desktop player shortcuts drive playback from the stage', (
+    tester,
+  ) async {
+    final transport = _FakeTransport.ready();
+    final fullscreen = _FakeFullscreen();
+    await tester.pumpWidget(
+      _host(
+        handoff: const MoviePlaybackHandoff(
+          sourceId: 'source',
+          title: 'Movie',
+          providerItemId: '2',
+          extension: 'mp4',
+        ),
+        transportFactory: () => transport,
+        fullscreen: fullscreen,
+      ),
+    );
+    await tester.pump();
+    transport.commands.clear();
+    Future<void> press(LogicalKeyboardKey key) async {
+      await tester.sendKeyEvent(key);
+      await tester.pump();
+    }
+
+    await press(LogicalKeyboardKey.space);
+    await press(LogicalKeyboardKey.keyK);
+    await press(LogicalKeyboardKey.arrowRight);
+    await press(LogicalKeyboardKey.arrowLeft);
+    await press(LogicalKeyboardKey.keyM);
+    expect(transport.commands, [
+      'pause',
+      'pause',
+      'seek:30',
+      'seek:20',
+      'muted:true',
+    ]);
+
+    await press(LogicalKeyboardKey.keyF);
+    expect(fullscreen.fullscreen, isTrue);
+    await tester.tap(find.byKey(const ValueKey('player-video-stage')));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byKey(const ValueKey('player-video-stage')));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(fullscreen.fullscreen, isFalse);
+  });
+
+  testWidgets('Live ignores seek keys and the cursor hides with the chrome', (
+    tester,
+  ) async {
+    final transport = _FakeTransport.ready();
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'source',
+          title: 'Live title',
+          providerItemId: '1',
+          extension: 'ts',
+        ),
+        transportFactory: () => transport,
+      ),
+    );
+    await tester.pump();
+    MouseCursor cursor() => tester
+        .widget<MouseRegion>(find.byKey(const ValueKey('player-pointer')))
+        .cursor;
+    expect(cursor(), MouseCursor.defer);
+    await tester.pump(const Duration(seconds: 5));
+    expect(find.byKey(const ValueKey('player-broadcast-deck')), findsNothing);
+    expect(cursor(), SystemMouseCursors.none);
+
+    transport.commands.clear();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump();
+    expect(transport.commands, isEmpty);
+  });
+
   testWidgets('Live has no timeline and chrome yields to the video stage', (
     tester,
   ) async {
@@ -1164,14 +1241,18 @@ class _FakeTransport implements PlaybackTransport {
     if (emitReadyWhenOpened) emitReady();
   }
 
+  /// Transport commands, kept apart from [order] so lifecycle checks stay exact.
+  final commands = <String>[];
+
   @override
-  Future<void> pause() async {}
+  Future<void> pause() async => commands.add('pause');
   @override
-  Future<void> play() async {}
+  Future<void> play() async => commands.add('play');
   @override
-  Future<void> seek(Duration position) async {}
+  Future<void> seek(Duration position) async =>
+      commands.add('seek:${position.inSeconds}');
   @override
-  Future<void> setMuted(bool muted) async {}
+  Future<void> setMuted(bool muted) async => commands.add('muted:$muted');
   @override
   Future<void> setVolume(double volume) async {}
 }

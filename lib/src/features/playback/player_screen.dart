@@ -436,6 +436,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (id != null && !_live) await _manager.seek(id, value);
   }
 
+  Future<void> _toggleMute() async {
+    final id = _sessionId;
+    if (id == null) return;
+    await _manager.setMuted(id, _snapshot?.isAudible == true);
+  }
+
+  Future<void> _toggleFullscreen() async =>
+      _fullscreen.setFullscreen(!(await _fullscreen.isFullscreen));
+
   Future<void> _startOver() async {
     final id = _sessionId;
     if (id == null || _live) return;
@@ -500,6 +509,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
       (_failed ? _recoveryPrimary : _play).requestFocus();
       return KeyEventResult.handled;
     }
+    // Stage-only so Space still presses a focused deck control and the
+    // arrows still move focus once the deck has it.
+    if (event.logicalKey == LogicalKeyboardKey.space) {
+      unawaited(_togglePlay());
+      return KeyEventResult.handled;
+    }
+    final step = switch (event.logicalKey) {
+      LogicalKeyboardKey.arrowLeft => -10,
+      LogicalKeyboardKey.arrowRight => 10,
+      _ => null,
+    };
+    if (step != null && !_live && !_failed) {
+      _showChrome();
+      unawaited(_seek(_boundedSeek(_state, step)));
+      return KeyEventResult.handled;
+    }
     return KeyEventResult.ignored;
   }
 
@@ -515,9 +540,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
             unawaited(_backOut()),
         const SingleActivator(LogicalKeyboardKey.browserBack): () =>
             unawaited(_backOut()),
+        const SingleActivator(LogicalKeyboardKey.keyK): () =>
+            unawaited(_togglePlay()),
+        const SingleActivator(LogicalKeyboardKey.mediaPlayPause): () =>
+            unawaited(_togglePlay()),
+        const SingleActivator(LogicalKeyboardKey.keyF): () =>
+            unawaited(_toggleFullscreen()),
+        const SingleActivator(LogicalKeyboardKey.keyM): () =>
+            unawaited(_toggleMute()),
       },
       child: FocusTraversalGroup(
         child: MouseRegion(
+          key: const ValueKey('player-pointer'),
+          cursor: _chromeVisible || _starting || _failed || _tracksOpen
+              ? MouseCursor.defer
+              : SystemMouseCursors.none,
           onHover: (_) => _showChrome(),
           child: Focus(
             focusNode: _stage,
@@ -528,9 +565,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  RepaintBoundary(
+                  GestureDetector(
                     key: const ValueKey('player-video-stage'),
-                    child: video,
+                    behavior: HitTestBehavior.opaque,
+                    onDoubleTap: () => unawaited(_toggleFullscreen()),
+                    child: RepaintBoundary(child: video),
                   ),
                   if (_state.isBuffering && _state.hasVideo)
                     const Center(child: _StatusMark('Buffering')),
@@ -613,17 +652,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     ),
                                     onPlay: () => unawaited(_togglePlay()),
                                     onSeek: (value) => unawaited(_seek(value)),
-                                    onMute: () {
-                                      final id = _sessionId;
-                                      if (id != null) {
-                                        unawaited(
-                                          _manager.setMuted(
-                                            id,
-                                            snapshot?.isAudible == true,
-                                          ),
-                                        );
-                                      }
-                                    },
+                                    onMute: () => unawaited(_toggleMute()),
                                     onVolume: (value) {
                                       final id = _sessionId;
                                       if (id != null) {
@@ -648,11 +677,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                               widget.onAddChannel!,
                                             ),
                                           ),
-                                    onFullscreen: () => unawaited(() async {
-                                      await _fullscreen.setFullscreen(
-                                        !(await _fullscreen.isFullscreen),
-                                      );
-                                    }()),
+                                    onFullscreen: () =>
+                                        unawaited(_toggleFullscreen()),
                                     onBack: () => unawaited(_backOut()),
                                     onDown: _returnToStage,
                                   ),
