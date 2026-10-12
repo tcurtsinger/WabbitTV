@@ -138,8 +138,13 @@ class M3uConnector {
           () => ImportedCategory(providerKey: categoryKey, name: categoryName),
         );
       }
+      // tvg-id is an EPG key that HD/SD/backup variants often share, so it
+      // cannot identify a channel alone. Pairing it with title and group keeps
+      // those variants apart while staying stable when a provider rotates
+      // tokens in the stream URL. Exact repeats are still dropped below.
       final providerKey = entry.tvgId?.isNotEmpty == true
-          ? 'm3u:$sourceId:tvg:${entry.tvgId}'
+          ? 'm3u:$sourceId:tvg:${entry.tvgId}:'
+                '${_digest('${entry.title}\n${entry.groupTitle ?? ''}')}'
           : 'm3u:$sourceId:item:${_digest(_canonical(entry, locator))}';
       if (!providerKeys.add(providerKey)) continue;
       items.add(

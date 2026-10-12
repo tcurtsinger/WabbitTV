@@ -24,7 +24,10 @@ https://stream.example/live/news
 
       expect(stage.kind.name, 'live');
       expect(stage.categories.single.name, 'News');
-      expect(stage.items.single.providerKey, 'm3u:source-a:tvg:news.one');
+      expect(
+        stage.items.single.providerKey,
+        matches(RegExp(r'^m3u:source-a:tvg:news\.one:[0-9a-f]{16}$')),
+      );
       expect(stage.items.single.title, 'News One HD');
       expect(stage.items.single.artworkLocator, 'https://art.example/news.png');
       final ref =
@@ -97,19 +100,46 @@ https://stream.example/two
       repeat.items.map((item) => item.providerKey),
     );
   });
-  test('keeps the first usable duplicate tvg-id deterministically', () {
+  test('keeps variants that share a tvg-id; drops exact repeats', () {
     final stage = connector.parseBytes(
-      utf8.encode('''#EXTINF:-1 tvg-id="shared",First
-https://stream.example/first
-#EXTINF:-1 tvg-id="shared",Later
-https://stream.example/later
+      utf8.encode('''#EXTINF:-1 tvg-id="cnn.us" group-title="News",CNN HD
+https://stream.example/hd
+#EXTINF:-1 tvg-id="cnn.us" group-title="News",CNN SD
+https://stream.example/sd
+#EXTINF:-1 tvg-id="cnn.us" group-title="Backup",CNN HD
+https://backup.example/hd
+#EXTINF:-1 tvg-id="cnn.us" group-title="News",CNN HD
+https://stream.example/repeat
 '''),
       sourceId: 'source-a',
     );
 
-    expect(stage.items, hasLength(1));
-    expect(stage.items.single.title, 'First');
-    expect(stage.items.single.providerKey, 'm3u:source-a:tvg:shared');
+    expect(stage.items.map((item) => item.title), [
+      'CNN HD',
+      'CNN SD',
+      'CNN HD',
+    ]);
+    expect(stage.items.map((item) => item.providerKey).toSet(), hasLength(3));
+    expect(
+      (jsonDecode(stage.items.first.playbackRef) as Map)['url'],
+      'https://stream.example/hd',
+    );
+  });
+
+  test('tvg-id identity survives a rotated stream URL', () {
+    String key(String url) => connector
+        .parseBytes(
+          utf8.encode('#EXTINF:-1 tvg-id="news",News\n$url\n'),
+          sourceId: 'source-a',
+        )
+        .items
+        .single
+        .providerKey;
+
+    expect(
+      key('https://stream.example/news?token=one'),
+      key('https://stream.example/news?token=two'),
+    );
   });
   test('acquires M3U from loopback URL and local file', () async {
     const body = '#EXTINF:-1 tvg-id="one",One\nhttps://stream.example/one\n';
