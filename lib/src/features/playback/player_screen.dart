@@ -492,6 +492,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   KeyEventResult _stageKey(FocusNode _, KeyEvent event) {
+    // Holding an arrow keeps seeking; every other stage key acts once.
+    final step = switch (event.logicalKey) {
+      LogicalKeyboardKey.arrowLeft => -10,
+      LogicalKeyboardKey.arrowRight => 10,
+      _ => null,
+    };
+    if (step != null && event is! KeyUpEvent && !_live && !_failed) {
+      _showChrome();
+      unawaited(_seek(_boundedSeek(_state, step)));
+      return KeyEventResult.handled;
+    }
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     if (event.logicalKey == LogicalKeyboardKey.escape ||
         event.logicalKey == LogicalKeyboardKey.browserBack) {
@@ -515,16 +526,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
       unawaited(_togglePlay());
       return KeyEventResult.handled;
     }
-    final step = switch (event.logicalKey) {
-      LogicalKeyboardKey.arrowLeft => -10,
-      LogicalKeyboardKey.arrowRight => 10,
-      _ => null,
-    };
-    if (step != null && !_live && !_failed) {
-      _showChrome();
-      unawaited(_seek(_boundedSeek(_state, step)));
-      return KeyEventResult.handled;
-    }
     return KeyEventResult.ignored;
   }
 
@@ -540,13 +541,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
             unawaited(_backOut()),
         const SingleActivator(LogicalKeyboardKey.browserBack): () =>
             unawaited(_backOut()),
-        const SingleActivator(LogicalKeyboardKey.keyK): () =>
+        const SingleActivator(
+          LogicalKeyboardKey.keyK,
+          includeRepeats: false,
+        ): () =>
             unawaited(_togglePlay()),
-        const SingleActivator(LogicalKeyboardKey.mediaPlayPause): () =>
+        const SingleActivator(
+          LogicalKeyboardKey.mediaPlayPause,
+          includeRepeats: false,
+        ): () =>
             unawaited(_togglePlay()),
-        const SingleActivator(LogicalKeyboardKey.keyF): () =>
+        const SingleActivator(
+          LogicalKeyboardKey.keyF,
+          includeRepeats: false,
+        ): () =>
             unawaited(_toggleFullscreen()),
-        const SingleActivator(LogicalKeyboardKey.keyM): () =>
+        const SingleActivator(
+          LogicalKeyboardKey.keyM,
+          includeRepeats: false,
+        ): () =>
             unawaited(_toggleMute()),
       },
       child: FocusTraversalGroup(

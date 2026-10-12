@@ -377,6 +377,50 @@ void main() {
     expect(fullscreen.fullscreen, isFalse);
   });
 
+  testWidgets('held toggle keys act once; held arrows keep seeking', (
+    tester,
+  ) async {
+    final transport = _FakeTransport.ready();
+    final fullscreen = _FakeFullscreen();
+    await tester.pumpWidget(
+      _host(
+        handoff: const MoviePlaybackHandoff(
+          sourceId: 'source',
+          title: 'Movie',
+          providerItemId: '2',
+          extension: 'mp4',
+        ),
+        transportFactory: () => transport,
+        fullscreen: fullscreen,
+      ),
+    );
+    await tester.pump();
+    transport.commands.clear();
+    Future<void> hold(LogicalKeyboardKey key) async {
+      await tester.sendKeyDownEvent(key);
+      for (var i = 0; i < 3; i++) {
+        await tester.sendKeyRepeatEvent(key);
+      }
+      await tester.sendKeyUpEvent(key);
+      await tester.pump();
+    }
+
+    await hold(LogicalKeyboardKey.space);
+    await hold(LogicalKeyboardKey.keyK);
+    await hold(LogicalKeyboardKey.keyM);
+    await hold(LogicalKeyboardKey.keyF);
+    expect(transport.commands, ['pause', 'pause', 'muted:true']);
+    expect(fullscreen.fullscreen, isTrue);
+
+    transport.commands.clear();
+    await hold(LogicalKeyboardKey.arrowRight);
+    expect(transport.commands, ['seek:30', 'seek:40', 'seek:50', 'seek:60']);
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'player video stage',
+    );
+  });
+
   testWidgets('Live ignores seek keys and the cursor hides with the chrome', (
     tester,
   ) async {
