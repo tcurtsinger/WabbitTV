@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:wabbit_tv/src/features/sources/source_catalog_database.dart';
 import 'package:wabbit_tv/src/features/sources/source_models.dart';
+import 'package:wabbit_tv/src/features/sources/xtream_connector.dart';
 
 void main() {
   test('worker cancellation force-closes a stalled local provider and removes pending rows', () async {
@@ -271,6 +272,51 @@ void main() {
       await import.cancel();
     },
   );
+
+  test('a first import that fails midway leaves no library rows', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = server.listen((request) async {
+      final action = request.uri.queryParameters['action'];
+      final body = switch (action) {
+        null => '{"user_info":{"auth":1}}',
+        'get_live_categories' || 'get_vod_categories' => '[]',
+        'get_live_streams' => '[{"stream_id":"l1","name":"Live"}]',
+        _ => 'not json',
+      };
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(body);
+      await request.response.close();
+    });
+    addTearDown(() async {
+      await server.close(force: true);
+      await requests.cancel();
+    });
+    final temp = await Directory.systemTemp.createTemp('wabbit-import-worker-');
+    addTearDown(() => temp.delete(recursive: true));
+    final path = '${temp.path}${Platform.pathSeparator}catalog.sqlite';
+    final database = SourceCatalogDatabase(databasePath: path);
+    final import = await database.beginInitialImport(
+      SourceDefinition(
+        id: 'half-source',
+        name: 'Fixture',
+        serverUrl: 'http://${server.address.address}:${server.port}',
+        username: 'fixture-user',
+        password: 'fixture-password',
+        credentialKey: 'fixture-key',
+      ),
+    );
+    await expectLater(
+      import.pending.timeout(const Duration(seconds: 3)),
+      throwsA(isA<SourceImportFailure>()),
+    );
+    await import.terminal.timeout(const Duration(seconds: 3));
+
+    final db = sqlite3.open(path);
+    addTearDown(db.close);
+    for (final table in ['sources', 'library_items', 'library_fts']) {
+      expect(db.select('SELECT * FROM $table'), isEmpty, reason: table);
+    }
+  });
 
   test(
     'worker accepts valid empty Xtream stages as zero-count media',

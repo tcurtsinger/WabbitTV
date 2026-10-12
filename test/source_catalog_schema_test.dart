@@ -475,8 +475,23 @@ void main() {
       addTearDown(fixture.dispose);
       await fixture.seed('one', 'One');
       await fixture.seed('two', 'Two');
+      await fixture.seed('kept', 'Kept');
+      final seeded = sqlite3.open(fixture.path);
+      // A favorite outlives its last source; a leftover orphan from an older
+      // build does not.
+      seeded.execute(
+        "INSERT INTO favorites (library_item_id, created_at) VALUES ('kept:live:item', '2026-01-01')",
+      );
+      seeded.execute(
+        "INSERT INTO library_items (id, kind, display_title, normalized_title) VALUES ('legacy:live:item', 'live', 'Legacy', 'legacy')",
+      );
+      seeded.execute(
+        "INSERT INTO library_fts (library_item_id, title, supporting_text) VALUES ('legacy:live:item', 'Legacy', '')",
+      );
+      seeded.close();
 
       await fixture.database.removeSource('one');
+      await fixture.database.removeSource('kept');
 
       final db = sqlite3.open(fixture.path);
       addTearDown(db.close);
@@ -491,8 +506,18 @@ void main() {
             .single['catalog_item_id'],
         'two:live:item',
       );
-      // The removed identity remains available to future organization data.
-      expect(db.select('SELECT id FROM library_items'), hasLength(2));
+      expect(
+        db
+            .select('SELECT id FROM library_items ORDER BY id')
+            .map((row) => row['id']),
+        ['kept:live:item', 'two:live:item'],
+      );
+      expect(
+        db
+            .select('SELECT library_item_id FROM library_fts')
+            .map((row) => row['library_item_id']),
+        ['two:live:item'],
+      );
     },
   );
 
