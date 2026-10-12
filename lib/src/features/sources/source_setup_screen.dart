@@ -8,6 +8,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../focus_edge.dart';
 import 'source_editor.dart';
 import 'source_models.dart';
 import 'source_setup_controller.dart';
@@ -853,21 +854,23 @@ class _SourceButton extends StatelessWidget {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(6),
                 ),
-              ),
+              ).copyWith(side: focusEdge(onAmber: true)),
               child: Text(label),
             )
           : OutlinedButton(
               focusNode: focusNode,
               onPressed: enabled ? onPressed : null,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _warmWhite,
-                disabledForegroundColor: _quietText,
-                side: const BorderSide(color: _line),
-                minimumSize: const Size(92, 46),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ),
+              style:
+                  OutlinedButton.styleFrom(
+                    foregroundColor: _warmWhite,
+                    disabledForegroundColor: _quietText,
+                    minimumSize: const Size(92, 46),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ).copyWith(
+                    side: focusEdge(rest: const BorderSide(color: _line)),
+                  ),
               child: Text(label),
             ),
     );
@@ -983,13 +986,17 @@ class _ReadyAction extends StatelessWidget {
       child: OutlinedButton(
         focusNode: focusNode,
         onPressed: () => onBrowse(kind),
-        style: OutlinedButton.styleFrom(
-          alignment: Alignment.centerLeft,
-          foregroundColor: _warmWhite,
-          side: const BorderSide(color: _line),
-          minimumSize: const Size(double.infinity, 52),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-        ),
+        style:
+            OutlinedButton.styleFrom(
+              alignment: Alignment.centerLeft,
+              foregroundColor: _warmWhite,
+              minimumSize: const Size(double.infinity, 52),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ).copyWith(
+              side: focusEdge(rest: const BorderSide(color: _line)),
+            ),
         child: Row(
           children: [
             Expanded(child: Text('Browse ${kind.label}')),

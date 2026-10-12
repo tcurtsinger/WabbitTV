@@ -255,6 +255,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Home provider'), findsWidgets);
   });
+  testWidgets('keyboard focus shows the amber edge on dialog buttons', (
+    tester,
+  ) async {
+    final c = SourceManagementController(
+      entries: [entry('one', 'Home provider')],
+    );
+    await tester.pumpWidget(app(c));
+    await tester.tap(find.text('Remove'));
+    await tester.pumpAndSettle();
+    BorderSide edge(Type type, String label) {
+      final material = tester.widget<Material>(
+        find
+            .descendant(
+              of: find.widgetWithText(type, label),
+              matching: find.byType(Material),
+            )
+            .first,
+      );
+      return (material.shape! as OutlinedBorder).side;
+    }
+
+    // Cancel starts focused; the filled action rests without an edge.
+    expect(edge(OutlinedButton, 'Cancel').color, const Color(0xFFFFB347));
+    expect(edge(OutlinedButton, 'Cancel').width, 2);
+    expect(edge(FilledButton, 'Remove source'), BorderSide.none);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pumpAndSettle();
+    expect(edge(OutlinedButton, 'Cancel').width, 1);
+    expect(edge(FilledButton, 'Remove source').color, const Color(0xFFF4F0E7));
+    expect(edge(FilledButton, 'Remove source').width, 2);
+  });
+
   testWidgets('narrow layout keeps the directory above details', (
     tester,
   ) async {
