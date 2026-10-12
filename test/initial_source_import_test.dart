@@ -212,6 +212,67 @@ void main() {
   });
 
   test(
+    'worker keeps the first of repeated provider ids instead of failing',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final requests = server.listen((request) async {
+        final action = request.uri.queryParameters['action'];
+        final body = switch (action) {
+          null => '{"user_info":{"auth":1}}',
+          'get_live_categories' =>
+            '[{"category_id":"1","category_name":"News"},'
+                '{"category_id":"1","category_name":"News again"}]',
+          'get_live_streams' =>
+            '[{"stream_id":"l1","name":"First","category_id":"1"},'
+                '{"stream_id":"l1","name":"Repeat","category_id":"1"},'
+                '{"stream_id":"l2","name":"Second","category_id":"1"}]',
+          'get_vod_categories' || 'get_series_categories' => '[]',
+          _ => '[]',
+        };
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(body);
+        await request.response.close();
+      });
+      addTearDown(() async {
+        await server.close(force: true);
+        await requests.cancel();
+      });
+      final temp = await Directory.systemTemp.createTemp(
+        'wabbit-import-worker-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final path = '${temp.path}${Platform.pathSeparator}catalog.sqlite';
+      final database = SourceCatalogDatabase(databasePath: path);
+      final import = await database.beginInitialImport(
+        SourceDefinition(
+          id: 'repeat-source',
+          name: 'Fixture',
+          serverUrl: 'http://${server.address.address}:${server.port}',
+          username: 'fixture-user',
+          password: 'fixture-password',
+          credentialKey: 'fixture-key',
+        ),
+      );
+      final pending = await import.pending.timeout(const Duration(seconds: 3));
+      expect(pending.counts[SourceMediaKind.live], 2);
+      final db = sqlite3.open(path);
+      addTearDown(db.close);
+      expect(
+        db
+            .select('SELECT title FROM catalog_items ORDER BY title')
+            .map((row) => row['title']),
+        ['First', 'Second'],
+      );
+      expect(
+        db.select('SELECT name FROM source_groups').single['name'],
+        'News',
+      );
+      expect(db.select('SELECT * FROM library_fts'), hasLength(2));
+      await import.cancel();
+    },
+  );
+
+  test(
     'worker accepts valid empty Xtream stages as zero-count media',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

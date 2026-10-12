@@ -5168,7 +5168,10 @@ String? _literalFtsQuery(String value) {
       .where((segment) => segment.isNotEmpty)
       .map((segment) => '"${segment.replaceAll('"', '""')}"')
       .toList();
-  return quoted.isEmpty ? null : quoted.join(' AND ');
+  if (quoted.isEmpty) return null;
+  // Search runs as the user types, so the last word may still be partial.
+  quoted.last = '${quoted.last}*';
+  return quoted.join(' AND ');
 }
 
 SourceReady _commitFixtureOnWorker(
@@ -6097,44 +6100,61 @@ int? _parseReportedConnectionLimit(Object? value) {
   return parsed != null && parsed > 0 ? parsed : null;
 }
 
-List<ImportedCategory> _parseCategories(Object? value) => value is! List
-    ? const []
-    : value
-          .whereType<Map>()
-          .map(
-            (e) => ImportedCategory(
-              providerKey: '${e['category_id'] ?? ''}'.trim(),
-              name: '${e['category_name'] ?? ''}'.trim(),
-            ),
-          )
-          .where((e) => e.providerKey.isNotEmpty && e.name.isNotEmpty)
-          .toList();
+// Providers sometimes repeat an id; the first occurrence wins, matching M3U.
+List<ImportedCategory> _parseCategories(Object? value) {
+  if (value is! List) return const [];
+  final seen = <String>{};
+  return value
+      .whereType<Map>()
+      .map(
+        (e) => ImportedCategory(
+          providerKey: '${e['category_id'] ?? ''}'.trim(),
+          name: '${e['category_name'] ?? ''}'.trim(),
+        ),
+      )
+      .where(
+        (e) =>
+            e.providerKey.isNotEmpty &&
+            e.name.isNotEmpty &&
+            seen.add(e.providerKey),
+      )
+      .toList();
+}
+
 List<ImportedCatalogItem> _parseItems(
   SourceMediaKind kind,
   List<Object?> items,
-) => items
-    .whereType<Map>()
-    .map((e) {
-      final key =
-          '${e[kind == SourceMediaKind.series ? 'series_id' : 'stream_id'] ?? ''}'
-              .trim();
-      final title = '${e['name'] ?? ''}'.trim();
-      final category = '${e['category_id'] ?? ''}'.trim();
-      final extension = '${e['container_extension'] ?? ''}'.trim();
-      final artwork =
-          '${e[kind == SourceMediaKind.series ? 'cover' : 'stream_icon'] ?? ''}'
-              .trim();
-      return ImportedCatalogItem(
-        providerKey: key,
-        title: title,
-        categoryKey: category.isEmpty ? null : category,
-        playbackRef: playbackReference({
-          'providerId': key,
-          'kind': kind.name,
-          if (extension.isNotEmpty) 'extension': extension,
-        }),
-        artworkLocator: artwork.isEmpty ? null : artwork,
-      );
-    })
-    .where((e) => e.providerKey.isNotEmpty && e.title.isNotEmpty)
-    .toList();
+) {
+  final seen = <String>{};
+  return items
+      .whereType<Map>()
+      .map((e) {
+        final key =
+            '${e[kind == SourceMediaKind.series ? 'series_id' : 'stream_id'] ?? ''}'
+                .trim();
+        final title = '${e['name'] ?? ''}'.trim();
+        final category = '${e['category_id'] ?? ''}'.trim();
+        final extension = '${e['container_extension'] ?? ''}'.trim();
+        final artwork =
+            '${e[kind == SourceMediaKind.series ? 'cover' : 'stream_icon'] ?? ''}'
+                .trim();
+        return ImportedCatalogItem(
+          providerKey: key,
+          title: title,
+          categoryKey: category.isEmpty ? null : category,
+          playbackRef: playbackReference({
+            'providerId': key,
+            'kind': kind.name,
+            if (extension.isNotEmpty) 'extension': extension,
+          }),
+          artworkLocator: artwork.isEmpty ? null : artwork,
+        );
+      })
+      .where(
+        (e) =>
+            e.providerKey.isNotEmpty &&
+            e.title.isNotEmpty &&
+            seen.add(e.providerKey),
+      )
+      .toList();
+}

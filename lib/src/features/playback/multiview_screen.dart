@@ -121,9 +121,20 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
   FocusNode _focusFor(PlaybackSessionId id) =>
       id == widget.secondSessionId ? _secondFocus : _firstFocus;
 
+  bool get _ownsFocus => [
+    _firstFocus,
+    _secondFocus,
+    _audioFocus,
+    _fullFocus,
+    _closeFocus,
+    _collapseFocus,
+  ].any((node) => node.hasFocus);
+
   void _managerChanged() {
     if (!mounted || _changingAudio) return;
-    _reconcileFromManager(restoreFocus: true);
+    // The manager notifies on every position tick; only pull focus back when
+    // it has left this screen, never away from a deck control.
+    _reconcileFromManager(restoreFocus: !_ownsFocus);
   }
 
   void _reconcileFromManager({

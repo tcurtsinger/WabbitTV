@@ -8,6 +8,7 @@ import 'playback_transport.dart';
 
 const playbackStartupDeadline = Duration(seconds: 20);
 const playbackCheckpointInterval = Duration(seconds: 10);
+const playbackRecoveryStableAfter = Duration(seconds: 30);
 const playbackResumeMinimumWatched = Duration(seconds: 30);
 const playbackResumeMinimumRemaining = Duration(seconds: 60);
 
@@ -662,6 +663,7 @@ class PlaybackManager extends ChangeNotifier {
       }
       final previous = managed.state;
       managed.state = next;
+      _trackStability(managed, next);
       if (next.hasVideo && managed.firstVideoAt == null) {
         managed.firstVideoAt = _clock();
       }
@@ -736,6 +738,21 @@ class PlaybackManager extends ChangeNotifier {
     return null;
   }
 
+  /// Earns a fresh recovery only after continuous video without buffering,
+  /// so a stream that keeps stalling cannot reopen forever.
+  void _trackStability(
+    _ManagedPlaybackSession managed,
+    PlaybackTransportState next,
+  ) {
+    final now = _clock();
+    final since = managed.healthySince;
+    if (since != null && now.difference(since) >= playbackRecoveryStableAfter) {
+      managed.recoveryEarned = true;
+    }
+    final healthy = next.hasVideo && !next.isBuffering && !next.hasError;
+    managed.healthySince = healthy ? (since ?? now) : null;
+  }
+
   Future<void> _recoverRuntimeError(_ManagedPlaybackSession managed) async {
     if (_closed ||
         managed.stopRequested ||
@@ -745,6 +762,9 @@ class PlaybackManager extends ChangeNotifier {
       return;
     }
     managed.recovering = true;
+    // One quiet retry per failure: after stable playback, the current open
+    // counts as a fresh first attempt. Rapid repeat failures still terminate.
+    if (managed.recoveryEarned) managed.attempts = 1;
     if (managed.attempts >= 2) {
       await _makeTerminal(managed, PlaybackSessionFailure.unavailable);
       managed.recovering = false;
@@ -958,7 +978,9 @@ class PlaybackManager extends ChangeNotifier {
     managed
       ..subscription = null
       ..transport = null
-      ..state = const PlaybackTransportState();
+      ..state = const PlaybackTransportState()
+      ..healthySince = null
+      ..recoveryEarned = false;
     if (subscription != null) {
       try {
         await subscription.cancel();
@@ -1093,6 +1115,8 @@ class _ManagedPlaybackSession {
   Future<void> progressTail = Future<void>.value();
   PlaybackSessionFailure? failure;
   DateTime? firstVideoAt;
+  DateTime? healthySince;
+  bool recoveryEarned = false;
   DateTime? lastCheckpointAt;
   Duration lastQueuedPosition = Duration.zero;
   Duration resumePosition = Duration.zero;
