@@ -456,18 +456,22 @@ class _ConnectorPicker extends StatelessWidget {
             OutlinedButton(
               key: ValueKey('source-connector-${candidate.name}'),
               onPressed: enabled ? () => onSelected(candidate) : null,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: candidate == kind ? _warmWhite : _quietText,
-                backgroundColor: candidate == kind ? _raised : _surface,
-                disabledForegroundColor: candidate == kind
-                    ? _warmWhite
-                    : _quietText,
-                side: const BorderSide(color: _line),
-                minimumSize: const Size(0, 42),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ),
+              style:
+                  OutlinedButton.styleFrom(
+                    foregroundColor: candidate == kind
+                        ? _warmWhite
+                        : _quietText,
+                    backgroundColor: candidate == kind ? _raised : _surface,
+                    disabledForegroundColor: candidate == kind
+                        ? _warmWhite
+                        : _quietText,
+                    minimumSize: const Size(0, 42),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ).copyWith(
+                    side: focusEdge(rest: const BorderSide(color: _line)),
+                  ),
               child: Text(candidate.label),
             ),
         ],
@@ -628,6 +632,7 @@ class _SourceForm extends StatelessWidget {
                   focusNode: visibilityFocus,
                   tooltip: showPassword ? 'Hide password' : 'Show password',
                   onPressed: disabled ? null : onShowPassword,
+                  style: ButtonStyle(side: focusEdge()),
                   icon: Icon(
                     showPassword
                         ? Icons.visibility_off_outlined

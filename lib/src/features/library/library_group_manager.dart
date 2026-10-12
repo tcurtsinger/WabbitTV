@@ -565,6 +565,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
         IconButton(
           tooltip: _busy ? 'Wait for the local save' : 'Close',
           onPressed: _busy ? null : _close,
+          style: ButtonStyle(side: focusEdge()),
           icon: const Icon(Icons.close, color: _warmWhite),
         ),
       ],

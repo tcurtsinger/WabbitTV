@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../focus_edge.dart';
 import '../artwork/artwork_loader.dart';
 import '../artwork/source_artwork.dart';
 import '../sources/source_models.dart';
@@ -304,6 +305,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
         IconButton(
           tooltip: _saving ? 'Wait for the local save' : 'Close organizer',
           onPressed: _saving ? null : _close,
+          style: ButtonStyle(side: focusEdge()),
           icon: const Icon(Icons.close, color: _warmWhite),
         ),
       ],

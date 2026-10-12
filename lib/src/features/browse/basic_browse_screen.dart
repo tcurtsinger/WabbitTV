@@ -2466,6 +2466,7 @@ class _CategoryOverlay extends StatelessWidget {
                       IconButton(
                         tooltip: 'Close categories',
                         onPressed: onDismiss,
+                        style: ButtonStyle(side: focusEdge()),
                         icon: const Icon(Icons.close, color: _warmWhite),
                       ),
                     ],
