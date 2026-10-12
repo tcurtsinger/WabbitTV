@@ -5647,12 +5647,29 @@ void _deleteSource(Database db, String sourceId) {
       [sourceId],
     );
     db.execute('DELETE FROM epg_source_state WHERE source_id = ?', [sourceId]);
-    // Library identities remain so a favorite, group, or watch state cannot
-    // be destroyed merely because its final source variant is removed.
     db.execute(
       'DELETE FROM library_members WHERE catalog_item_id IN (SELECT id FROM catalog_items WHERE source_id = ?)',
       [sourceId],
     );
+    // Search only reaches identities through a source variant, so rows for
+    // identities without one are dead weight. Identities themselves remain
+    // only while a favorite, group, or watch state still points at them;
+    // otherwise failed imports and removals would accumulate forever. Both
+    // sweeps are global so leftovers from older builds are cleaned up too.
+    db.execute('''DELETE FROM library_fts WHERE library_item_id NOT IN (
+         SELECT library_item_id FROM library_members
+       )''');
+    db.execute('''DELETE FROM library_items
+       WHERE NOT EXISTS (SELECT 1 FROM library_members AS member
+                         WHERE member.library_item_id = library_items.id)
+         AND NOT EXISTS (SELECT 1 FROM favorites AS favorite
+                         WHERE favorite.library_item_id = library_items.id)
+         AND NOT EXISTS (SELECT 1 FROM custom_group_items AS grouped
+                         WHERE grouped.library_item_id = library_items.id)
+         AND NOT EXISTS (SELECT 1 FROM watch_state AS watched
+                         WHERE watched.library_item_id = library_items.id)
+         AND NOT EXISTS (SELECT 1 FROM playback_progress AS progress
+                         WHERE progress.library_item_id = library_items.id)''');
     db.execute('DELETE FROM catalog_items WHERE source_id = ?', [sourceId]);
     db.execute('DELETE FROM source_groups WHERE source_id = ?', [sourceId]);
     db.execute('DELETE FROM sources WHERE id = ?', [sourceId]);
