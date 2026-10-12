@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../focus_edge.dart';
 import '../sources/startup_models.dart';
 import 'startup_preferences_controller.dart';
 
@@ -190,14 +191,16 @@ class GeneralSettingsSectionState extends State<GeneralSettingsSection> {
                   key: const ValueKey('startup-settings-retry'),
                   focusNode: _retryFocus,
                   onPressed: () => unawaited(controller.retry()),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: _warmWhite,
-                    side: const BorderSide(color: _line),
-                    minimumSize: const Size(0, 44),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                  ),
+                  style:
+                      OutlinedButton.styleFrom(
+                        foregroundColor: _warmWhite,
+                        minimumSize: const Size(0, 44),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                      ).copyWith(
+                        side: focusEdge(rest: const BorderSide(color: _line)),
+                      ),
                   child: const Text('Retry'),
                 ),
               ],

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import '../../focus_edge.dart';
 import '../artwork/artwork_loader.dart';
 import '../artwork/source_artwork.dart';
 import '../browse/catalog_scope_controller.dart';
@@ -1624,6 +1625,7 @@ class _SearchMessage extends StatelessWidget {
                 key: const ValueKey('search-error-retry'),
                 focusNode: actionFocusNode,
                 onPressed: onPressed,
+                style: ButtonStyle(side: focusEdge()),
                 child: Text(actionLabel!),
               ),
             ],
@@ -1682,6 +1684,7 @@ class _PageRetry extends StatelessWidget {
     child: TextButton(
       focusNode: focusNode,
       onPressed: onPressed,
+      style: ButtonStyle(side: focusEdge()),
       child: const Text('Retry'),
     ),
   );

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import '../../focus_edge.dart';
 import '../artwork/artwork_loader.dart';
 import '../artwork/source_artwork.dart';
 import '../guide/guide_data.dart';
@@ -2465,6 +2466,7 @@ class _CategoryOverlay extends StatelessWidget {
                       IconButton(
                         tooltip: 'Close categories',
                         onPressed: onDismiss,
+                        style: ButtonStyle(side: focusEdge()),
                         icon: const Icon(Icons.close, color: _warmWhite),
                       ),
                     ],
@@ -3019,7 +3021,11 @@ class _PageErrorFooter extends StatelessWidget {
             style: const TextStyle(color: _quietText, fontSize: 13),
           ),
         ),
-        TextButton(onPressed: onRetry, child: const Text('Retry')),
+        TextButton(
+          onPressed: onRetry,
+          style: ButtonStyle(side: focusEdge()),
+          child: const Text('Retry'),
+        ),
       ],
     ),
   );

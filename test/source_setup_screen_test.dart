@@ -505,6 +505,45 @@ void main() {
     );
   });
 
+  testWidgets('connector picker and password toggle show the focus edge', (
+    tester,
+  ) async {
+    final initialFocus = FocusNode(debugLabel: 'source name');
+    addTearDown(initialFocus.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SourceSetupScreen(
+            initialFocus: initialFocus,
+            onContentFocus: (_) {},
+            onExit: () {},
+            onBrowse: (_) {},
+            controller: SourceSetupController(
+              service: _WidgetSourcePort(),
+              credentialStore: _WidgetCredentialStore(),
+            ),
+          ),
+        ),
+      ),
+    );
+    const focused = {WidgetState.focused};
+    final connector = tester.widget<OutlinedButton>(
+      find.byKey(const ValueKey('source-connector-m3uUrl')),
+    );
+    final eye = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.visibility_outlined),
+    );
+    for (final side in [
+      connector.style!.side!.resolve(focused)!,
+      eye.style!.side!.resolve(focused)!,
+    ]) {
+      expect(side.color, const Color(0xFFFFB347));
+      expect(side.width, 2);
+    }
+    expect(connector.style!.side!.resolve({})!.width, 1);
+    expect(eye.style!.side!.resolve({}), BorderSide.none);
+  });
+
   testWidgets(
     'an empty add ledger selects all three supported connector forms',
     (tester) async {

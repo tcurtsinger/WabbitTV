@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../focus_edge.dart';
 import '../settings/general_settings_section.dart';
 import '../settings/startup_preferences_controller.dart';
 import 'source_models.dart';
@@ -624,10 +625,14 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
           OutlinedButton(
             focusNode: _cancelRemoveFocus,
             onPressed: () => Navigator.pop(context, false),
+            style: ButtonStyle(
+              side: focusEdge(rest: const BorderSide(color: _line)),
+            ),
             child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
+            style: ButtonStyle(side: focusEdge(onAmber: true)),
             child: const Text('Remove source'),
           ),
         ],
@@ -677,9 +682,13 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
         actions: [
           OutlinedButton(
             onPressed: () => Navigator.pop(context),
+            style: ButtonStyle(
+              side: focusEdge(rest: const BorderSide(color: _line)),
+            ),
             child: const Text('Cancel'),
           ),
           FilledButton(
+            style: ButtonStyle(side: focusEdge(onAmber: true)),
             onPressed: () {
               final normalized = name.trim();
               if (normalized.isNotEmpty) Navigator.pop(context, normalized);
@@ -1746,12 +1755,14 @@ class _OutlinedAction extends StatelessWidget {
     key: ValueKey('source-action-$label'),
     focusNode: focusNode,
     onPressed: onPressed,
-    style: OutlinedButton.styleFrom(
-      foregroundColor: _warmWhite,
-      side: const BorderSide(color: _line),
-      minimumSize: const Size(0, 48),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-    ),
+    style:
+        OutlinedButton.styleFrom(
+          foregroundColor: _warmWhite,
+          minimumSize: const Size(0, 48),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+        ).copyWith(
+          side: focusEdge(rest: const BorderSide(color: _line)),
+        ),
     child: Text(label),
   );
 }
@@ -1772,13 +1783,15 @@ class _QuietTextAction extends StatelessWidget {
     key: ValueKey('source-action-$label'),
     focusNode: focusNode,
     onPressed: onPressed,
-    style: TextButton.styleFrom(
-      foregroundColor: _warmWhite,
-      minimumSize: const Size(0, 44),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      side: const BorderSide(color: _line),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-    ),
+    style:
+        TextButton.styleFrom(
+          foregroundColor: _warmWhite,
+          minimumSize: const Size(0, 44),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+        ).copyWith(
+          side: focusEdge(rest: const BorderSide(color: _line)),
+        ),
     child: Text(label),
   );
 }
@@ -1802,7 +1815,7 @@ class _FilledAction extends StatelessWidget {
       foregroundColor: _amberInk,
       minimumSize: const Size(0, 48),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-    ),
+    ).copyWith(side: focusEdge(onAmber: true)),
     child: Text(label),
   );
 }

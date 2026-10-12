@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/semantics.dart';
 
+import '../../focus_edge.dart';
 import 'source_models.dart';
 
 const _graphite = Color(0xFF111212),
@@ -2610,7 +2611,11 @@ class _LoadMore extends StatelessWidget {
   final VoidCallback onRetry;
   @override
   Widget build(BuildContext context) => Center(
-    child: TextButton(onPressed: onRetry, child: const Text('Load more')),
+    child: TextButton(
+      onPressed: onRetry,
+      style: ButtonStyle(side: focusEdge()),
+      child: const Text('Load more'),
+    ),
   );
 }
 

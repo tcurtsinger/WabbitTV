@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../focus_edge.dart';
 import '../sources/source_models.dart';
 import 'library_organization_service.dart';
 
@@ -564,6 +565,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
         IconButton(
           tooltip: _busy ? 'Wait for the local save' : 'Close',
           onPressed: _busy ? null : _close,
+          style: ButtonStyle(side: focusEdge()),
           icon: const Icon(Icons.close, color: _warmWhite),
         ),
       ],
@@ -1319,14 +1321,24 @@ class _ManagerAction extends StatelessWidget {
         });
       },
       onPressed: enabled ? onPressed : null,
-      style: OutlinedButton.styleFrom(
-        foregroundColor: primary ? _graphite : _warmWhite,
-        backgroundColor: primary && enabled ? _amber : _raised,
-        disabledForegroundColor: _quietText,
-        side: BorderSide(color: primary && enabled ? _amber : _line, width: 2),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-        minimumSize: const Size(108, 40),
-      ),
+      style:
+          OutlinedButton.styleFrom(
+            foregroundColor: primary ? _graphite : _warmWhite,
+            backgroundColor: primary && enabled ? _amber : _raised,
+            disabledForegroundColor: _quietText,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(6),
+            ),
+            minimumSize: const Size(108, 40),
+          ).copyWith(
+            side: focusEdge(
+              rest: BorderSide(
+                color: primary && enabled ? _amber : _line,
+                width: 2,
+              ),
+              onAmber: primary && enabled,
+            ),
+          ),
       child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
     );
     final handler = onKeyEvent;
