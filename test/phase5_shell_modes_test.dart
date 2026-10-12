@@ -65,6 +65,117 @@ void main() {
     manager.dispose();
   });
 
+  testWidgets('Escape leaves a stream that is still opening', (tester) async {
+    final fixture = _ShellFixture(limit: 2, neverReady: true);
+    addTearDown(fixture.dispose);
+    await tester.binding.setSurfaceSize(const Size(1265, 713));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(fixture.manager.sessions, hasLength(1));
+    expect(fixture.manager.sessions.single.phase, PlaybackSessionPhase.opening);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await _pumpUntil(tester, () => fixture.manager.sessions.isEmpty);
+    expect(fixture.manager.sessions, isEmpty);
+    expect(find.byType(PlayerScreen), findsNothing);
+    expect(
+      find.byKey(const ValueKey('playback-starting-surface')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('Corner Signal shows buffering from playback updates', (
+    tester,
+  ) async {
+    final fixture = _ShellFixture(limit: 2);
+    addTearDown(fixture.dispose);
+    await tester.binding.setSurfaceSize(const Size(1265, 713));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(fixture.app());
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    tester.widget<PlayerScreen>(find.byType(PlayerScreen)).onEnterPip!();
+    await tester.pumpAndSettle();
+    expect(find.byType(PipOverlay), findsOneWidget);
+    expect(find.text('Buffering'), findsNothing);
+
+    fixture.transports.created.single.emit(
+      const PlaybackTransportState(hasVideo: true, isBuffering: true),
+    );
+    await tester.pump();
+
+    expect(find.text('Buffering'), findsOneWidget);
+  });
+
+  testWidgets('multiview playback updates leave deck focus where it is', (
+    tester,
+  ) async {
+    final transports = _TransportFactory(failAfterFirst: false);
+    final manager = PlaybackManager(
+      targetResolver: const _Resolver(),
+      admissionPort: const _Admission(2),
+      transportFactory: transports.create,
+    );
+    addTearDown(manager.dispose);
+    final first = await manager.start(
+      const LivePlaybackHandoff(
+        sourceId: 'source',
+        title: 'Channel One',
+        providerItemId: 'one',
+        extension: 'ts',
+      ),
+    );
+    final second = await manager.start(
+      const LivePlaybackHandoff(
+        sourceId: 'source',
+        title: 'Channel Two',
+        providerItemId: 'two',
+        extension: 'ts',
+      ),
+      requestAudioFocus: false,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MultiviewScreen(
+          manager: manager,
+          originalSessionId: (first as PlaybackStarted).sessionId,
+          secondSessionId: (second as PlaybackStarted).sessionId,
+          onOpenFullPlayer: (_) {},
+          onCloseSession: (_) {},
+          onCollapse: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    FocusManager.instance.rootScope.descendants
+        .firstWhere((node) => node.debugLabel == 'multiview close selected')
+        .requestFocus();
+    await tester.pump();
+
+    transports.created.first.emit(
+      const PlaybackTransportState(
+        hasVideo: true,
+        isPlaying: true,
+        position: Duration(seconds: 5),
+        duration: Duration(hours: 1),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'multiview close selected',
+    );
+  });
+
   testWidgets('multiview keeps equal side-by-side tiles at 600px and 2x text', (
     tester,
   ) async {
@@ -1066,8 +1177,15 @@ Future<void> _movePipToLeft(WidgetTester tester) async {
 }
 
 class _ShellFixture {
-  factory _ShellFixture({required int limit, bool failAfterFirst = false}) {
-    final transports = _TransportFactory(failAfterFirst: failAfterFirst);
+  factory _ShellFixture({
+    required int limit,
+    bool failAfterFirst = false,
+    bool neverReady = false,
+  }) {
+    final transports = _TransportFactory(
+      failAfterFirst: failAfterFirst,
+      neverReady: neverReady,
+    );
     return _ShellFixture._(
       transports,
       PlaybackManager(
@@ -1228,9 +1346,11 @@ class _TransportFactory {
     this.failSecondAudioTransfer = false,
     this.failOriginalRollbackUnmute = false,
     this.failOpenFrom,
+    this.neverReady = false,
   });
 
   final bool failAfterFirst;
+  final bool neverReady;
   final bool failSecondAudioTransfer;
   final bool failOriginalRollbackUnmute;
   final int? failOpenFrom;
@@ -1244,6 +1364,7 @@ class _TransportFactory {
           (failOpenFrom != null && created.length >= failOpenFrom!),
       failUnmute: failSecondAudioTransfer && created.isNotEmpty,
       failUnmuteAfterFirst: failOriginalRollbackUnmute && created.isEmpty,
+      neverReady: neverReady,
     );
     created.add(value);
     return value;
@@ -1256,10 +1377,12 @@ class _Transport implements PlaybackTransport {
     required this.failOpen,
     this.failUnmute = false,
     this.failUnmuteAfterFirst = false,
+    this.neverReady = false,
   });
 
   final int number;
   final bool failOpen;
+  final bool neverReady;
   final bool failUnmute;
   final bool failUnmuteAfterFirst;
   int _unmuteCalls = 0;
@@ -1281,6 +1404,7 @@ class _Transport implements PlaybackTransport {
     Map<String, String> httpHeaders = const {},
   }) async {
     if (failOpen) throw StateError('private failure');
+    if (neverReady) return;
     _states.add(
       const PlaybackTransportState(
         hasVideo: true,

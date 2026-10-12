@@ -8,6 +8,7 @@ import 'playback_transport.dart';
 
 const playbackStartupDeadline = Duration(seconds: 20);
 const playbackCheckpointInterval = Duration(seconds: 10);
+const playbackRecoveryStableAfter = Duration(seconds: 30);
 const playbackResumeMinimumWatched = Duration(seconds: 30);
 const playbackResumeMinimumRemaining = Duration(seconds: 60);
 
@@ -733,6 +734,7 @@ class PlaybackManager extends ChangeNotifier {
       managed.resumePosition = Duration.zero;
       managed.reopenPosition = Duration.zero;
     }
+    managed.usableAt = _clock();
     return null;
   }
 
@@ -745,6 +747,13 @@ class PlaybackManager extends ChangeNotifier {
       return;
     }
     managed.recovering = true;
+    // One quiet retry per failure: after stable playback, the current open
+    // counts as a fresh first attempt. Rapid repeat failures still terminate.
+    final usableAt = managed.usableAt;
+    if (usableAt != null &&
+        _clock().difference(usableAt) >= playbackRecoveryStableAfter) {
+      managed.attempts = 1;
+    }
     if (managed.attempts >= 2) {
       await _makeTerminal(managed, PlaybackSessionFailure.unavailable);
       managed.recovering = false;
@@ -1093,6 +1102,7 @@ class _ManagedPlaybackSession {
   Future<void> progressTail = Future<void>.value();
   PlaybackSessionFailure? failure;
   DateTime? firstVideoAt;
+  DateTime? usableAt;
   DateTime? lastCheckpointAt;
   Duration lastQueuedPosition = Duration.zero;
   Duration resumePosition = Duration.zero;

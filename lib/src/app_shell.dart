@@ -460,13 +460,17 @@ class _WabbitShellState extends State<WabbitShell> {
       _clearPlaybackPresentation();
       return;
     }
+    // Position ticks notify many times a second. The player, multiview, and
+    // Corner Signal listen to the manager directly, so rebuild the shell only
+    // when its own presentation fields change.
     final second = _secondPlaybackSessionId;
     if (second != null && _playbackManager.session(second) == null) {
-      _secondPlaybackSessionId = null;
-      _secondPlayback = null;
-      _playbackMode = primary == null ? null : _PlaybackSurfaceMode.full;
+      setState(() {
+        _secondPlaybackSessionId = null;
+        _secondPlayback = null;
+        _playbackMode = primary == null ? null : _PlaybackSurfaceMode.full;
+      });
     }
-    setState(() {});
   }
 
   void _sourceManagementChanged() {
@@ -1021,10 +1025,12 @@ class _WabbitShellState extends State<WabbitShell> {
   Future<void> _exitPlayback() async {
     if (!mounted) return;
     _playbackRequestGeneration += 1;
-    _pendingPlayback = null;
-    _playbackStarting = false;
     final origin = _playbackOrigin;
-    _clearPlaybackFields();
+    setState(() {
+      _pendingPlayback = null;
+      _playbackStarting = false;
+      _clearPlaybackFields();
+    });
     await _playbackManager.stopAll();
     if (mounted) _restoreFocus(origin);
   }
@@ -1151,7 +1157,7 @@ class _WabbitShellState extends State<WabbitShell> {
     if (_secondChannelBusy) return;
     final origin = _lastContentFocus ?? _playbackOrigin;
     final id = _primaryPlaybackSessionId;
-    _clearPlaybackFields();
+    setState(_clearPlaybackFields);
     if (id != null) await _playbackManager.stop(id);
     if (mounted) _restoreFocus(origin);
   }
@@ -1742,24 +1748,27 @@ class _WabbitShellState extends State<WabbitShell> {
               if (_pipActive && _primaryPlaybackSessionId != null)
                 Positioned.fill(
                   left: 72,
-                  child: PipOverlay(
-                    key: _pipBoundsKey,
-                    surfaceKey: _pipSurfaceKey,
-                    manager: _playbackManager,
-                    sessionId: _primaryPlaybackSessionId!,
-                    corner: presentedPipCorner,
-                    restoreFocus: _pipRestoreFocus,
-                    moveFocus: _pipMoveFocus,
-                    muteFocus: _pipMuteFocus,
-                    closeFocus: _pipCloseFocus,
-                    statusMessage: _secondChannelBusy
-                        ? 'Checking stream allowance…'
-                        : null,
-                    busy: _secondChannelBusy,
-                    onRestore: _restorePipToFullPlayer,
-                    onMove: _movePipCorner,
-                    onToggleMute: () => unawaited(_togglePipMute()),
-                    onClose: () => unawaited(_closePip()),
+                  child: ListenableBuilder(
+                    listenable: _playbackManager,
+                    builder: (context, _) => PipOverlay(
+                      key: _pipBoundsKey,
+                      surfaceKey: _pipSurfaceKey,
+                      manager: _playbackManager,
+                      sessionId: _primaryPlaybackSessionId!,
+                      corner: presentedPipCorner,
+                      restoreFocus: _pipRestoreFocus,
+                      moveFocus: _pipMoveFocus,
+                      muteFocus: _pipMuteFocus,
+                      closeFocus: _pipCloseFocus,
+                      statusMessage: _secondChannelBusy
+                          ? 'Checking stream allowance…'
+                          : null,
+                      busy: _secondChannelBusy,
+                      onRestore: _restorePipToFullPlayer,
+                      onMove: _movePipCorner,
+                      onToggleMute: () => unawaited(_togglePipMute()),
+                      onClose: () => unawaited(_closePip()),
+                    ),
                   ),
                 ),
               if (_organizerRequest != null && _playback == null)

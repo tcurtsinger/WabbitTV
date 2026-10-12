@@ -156,6 +156,24 @@ void main() {
     );
   });
 
+  test('search matches a partially typed last word', () async {
+    final fixture = await _FoundationFixture.create();
+    addTearDown(fixture.dispose);
+    await fixture.seedThreeSources();
+
+    Future<int> count(String query) => fixture.database.countLibraryItems(
+      scope: const LibraryScope.all(),
+      query: query,
+    );
+
+    expect(await count('Broad'), 3);
+    expect(await count('shared broa'), 3);
+    expect(await count('Café Fi'), 1);
+    expect(await count('Caf'), 3);
+    // Only the last word is a prefix; earlier words must be whole.
+    expect(await count('Sha Broadcast'), 0);
+  });
+
   test(
     'global catalog scope persists and stale sources fall back to All',
     () async {
