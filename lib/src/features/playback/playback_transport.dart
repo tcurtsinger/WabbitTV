@@ -226,14 +226,16 @@ class MediaKitPlaybackTransport implements PlaybackTrackTransport {
     // The bundled FFmpeg uses mbedTLS: it verifies nothing by default and
     // cannot read the Windows certificate store, so point it at the shipped
     // Mozilla roots. Stream URLs carry Xtream credentials in the path.
-    final caFile = bundledCaFilePath(Platform.resolvedExecutable);
+    // yagni: mbedTLS opens the CA file with the ANSI code page, so under a
+    // non-ASCII install path it loads no roots and https playback fails
+    // closed. Pass a GetShortPathNameW path or add a UTF-8 activeCodePage
+    // manifest if installs under non-ASCII paths become common.
     final native = _player.platform;
-    // yagni: mbedTLS opens the CA file with the ANSI code page, so a
-    // non-ASCII install path would fail every https stream. Those installs
-    // keep the old unverified behavior; use a short path or a UTF-8 manifest
-    // if installs under non-ASCII paths become common.
-    if (native is NativePlayer && _isAscii(caFile)) {
-      await native.setProperty('tls-ca-file', caFile);
+    if (native is NativePlayer) {
+      await native.setProperty(
+        'tls-ca-file',
+        bundledCaFilePath(Platform.resolvedExecutable),
+      );
       await native.setProperty('tls-verify', 'yes');
     }
     await _player.open(
@@ -335,5 +337,3 @@ String bundledCaFilePath(String executable) => [
   'flutter_assets',
   ...bundledCaAsset.split('/'),
 ].join(Platform.pathSeparator);
-
-bool _isAscii(String value) => value.codeUnits.every((unit) => unit < 0x80);
