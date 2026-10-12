@@ -303,6 +303,44 @@ void main() {
   );
 
   test(
+    'buffering after a recovery does not count as stable playback',
+    () async {
+      var now = DateTime.utc(2026);
+      final factory = _TransportFactory();
+      final manager = PlaybackManager(
+        targetResolver: const _Resolver(),
+        transportFactory: factory.create,
+        clock: () => now,
+      );
+      await manager.start(_live('source', 'live'));
+      Future<void> settle() async {
+        for (var i = 0; i < 20; i++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+
+      factory.created[0].emit(const PlaybackTransportState(hasError: true));
+      await settle();
+      expect(factory.created, hasLength(2));
+
+      // The reopened stream shows one frame, then buffers for over 30 s.
+      factory.created[1].emit(
+        const PlaybackTransportState(hasVideo: true, isBuffering: true),
+      );
+      now = now.add(const Duration(seconds: 31));
+      factory.created[1].emit(
+        const PlaybackTransportState(hasVideo: true, isBuffering: true),
+      );
+      factory.created[1].emit(const PlaybackTransportState(hasError: true));
+      await settle();
+
+      expect(factory.created, hasLength(2));
+      expect(manager.sessions.single.phase, PlaybackSessionPhase.failed);
+      await manager.close();
+    },
+  );
+
+  test(
     'new sessions start muted and explicit owner transfer never mixes audio',
     () async {
       final log = <String>[];
