@@ -253,6 +253,8 @@ class _WabbitShellState extends State<WabbitShell> {
   MyLibrarySession _myLibrarySession = MyLibrarySession();
   bool _myLibraryNeedsRefresh = false;
   late final SourceCatalogDatabase _catalogDatabase = SourceCatalogDatabase();
+  // One instance: the player re-queries variants whenever this port changes.
+  late final _variantPort = DatabasePlaybackExactVariantPort(_catalogDatabase);
   late final CredentialStore _playbackCredentialStore =
       widget.credentialStore ?? SecureCredentialStore();
   late final XtreamEpgService _epgService = XtreamEpgService(
@@ -1540,7 +1542,7 @@ class _WabbitShellState extends State<WabbitShell> {
         manager: _playbackManager,
         sessionId: selectedId,
         handoff: selectedHandoff,
-        variantPort: DatabasePlaybackExactVariantPort(_catalogDatabase),
+        variantPort: _variantPort,
         fullscreenPort: widget.fullscreenPort,
         onExit: _exitPlayback,
         onOpenSettings: _openPlaybackSettings,
@@ -2286,12 +2288,7 @@ class _ShellBody extends StatelessWidget {
       );
     }
 
-    return _DeferredDestination(
-      destination: destination,
-      initialFocus: initialContentFocus,
-      onContentFocus: onContentFocus,
-      onOpenRail: onOpenRail,
-    );
+    throw StateError('No screen for $destination');
   }
 }
 
@@ -2728,77 +2725,4 @@ class _RailNowPlayingState extends State<_RailNowPlaying> {
       },
     ),
   );
-}
-
-class _DeferredDestination extends StatelessWidget {
-  const _DeferredDestination({
-    required this.destination,
-    required this.initialFocus,
-    required this.onContentFocus,
-    required this.onOpenRail,
-  });
-
-  final ShellDestination destination;
-  final FocusNode initialFocus;
-  final ValueChanged<FocusNode> onContentFocus;
-  final VoidCallback onOpenRail;
-
-  @override
-  Widget build(BuildContext context) {
-    return Focus(
-      focusNode: initialFocus,
-      autofocus: true,
-      onFocusChange: (focused) {
-        if (focused) onContentFocus(initialFocus);
-      },
-      onKeyEvent: (_, event) {
-        if (event is KeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-          onOpenRail();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
-      child: Semantics(
-        label: '${destination.label} is planned for a later shaped phase',
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(48),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 540),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    destination.label,
-                    style: const TextStyle(
-                      color: _warmWhite,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 30,
-                      letterSpacing: -0.6,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'This destination is present for app-shell navigation. Its browsing surface will be shaped before it is built.',
-                    style: TextStyle(
-                      color: _quietText,
-                      fontSize: 16,
-                      height: 1.45,
-                    ),
-                  ),
-                  const SizedBox(height: 26),
-                  const Text(
-                    'Press Escape or Left to open navigation.',
-                    style: TextStyle(color: _amber, fontSize: 14),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }

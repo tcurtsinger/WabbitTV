@@ -133,6 +133,35 @@ void main() {
     ]);
   });
 
+  testWidgets('posters decode bounded without squashing before cover', (
+    tester,
+  ) async {
+    final loader = _FakeArtworkProvider(focusDwell: Duration.zero);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SourceArtwork(
+            locator: 'https://art.example/poster',
+            kind: SourceMediaKind.movies,
+            loader: loader,
+            explicitlyActivated: true,
+            width: 120,
+            height: 180,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    // Both sides bounded (no unbounded decode), aspect kept (no squash).
+    final image = tester.widget<Image>(find.byType(Image)).image;
+    expect(image, isA<ResizeImage>());
+    expect((image as ResizeImage).policy, ResizeImagePolicy.fit);
+    expect(image.width, 360);
+    expect(image.height, 360);
+  });
+
   testWidgets('expanded artwork omits non-finite decode cache dimensions', (
     tester,
   ) async {

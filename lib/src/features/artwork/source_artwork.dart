@@ -155,6 +155,25 @@ class _SourceArtworkState extends State<SourceArtwork> {
     return (logicalExtent * 2).round().clamp(1, 4096);
   }
 
+  /// Decodes inside a square of the box's longer side, keeping the aspect
+  /// ratio. Exact width+height would squash the poster before BoxFit.cover;
+  /// one free dimension would let an extreme-aspect image decode unbounded.
+  ImageProvider _decodedImage(Uint8List bytes) {
+    final width = _decodeExtent(widget.width);
+    final height = _decodeExtent(widget.height);
+    final bound = width == null || height == null
+        ? width ?? height
+        : (width > height ? width : height);
+    final image = MemoryImage(bytes);
+    if (bound == null) return image;
+    return ResizeImage(
+      image,
+      width: bound,
+      height: bound,
+      policy: ResizeImagePolicy.fit,
+    );
+  }
+
   @override
   Widget build(BuildContext context) => SizedBox(
     width: widget.width,
@@ -168,12 +187,10 @@ class _SourceArtworkState extends State<SourceArtwork> {
         ),
         child: _bytes == null
             ? _ArtworkFallback(kind: widget.kind, loading: _loading)
-            : Image.memory(
-                _bytes!,
+            : Image(
+                image: _decodedImage(_bytes!),
                 fit: BoxFit.cover,
                 gaplessPlayback: true,
-                cacheWidth: _decodeExtent(widget.width),
-                cacheHeight: _decodeExtent(widget.height),
                 errorBuilder: (_, _, _) {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     if (mounted) _decodeFailed();
