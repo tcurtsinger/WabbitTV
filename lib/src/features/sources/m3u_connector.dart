@@ -103,9 +103,7 @@ class M3uConnector {
     try {
       text = utf8.decode(bytes);
     } on FormatException {
-      // Older playlists are often Latin-1/Windows-1252. Latin-1 accepts every
-      // byte, so binary junk still ends as an empty import below.
-      text = latin1.decode(bytes);
+      text = _decodeByLine(bytes);
     }
 
     final categories = <String, ImportedCategory>{};
@@ -249,6 +247,26 @@ class M3uConnector {
     if (isCancelled?.call() ?? false) {
       throw const SourceImportFailure(SourceImportFailureKind.cancelled);
     }
+  }
+}
+
+/// Decodes each line as UTF-8, falling back to Latin-1 (older playlists are
+/// often Latin-1/Windows-1252) for that line only, so one legacy line can't
+/// garble the rest. 0x0A never occurs inside a UTF-8 multibyte sequence, and
+/// Latin-1 accepts every byte, so binary junk still ends as an empty import.
+String _decodeByLine(List<int> bytes) {
+  final lines = <String>[];
+  var start = 0;
+  while (true) {
+    final end = bytes.indexOf(0x0A, start);
+    final line = bytes.sublist(start, end < 0 ? bytes.length : end);
+    try {
+      lines.add(utf8.decode(line));
+    } on FormatException {
+      lines.add(latin1.decode(line));
+    }
+    if (end < 0) return lines.join('\n');
+    start = end + 1;
   }
 }
 

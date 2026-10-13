@@ -158,16 +158,19 @@ https://stream.example/two
     expect(ref['headers'], {'X-Token': 'abc'});
   });
 
-  test('decodes a Latin-1 playlist instead of rejecting it', () {
-    final stage = connector.parseBytes(
-      latin1.encode(
+  test('decodes Latin-1 lines without garbling the UTF-8 ones', () {
+    final stage = connector.parseBytes([
+      ...utf8.encode('#EXTINF:-1,Télé UTF-8\nhttps://stream.example/a\n'),
+      ...latin1.encode(
         '#EXTINF:-1 group-title="Télé",Télé-Québec\n'
         'https://stream.example/tq\n',
       ),
-      sourceId: 'source-a',
-    );
+    ], sourceId: 'source-a');
 
-    expect(stage.items.single.title, 'Télé-Québec');
+    expect(stage.items.map((item) => item.title), [
+      'Télé UTF-8',
+      'Télé-Québec',
+    ]);
     expect(stage.categories.single.name, 'Télé');
   });
 
