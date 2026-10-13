@@ -462,7 +462,10 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
         !_initialItemLoadFailed &&
         _nextCursor != null &&
         _items.length < desiredCount) {
+      final before = _items.length;
       await _loadItems(reset: false, clearMessage: false);
+      // A failed page leaves the window unchanged; don't retry it in a loop.
+      if (_items.length == before) break;
     }
     final selectedLoaded =
         selectedId == null ||

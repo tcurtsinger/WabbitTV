@@ -55,11 +55,12 @@ class SecureCredentialStore implements CredentialStore {
       if (decoded is! Map) return null;
       final username = decoded['username'];
       final password = decoded['password'];
+      final serverUrl = decoded['serverUrl'];
       if (username is! String || password is! String) return null;
       return StoredCredential(
         username: username,
         password: password,
-        serverUrl: decoded['serverUrl'] as String?,
+        serverUrl: serverUrl is String ? serverUrl : null,
       );
     } on FormatException {
       return null;

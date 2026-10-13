@@ -360,6 +360,47 @@ void main() {
   });
 
   testWidgets(
+    'a failing page during the window reload is not retried forever',
+    (tester) async {
+      final port = _GroupPort()
+        ..items = List.generate(150, _item)
+        ..failGroupLoadsFrom = 4;
+      await tester.binding.setSurfaceSize(const Size(900, 713));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(_host(port, _manageRequest()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Order items'));
+      await tester.pump();
+      final ledger = find.byType(Scrollable).last;
+      await tester.scrollUntilVisible(
+        find.text('Load more'),
+        800,
+        scrollable: ledger,
+      );
+      await tester.tap(find.text('Load more'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Item 125'),
+        500,
+        scrollable: ledger,
+      );
+      await tester.tap(find.text('Item 125'));
+      await tester.pump();
+      await tester.tap(find.text('Move item up'));
+      await tester.pumpAndSettle();
+
+      // 1 initial, 2 Load more, 3 reload reset, 4 failed refill, 5 the one
+      // bounded fetch for the selected item. Never a retry loop.
+      expect(port.loadGroupItemsCalls, 5);
+      expect(
+        find.text('Could not load more items. Try again.'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
     'moving last loaded row down fetches one page and restores exact identity',
     (tester) async {
       final port = _GroupPort()..items = List.generate(150, _item);
@@ -532,6 +573,7 @@ class _GroupPort implements LibraryOrganizationPort {
   int? pageChunkSize;
   int loadGroupItemsCalls = 0;
   int groupLoadFailures = 0;
+  int? failGroupLoadsFrom;
   int? gateGroupLoadCall;
   Completer<void>? groupLoadGate;
   int directoryFailures = 0;
@@ -613,6 +655,14 @@ class _GroupPort implements LibraryOrganizationPort {
     int limit = 100,
   }) async {
     loadGroupItemsCalls += 1;
+    final failFrom = failGroupLoadsFrom;
+    if (failFrom != null && loadGroupItemsCalls >= failFrom) {
+      // Ends a runaway retry loop so the test reports a count, not a hang.
+      if (loadGroupItemsCalls > 20) {
+        return const CustomGroupLibraryPage(items: [], nextCursor: null);
+      }
+      throw StateError('group items unavailable');
+    }
     if (groupLoadFailures > 0) {
       groupLoadFailures -= 1;
       throw StateError('group items unavailable');

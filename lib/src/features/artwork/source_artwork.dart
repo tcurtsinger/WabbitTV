@@ -172,8 +172,12 @@ class _SourceArtworkState extends State<SourceArtwork> {
                 _bytes!,
                 fit: BoxFit.cover,
                 gaplessPlayback: true,
+                // One dimension keeps the aspect ratio; both would squash the
+                // poster before BoxFit.cover crops it.
                 cacheWidth: _decodeExtent(widget.width),
-                cacheHeight: _decodeExtent(widget.height),
+                cacheHeight: _decodeExtent(widget.width) == null
+                    ? _decodeExtent(widget.height)
+                    : null,
                 errorBuilder: (_, _, _) {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     if (mounted) _decodeFailed();

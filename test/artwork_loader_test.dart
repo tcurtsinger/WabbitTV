@@ -133,6 +133,33 @@ void main() {
     ]);
   });
 
+  testWidgets('posters decode at one dimension so cover does not squash', (
+    tester,
+  ) async {
+    final loader = _FakeArtworkProvider(focusDwell: Duration.zero);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SourceArtwork(
+            locator: 'https://art.example/poster',
+            kind: SourceMediaKind.movies,
+            loader: loader,
+            explicitlyActivated: true,
+            width: 120,
+            height: 180,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final image = tester.widget<Image>(find.byType(Image)).image;
+    expect(image, isA<ResizeImage>());
+    expect((image as ResizeImage).width, 240);
+    expect(image.height, isNull);
+  });
+
   testWidgets('expanded artwork omits non-finite decode cache dimensions', (
     tester,
   ) async {
