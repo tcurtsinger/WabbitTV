@@ -733,6 +733,15 @@ void main() {
     );
     expect((primary.center.dx - 1265 / 2).abs(), lessThanOrEqualTo(0.5));
     expect(primary.width, 56);
+    // Fullscreen joins the centered row so the two sides mirror.
+    final tracks = tester.getCenter(find.byTooltip('Audio & subtitles'));
+    final fullscreen = tester.getCenter(
+      find.byKey(const ValueKey('player-fullscreen')),
+    );
+    expect(
+      (primary.center.dx - tracks.dx) - (fullscreen.dx - primary.center.dx),
+      moreOrLessEquals(0, epsilon: 0.5),
+    );
     expect(utilities.right, lessThanOrEqualTo(1265));
     expect(utilities.bottom, lessThanOrEqualTo(713));
   });

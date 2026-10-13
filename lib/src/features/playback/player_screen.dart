@@ -979,6 +979,17 @@ class _BroadcastDeck extends StatelessWidget {
             onPressed: onPip!,
             onDown: onDown,
           );
+    final fullscreen = !windowControls
+        ? null
+        : _DeckAction(
+            key: const ValueKey('player-fullscreen'),
+            focusNode: nodes.fullscreen,
+            icon: Icons.fullscreen_rounded,
+            label: 'Fullscreen',
+            onPressed: onFullscreen,
+            onBack: onBack,
+            onDown: onDown,
+          );
     final List<Widget> left, right;
     if (live) {
       final small = [
@@ -993,6 +1004,7 @@ class _BroadcastDeck extends StatelessWidget {
             onPressed: onAdd!,
             onDown: onDown,
           ),
+        ?fullscreen,
       ];
       final split = small.length ~/ 2;
       left = small.sublist(0, split);
@@ -1024,6 +1036,7 @@ class _BroadcastDeck extends StatelessWidget {
           onDown: onDown,
         ),
         ?pip,
+        ?fullscreen,
       ];
     }
     return Row(
@@ -1083,16 +1096,6 @@ class _BroadcastDeck extends StatelessWidget {
           onDown: onDown,
         ),
       ),
-      const SizedBox(width: 10),
-      _DeckAction(
-        key: const ValueKey('player-fullscreen'),
-        focusNode: nodes.fullscreen,
-        icon: Icons.fullscreen_rounded,
-        label: 'Fullscreen',
-        onPressed: onFullscreen,
-        onBack: onBack,
-        onDown: onDown,
-      ),
     ],
   );
 
@@ -1119,8 +1122,8 @@ class _BroadcastDeck extends StatelessWidget {
             ],
             LayoutBuilder(
               builder: (context, constraints) {
-                // Volume and fullscreen only mean something in a window;
-                // a TV remote owns both.
+                // Volume only means something in a window; a TV remote
+                // owns it (and the app is always fullscreen there).
                 if (!windowControls) return _transport();
                 if (constraints.maxWidth >= 900) {
                   return _transport(trailing: _utilities());
