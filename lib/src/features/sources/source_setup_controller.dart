@@ -259,6 +259,7 @@ class SourceSetupController extends ChangeNotifier {
       }
     } catch (_) {
       failure = SourceImportFailureKind.emptyResponse;
+      _markCurrentStageError();
       final import = _import;
       if (import != null) {
         await _cleanupNonReady(import, source.credentialKey, true);

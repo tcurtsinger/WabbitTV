@@ -240,6 +240,28 @@ void main() {
     },
   );
 
+  test('an unexpected M3U failure marks Live failed, not importing', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'wabbit-m3u-unexpected-',
+    );
+    addTearDown(() => temp.delete(recursive: true));
+    final file = File('${temp.path}${Platform.pathSeparator}list.m3u');
+    await file.writeAsString('#EXTINF:-1,One\nhttps://stream.example/one\n');
+    final database = SourceCatalogDatabase(
+      databasePath: '${temp.path}${Platform.pathSeparator}catalog.sqlite',
+    );
+    final controller = SourceSetupController(
+      productionService: SourceSetupService(database: database),
+      credentialStore: _MemoryCredentials()..failWrite = true,
+    );
+
+    await controller.connectM3uFile(name: 'File', path: file.path);
+
+    expect(controller.isImporting, isFalse);
+    expect(controller.failure, isNotNull);
+    expect(controller.stages[SourceMediaKind.live], ImportStageStatus.error);
+  });
+
   test(
     'unreadable local-file initial leaves no source or credential',
     () async {
@@ -415,6 +437,7 @@ void main() {
 class _MemoryCredentials implements CredentialStore {
   final values = <String, StoredCredential>{};
   bool failDelete = false;
+  bool failWrite = false;
   @override
   Future<void> delete(String key) async {
     if (failDelete) throw StateError('delete');
@@ -430,6 +453,7 @@ class _MemoryCredentials implements CredentialStore {
     required String password,
     String? serverUrl,
   }) async {
+    if (failWrite) throw StateError('write');
     values[key] = StoredCredential(
       username: username,
       password: password,
