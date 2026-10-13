@@ -47,7 +47,8 @@ app.*.map.json
 # Widget Preview related
 .widget_preview/
 
-# Private planning, design and evidence notes (kept locally, not published)
+# Private planning, design and evidence notes: kept locally and no longer
+# tracked (commits before the README cleanup still contain them)
 /PLAN.md
 /PRODUCT.md
 /DESIGN.md
