@@ -21,11 +21,16 @@ class GeneralSettingsSection extends StatefulWidget {
     required this.controller,
     required this.onContentFocus,
     this.onMoveToSources,
+    this.onMoveAbove,
   });
 
   final StartupPreferencesController controller;
   final ValueChanged<FocusNode> onContentFocus;
   final VoidCallback? onMoveToSources;
+
+  /// Up from a choice; without it, directional focus can skip the header
+  /// above and land on the navigation rail.
+  final VoidCallback? onMoveAbove;
 
   @override
   State<GeneralSettingsSection> createState() => GeneralSettingsSectionState();
@@ -162,6 +167,7 @@ class GeneralSettingsSectionState extends State<GeneralSettingsSection> {
                       onMoveLeft: () => _moveChoice(target, -1),
                       onMoveRight: () => _moveChoice(target, 1),
                       onMoveDown: widget.onMoveToSources,
+                      onMoveUp: widget.onMoveAbove,
                       onPressed: busy
                           ? null
                           : () => unawaited(controller.setTarget(target)),
@@ -227,6 +233,7 @@ class _StartupChoice extends StatelessWidget {
     required this.onMoveLeft,
     required this.onMoveRight,
     required this.onMoveDown,
+    required this.onMoveUp,
     required this.onPressed,
   });
 
@@ -236,6 +243,7 @@ class _StartupChoice extends StatelessWidget {
   final VoidCallback onMoveLeft;
   final VoidCallback onMoveRight;
   final VoidCallback? onMoveDown;
+  final VoidCallback? onMoveUp;
   final VoidCallback? onPressed;
 
   @override
@@ -243,15 +251,19 @@ class _StartupChoice extends StatelessWidget {
     final choice = FocusableActionDetector(
       focusNode: focusNode,
       enabled: onPressed != null,
-      shortcuts: const {
-        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
-        SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
-        SingleActivator(LogicalKeyboardKey.arrowLeft): _MoveStartupChoiceIntent(
-          -1,
-        ),
-        SingleActivator(LogicalKeyboardKey.arrowRight):
-            _MoveStartupChoiceIntent(1),
-        SingleActivator(LogicalKeyboardKey.arrowDown): _MoveToSourcesIntent(),
+      shortcuts: {
+        const SingleActivator(LogicalKeyboardKey.enter): const ActivateIntent(),
+        const SingleActivator(LogicalKeyboardKey.select):
+            const ActivateIntent(),
+        const SingleActivator(LogicalKeyboardKey.arrowLeft):
+            const _MoveStartupChoiceIntent(-1),
+        const SingleActivator(LogicalKeyboardKey.arrowRight):
+            const _MoveStartupChoiceIntent(1),
+        const SingleActivator(LogicalKeyboardKey.arrowDown):
+            const _MoveToSourcesIntent(),
+        if (onMoveUp != null)
+          const SingleActivator(LogicalKeyboardKey.arrowUp):
+              const _MoveAboveIntent(),
       },
       actions: {
         ActivateIntent: CallbackAction<ActivateIntent>(
@@ -269,6 +281,12 @@ class _StartupChoice extends StatelessWidget {
         _MoveToSourcesIntent: CallbackAction<_MoveToSourcesIntent>(
           onInvoke: (_) {
             onMoveDown?.call();
+            return null;
+          },
+        ),
+        _MoveAboveIntent: CallbackAction<_MoveAboveIntent>(
+          onInvoke: (_) {
+            onMoveUp?.call();
             return null;
           },
         ),
@@ -345,4 +363,8 @@ class _MoveStartupChoiceIntent extends Intent {
 
 class _MoveToSourcesIntent extends Intent {
   const _MoveToSourcesIntent();
+}
+
+class _MoveAboveIntent extends Intent {
+  const _MoveAboveIntent();
 }

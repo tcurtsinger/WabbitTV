@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -3042,8 +3043,10 @@ class _NoSourceHome extends StatelessWidget {
                   onPressed: onAddSource,
                 ),
                 const SizedBox(height: 18),
-                const Text(
-                  'Press Escape or Left to open navigation.',
+                Text(
+                  defaultTargetPlatform == TargetPlatform.android
+                      ? 'Press Back or Left to open navigation.'
+                      : 'Press Escape or Left to open navigation.',
                   style: TextStyle(color: _quietText, fontSize: 13),
                 ),
               ],

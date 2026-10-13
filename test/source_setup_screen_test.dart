@@ -244,19 +244,23 @@ void main() {
       ),
     );
 
-    await tester.enterText(
+    await _typeInto(
+      tester,
       find.byKey(const ValueKey('source-field-Source name')),
       'My IPTV',
     );
-    await tester.enterText(
+    await _typeInto(
+      tester,
       find.byKey(const ValueKey('source-field-Server URL')),
       'https://provider.example',
     );
-    await tester.enterText(
+    await _typeInto(
+      tester,
       find.byKey(const ValueKey('source-field-Username')),
       'fixture-user',
     );
-    await tester.enterText(
+    await _typeInto(
+      tester,
       find.byKey(const ValueKey('source-field-Password')),
       'fixture-password',
     );
@@ -505,6 +509,119 @@ void main() {
     );
   });
 
+  testWidgets('Local M3U file is offered only where a file picker exists', (
+    tester,
+  ) async {
+    Widget screen({M3uFilePicker? picker}) => MaterialApp(
+      home: Scaffold(
+        body: SourceSetupScreen(
+          key: UniqueKey(),
+          initialFocus: FocusNode(),
+          onContentFocus: (_) {},
+          onExit: () {},
+          onBrowse: (_) {},
+          m3uFilePicker: picker,
+          controller: SourceSetupController(
+            service: _WidgetSourcePort(),
+            credentialStore: _WidgetCredentialStore(),
+          ),
+        ),
+      ),
+    );
+    const localFile = ValueKey('source-connector-m3uFile');
+
+    // Android TV / Fire TV: no system picker is passed in.
+    await tester.pumpWidget(screen());
+    expect(find.byKey(localFile), findsNothing);
+    expect(find.byKey(const ValueKey('source-connector-m3uUrl')), findsOne);
+
+    await tester.pumpWidget(screen(picker: () async => null));
+    expect(find.byKey(localFile), findsOneWidget);
+  });
+
+  testWidgets('remote Up and Down move between fields, not the caret', (
+    tester,
+  ) async {
+    final initialFocus = FocusNode(debugLabel: 'source name');
+    addTearDown(initialFocus.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SourceSetupScreen(
+            initialFocus: initialFocus,
+            onContentFocus: (_) {},
+            onExit: () {},
+            onBrowse: (_) {},
+            controller: SourceSetupController(
+              service: _WidgetSourcePort(),
+              credentialStore: _WidgetCredentialStore(),
+            ),
+          ),
+        ),
+      ),
+    );
+    initialFocus.requestFocus();
+    await tester.pump();
+    String? focused() => FocusManager.instance.primaryFocus?.debugLabel;
+
+    // A TV remote has no Tab key: the D-pad is the only way between fields.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(focused(), 'source server URL');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(focused(), 'source username');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(focused(), 'source name');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    final button = FocusManager.instance.primaryFocus!.context!
+        .findAncestorWidgetOfExactType<OutlinedButton>();
+    expect(
+      '${(button?.key as ValueKey?)?.value}',
+      startsWith('source-connector-'),
+    );
+  });
+
+  testWidgets('on a TV remote a field opens the keyboard only on Select', (
+    tester,
+  ) async {
+    final initialFocus = FocusNode(debugLabel: 'source name');
+    addTearDown(initialFocus.dispose);
+    await tester.pumpWidget(_sourceScreen(initialFocus, _WidgetSourcePort()));
+    initialFocus.requestFocus();
+    await tester.pump();
+    String? focused() => FocusManager.instance.primaryFocus?.debugLabel;
+    expect(tester.testTextInput.isVisible, isFalse);
+
+    // Moving onto a field only highlights it...
+    for (var i = 0; i < 3; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+    }
+    expect(focused(), 'source password');
+    expect(tester.testTextInput.isVisible, isFalse);
+
+    // ...Select opens the keyboard...
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pump();
+    expect(tester.testTextInput.isVisible, isTrue);
+    tester.testTextInput.enterText('fixture-password');
+    await tester.pump();
+
+    // ...and Done lands on Connect instead of dropping focus.
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(tester.testTextInput.isVisible, isFalse);
+    expect(
+      FocusManager.instance.primaryFocus?.context
+          ?.findAncestorWidgetOfExactType<FilledButton>(),
+      isNotNull,
+    );
+  });
+
   testWidgets('connector picker and password toggle show the focus edge', (
     tester,
   ) async {
@@ -661,7 +778,8 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('source-connector-m3uFile')));
       await tester.pump();
-      await tester.enterText(
+      await _typeInto(
+        tester,
         find.byKey(const ValueKey('source-field-M3U file')),
         r'C:\Lists\existing.m3u',
       );
@@ -779,7 +897,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('The Windows file picker could not be opened. Try again.'),
+      find.text('The file picker could not be opened. Try again.'),
       findsOneWidget,
     );
     expect(find.textContaining('provider-secret'), findsNothing);
@@ -1025,19 +1143,23 @@ Future<void> _tapConnect(WidgetTester tester) async {
 }
 
 Future<void> _enterSource(WidgetTester tester) async {
-  await tester.enterText(
+  await _typeInto(
+    tester,
     find.byKey(const ValueKey('source-field-Source name')),
     'My IPTV',
   );
-  await tester.enterText(
+  await _typeInto(
+    tester,
     find.byKey(const ValueKey('source-field-Server URL')),
     'https://provider.example',
   );
-  await tester.enterText(
+  await _typeInto(
+    tester,
     find.byKey(const ValueKey('source-field-Username')),
     'fixture-user',
   );
-  await tester.enterText(
+  await _typeInto(
+    tester,
     find.byKey(const ValueKey('source-field-Password')),
     'fixture-password',
   );
@@ -1084,4 +1206,12 @@ class _LargeCountsSourcePort extends _WidgetSourcePort {
         ),
     ],
   );
+}
+
+/// Selects a source field before typing, as a TV remote has to.
+Future<void> _typeInto(WidgetTester tester, Finder field, String text) async {
+  await tester.ensureVisible(field);
+  await tester.tap(field);
+  await tester.pump();
+  await tester.enterText(field, text);
 }

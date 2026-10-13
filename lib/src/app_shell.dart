@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
+import 'content_focus_node.dart';
 import 'features/artwork/artwork_loader.dart';
 import 'features/artwork/source_artwork.dart';
 import 'features/browse/basic_browse_screen.dart';
@@ -168,7 +170,9 @@ class WabbitShell extends StatefulWidget {
 
 class _WabbitShellState extends State<WabbitShell> {
   final FocusNode _railFocus = FocusNode(debugLabel: 'navigation rail');
-  final FocusNode _firstContentFocus = FocusNode(debugLabel: 'home first item');
+  final FocusNode _firstContentFocus = ContentFocusNode(
+    debugLabel: 'home first item',
+  );
   final FocusScopeNode _personalTransientFocusScope = FocusScopeNode(
     debugLabel: 'personal library transient',
     traversalEdgeBehavior: TraversalEdgeBehavior.closedLoop,
@@ -382,6 +386,51 @@ class _WabbitShellState extends State<WabbitShell> {
     _sourceManagementController.addListener(_sourceManagementChanged);
     _playbackManager.addListener(_playbackManagerChanged);
     unawaited(_initializeRuntimeState());
+  }
+
+  // TV remotes on Android deliver Back as a system pop, not a key press, and
+  // only to an app that claims Back (the PopScope in build). Replay it as a
+  // browserBack press, which every screen already handles. From the open
+  // rail at the top level, leave the app as TV apps do.
+  void _handleSystemBack() {
+    final atTopLevel =
+        _railExpanded &&
+        _playbackMode == null &&
+        !_personalTransientOpen &&
+        !_pipStopConfirmationOpen;
+    // yagni: FocusManager still receives keys through this deprecated
+    // keyMessageHandler, so it is the only injection point that reaches the
+    // focus tree. Revisit when Flutter removes KeyMessage (RawKeyEvent).
+    // ignore: deprecated_member_use
+    final handler = ServicesBinding.instance.keyEventManager.keyMessageHandler;
+    if (atTopLevel || handler == null) {
+      unawaited(SystemNavigator.pop());
+      return;
+    }
+    final timeStamp = Duration(
+      microseconds: DateTime.now().microsecondsSinceEpoch,
+    );
+    // Same order as a real key: keyboard-wide handlers, then the focus tree.
+    void press(KeyEvent event) {
+      HardwareKeyboard.instance.handleKeyEvent(event);
+      // ignore: deprecated_member_use
+      handler(KeyMessage([event], null));
+    }
+
+    press(
+      KeyDownEvent(
+        physicalKey: PhysicalKeyboardKey.browserBack,
+        logicalKey: LogicalKeyboardKey.browserBack,
+        timeStamp: timeStamp,
+      ),
+    );
+    press(
+      KeyUpEvent(
+        physicalKey: PhysicalKeyboardKey.browserBack,
+        logicalKey: LogicalKeyboardKey.browserBack,
+        timeStamp: timeStamp,
+      ),
+    );
   }
 
   @override
@@ -737,6 +786,11 @@ class _WabbitShellState extends State<WabbitShell> {
 
   void _applyDestination(ShellDestination destination) {
     _clearStartupNotice();
+    // The shared first-content node keeps "unfocusable" from the screen that
+    // last used it (a disabled Source setup field during import), and Focus
+    // widgets that don't set canRequestFocus inherit it. Each destination
+    // starts focusable; its widgets still disable the node explicitly.
+    _firstContentFocus.canRequestFocus = true;
     if (destination == ShellDestination.library && _myLibraryNeedsRefresh) {
       _myLibrarySession = MyLibrarySession();
       _myLibraryNeedsRefresh = false;
@@ -1569,107 +1623,26 @@ class _WabbitShellState extends State<WabbitShell> {
         if (mounted) _relocatePip(presentedPipCorner);
       });
     }
-    return CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.escape): _handleBack,
-        const SingleActivator(LogicalKeyboardKey.browserBack): _handleBack,
-        const SingleActivator(LogicalKeyboardKey.contextMenu): _handleMenu,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _handleSystemBack();
       },
-      child: FocusTraversalGroup(
-        policy: WidgetOrderTraversalPolicy(),
-        child: Scaffold(
-          body: Stack(
-            children: [
-              // The body always reserves only the collapsed rail width. The expanded
-              // rail is an overlay, so mouse/focus expansion cannot shift content.
-              Positioned.fill(
-                left: 72,
-                child: ExcludeSemantics(
-                  excluding: blockShellSemantics,
-                  child: ExcludeFocus(
-                    excluding:
-                        _startupResolving ||
-                        _personalTransientOpen ||
-                        _playbackSurfaceOpen ||
-                        _playbackStarting ||
-                        _pipStopConfirmationOpen,
-                    child: _ShellBody(
-                      destination: _destination,
-                      fixtureMode: widget.fixtureMode,
-                      initialContentFocus: _firstContentFocus,
-                      onContentFocus: _captureContentFocus,
-                      onOpenRail: _openRail,
-                      onSelectDestination: _selectDestination,
-                      sourceSetupFromHome: _sourceSetupFromHome,
-                      sourceSetupOpen: _sourceSetupOpen,
-                      onOpenSourceSetupFromManagement:
-                          _openSourceSetupFromManagement,
-                      onOpenSourceSetupFromHome: _openSourceSetupFromHome,
-                      onExitSourceSetup: _exitSourceSetup,
-                      sourceEditorRequest: _sourceEditorRequest,
-                      onSourceEditorSaved: _sourceEditorSaved,
-                      restoreSourceManagementSelectedRowFocus:
-                          _restoreSourceManagementSelectedRowFocus,
-                      restoreSourceManagementVisibilityFocus:
-                          _restoreSourceManagementVisibilityFocus,
-                      libraryVisibilitySource: _libraryVisibilitySource,
-                      libraryVisibilityPort: _libraryVisibilityPort,
-                      onOpenLibraryVisibility: _openLibraryVisibility,
-                      onExitLibraryVisibility: _exitLibraryVisibility,
-                      onLibraryVisibilityBusyChanged:
-                          _libraryVisibilityBusyChanged,
-                      m3uFilePicker: widget.m3uFilePicker ?? _pickM3uFile,
-                      sourceController: _sourceController,
-                      sourceManagementController: _sourceManagementController,
-                      startupPreferencesController: _startupPreferencesEnabled
-                          ? _startupPreferencesController
-                          : null,
-                      browseSource: widget.browseSource,
-                      browseData: widget.browseData,
-                      scopedBrowseData: _scopedBrowseData,
-                      catalogScopeController: _catalogScopeController,
-                      useLegacyBrowse: _usesLegacyBrowse,
-                      localSearchData: _localSearchData,
-                      browseSession: _browseSession,
-                      guideSession: _guideSession,
-                      guideData: _guideData,
-                      searchSession: _searchSession,
-                      homeController: _homeController,
-                      homeSession: _homeSession,
-                      artworkProvider: _artworkProvider,
-                      myLibraryData: _myLibraryData,
-                      myLibrarySession: _myLibrarySession,
-                      credentialStore: widget.credentialStore,
-                      onPlaybackHandoff: _beginPlayback,
-                      selectingSecondChannel:
-                          _playbackMode ==
-                          _PlaybackSurfaceMode.selectingSecondChannel,
-                      secondChannelMessage: _secondChannelMessage,
-                      secondChannelBusy: _secondChannelBusy,
-                      onCancelSecondChannel: _cancelSecondChannelSelection,
-                      onOrganizeItem: _openOrganizer,
-                      onCreateGroup: () => _openGroupManagement(
-                        const LibraryGroupManagementRequest.create(),
-                      ),
-                      onManageGroup: (group) => _openGroupManagement(
-                        LibraryGroupManagementRequest.manage(group),
-                      ),
-                      organizationRevision: _organizationRevision,
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 0,
-                top: 0,
-                bottom: 0,
-                child: IgnorePointer(
-                  ignoring:
-                      _startupResolving ||
-                      _personalTransientOpen ||
-                      _playbackSurfaceOpen ||
-                      _playbackStarting ||
-                      _pipStopConfirmationOpen,
+      child: CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          const SingleActivator(LogicalKeyboardKey.escape): _handleBack,
+          const SingleActivator(LogicalKeyboardKey.browserBack): _handleBack,
+          const SingleActivator(LogicalKeyboardKey.contextMenu): _handleMenu,
+        },
+        child: FocusTraversalGroup(
+          policy: WidgetOrderTraversalPolicy(),
+          child: Scaffold(
+            body: Stack(
+              children: [
+                // The body always reserves only the collapsed rail width. The expanded
+                // rail is an overlay, so mouse/focus expansion cannot shift content.
+                Positioned.fill(
+                  left: 72,
                   child: ExcludeSemantics(
                     excluding: blockShellSemantics,
                     child: ExcludeFocus(
@@ -1679,66 +1652,160 @@ class _WabbitShellState extends State<WabbitShell> {
                           _playbackSurfaceOpen ||
                           _playbackStarting ||
                           _pipStopConfirmationOpen,
-                      child: Focus(
-                        focusNode: _railFocus,
-                        skipTraversal: true,
-                        child: MouseRegion(
-                          onEnter: (_) => _setRailHovered(true),
-                          onExit: (_) => _setRailHovered(false),
-                          child: _NavigationRail(
-                            selected: _destination,
-                            isExpanded: _railExpanded,
-                            showFixtureLabel:
-                                widget.fixtureMode != HomeFixtureMode.runtime ||
-                                widget.browseData != null,
-                            focusNodes: _navigationFocus,
-                            onSelected: _selectDestination,
-                            showNowPlaying: _pipActive,
-                            nowPlayingFocus: _nowPlayingFocus,
-                            onNowPlaying: () {
-                              _pipRestoreFocus.requestFocus();
-                            },
+                      child: _ShellBody(
+                        destination: _destination,
+                        fixtureMode: widget.fixtureMode,
+                        initialContentFocus: _firstContentFocus,
+                        onContentFocus: _captureContentFocus,
+                        onOpenRail: _openRail,
+                        onSelectDestination: _selectDestination,
+                        sourceSetupFromHome: _sourceSetupFromHome,
+                        sourceSetupOpen: _sourceSetupOpen,
+                        onOpenSourceSetupFromManagement:
+                            _openSourceSetupFromManagement,
+                        onOpenSourceSetupFromHome: _openSourceSetupFromHome,
+                        onExitSourceSetup: _exitSourceSetup,
+                        sourceEditorRequest: _sourceEditorRequest,
+                        onSourceEditorSaved: _sourceEditorSaved,
+                        restoreSourceManagementSelectedRowFocus:
+                            _restoreSourceManagementSelectedRowFocus,
+                        restoreSourceManagementVisibilityFocus:
+                            _restoreSourceManagementVisibilityFocus,
+                        libraryVisibilitySource: _libraryVisibilitySource,
+                        libraryVisibilityPort: _libraryVisibilityPort,
+                        onOpenLibraryVisibility: _openLibraryVisibility,
+                        onExitLibraryVisibility: _exitLibraryVisibility,
+                        onLibraryVisibilityBusyChanged:
+                            _libraryVisibilityBusyChanged,
+                        // Android TV / Fire TV devices often have no system
+                        // file picker; M3U URL covers them.
+                        m3uFilePicker:
+                            widget.m3uFilePicker ??
+                            (defaultTargetPlatform == TargetPlatform.android
+                                ? null
+                                : _pickM3uFile),
+                        sourceController: _sourceController,
+                        sourceManagementController: _sourceManagementController,
+                        startupPreferencesController: _startupPreferencesEnabled
+                            ? _startupPreferencesController
+                            : null,
+                        browseSource: widget.browseSource,
+                        browseData: widget.browseData,
+                        scopedBrowseData: _scopedBrowseData,
+                        catalogScopeController: _catalogScopeController,
+                        useLegacyBrowse: _usesLegacyBrowse,
+                        localSearchData: _localSearchData,
+                        browseSession: _browseSession,
+                        guideSession: _guideSession,
+                        guideData: _guideData,
+                        searchSession: _searchSession,
+                        homeController: _homeController,
+                        homeSession: _homeSession,
+                        artworkProvider: _artworkProvider,
+                        myLibraryData: _myLibraryData,
+                        myLibrarySession: _myLibrarySession,
+                        credentialStore: widget.credentialStore,
+                        onPlaybackHandoff: _beginPlayback,
+                        selectingSecondChannel:
+                            _playbackMode ==
+                            _PlaybackSurfaceMode.selectingSecondChannel,
+                        secondChannelMessage: _secondChannelMessage,
+                        secondChannelBusy: _secondChannelBusy,
+                        onCancelSecondChannel: _cancelSecondChannelSelection,
+                        onOrganizeItem: _openOrganizer,
+                        onCreateGroup: () => _openGroupManagement(
+                          const LibraryGroupManagementRequest.create(),
+                        ),
+                        onManageGroup: (group) => _openGroupManagement(
+                          LibraryGroupManagementRequest.manage(group),
+                        ),
+                        organizationRevision: _organizationRevision,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: IgnorePointer(
+                    ignoring:
+                        _startupResolving ||
+                        _personalTransientOpen ||
+                        _playbackSurfaceOpen ||
+                        _playbackStarting ||
+                        _pipStopConfirmationOpen,
+                    child: ExcludeSemantics(
+                      excluding: blockShellSemantics,
+                      child: ExcludeFocus(
+                        excluding:
+                            _startupResolving ||
+                            _personalTransientOpen ||
+                            _playbackSurfaceOpen ||
+                            _playbackStarting ||
+                            _pipStopConfirmationOpen,
+                        child: Focus(
+                          focusNode: _railFocus,
+                          skipTraversal: true,
+                          child: MouseRegion(
+                            onEnter: (_) => _setRailHovered(true),
+                            onExit: (_) => _setRailHovered(false),
+                            child: _NavigationRail(
+                              selected: _destination,
+                              isExpanded: _railExpanded,
+                              showFixtureLabel:
+                                  widget.fixtureMode !=
+                                      HomeFixtureMode.runtime ||
+                                  widget.browseData != null,
+                              focusNodes: _navigationFocus,
+                              onSelected: _selectDestination,
+                              showNowPlaying: _pipActive,
+                              nowPlayingFocus: _nowPlayingFocus,
+                              onNowPlaying: () {
+                                _pipRestoreFocus.requestFocus();
+                              },
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              if (_playbackSurfaceOpen)
-                Positioned.fill(
-                  child: BlockSemantics(child: _buildPlaybackSurface()),
-                ),
-              if (_startupResolving)
-                const Positioned.fill(
-                  child: BlockSemantics(child: _StartupPreparingSurface()),
-                ),
-              if (_playbackStarting)
-                Positioned.fill(
-                  child: BlockSemantics(
-                    child: ColoredBox(
-                      key: const ValueKey('playback-starting-surface'),
-                      color: const Color(0xFF111212),
-                      child: Center(
-                        child: Semantics(
-                          liveRegion: true,
-                          label: 'Starting playback',
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF191A1A),
-                              border: Border.all(color: _line),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              'Starting ${_pendingPlaybackTitle ?? 'playback'}',
-                              style: const TextStyle(
-                                color: _warmWhite,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
+                if (_playbackSurfaceOpen)
+                  Positioned.fill(
+                    child: BlockSemantics(child: _buildPlaybackSurface()),
+                  ),
+                if (_startupResolving)
+                  const Positioned.fill(
+                    child: BlockSemantics(child: _StartupPreparingSurface()),
+                  ),
+                if (_playbackStarting)
+                  Positioned.fill(
+                    child: BlockSemantics(
+                      child: ColoredBox(
+                        key: const ValueKey('playback-starting-surface'),
+                        color: const Color(0xFF111212),
+                        child: Center(
+                          child: Semantics(
+                            liveRegion: true,
+                            label: 'Starting playback',
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF191A1A),
+                                border: Border.all(color: _line),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                'Starting ${_pendingPlaybackTitle ?? 'playback'}',
+                                style: const TextStyle(
+                                  color: _warmWhite,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ),
@@ -1746,130 +1813,132 @@ class _WabbitShellState extends State<WabbitShell> {
                       ),
                     ),
                   ),
-                ),
-              if (_pipActive && _primaryPlaybackSessionId != null)
-                Positioned.fill(
-                  left: 72,
-                  child: ListenableBuilder(
-                    listenable: _playbackManager,
-                    builder: (context, _) => PipOverlay(
-                      key: _pipBoundsKey,
-                      surfaceKey: _pipSurfaceKey,
-                      manager: _playbackManager,
-                      sessionId: _primaryPlaybackSessionId!,
-                      corner: presentedPipCorner,
-                      restoreFocus: _pipRestoreFocus,
-                      moveFocus: _pipMoveFocus,
-                      muteFocus: _pipMuteFocus,
-                      closeFocus: _pipCloseFocus,
-                      statusMessage: _secondChannelBusy
-                          ? 'Checking stream allowance…'
-                          : null,
-                      busy: _secondChannelBusy,
-                      onRestore: _restorePipToFullPlayer,
-                      onMove: _movePipCorner,
-                      onToggleMute: () => unawaited(_togglePipMute()),
-                      onClose: () => unawaited(_closePip()),
+                if (_pipActive && _primaryPlaybackSessionId != null)
+                  Positioned.fill(
+                    left: 72,
+                    child: ListenableBuilder(
+                      listenable: _playbackManager,
+                      builder: (context, _) => PipOverlay(
+                        key: _pipBoundsKey,
+                        surfaceKey: _pipSurfaceKey,
+                        manager: _playbackManager,
+                        sessionId: _primaryPlaybackSessionId!,
+                        corner: presentedPipCorner,
+                        restoreFocus: _pipRestoreFocus,
+                        moveFocus: _pipMoveFocus,
+                        muteFocus: _pipMuteFocus,
+                        closeFocus: _pipCloseFocus,
+                        statusMessage: _secondChannelBusy
+                            ? 'Checking stream allowance…'
+                            : null,
+                        busy: _secondChannelBusy,
+                        onRestore: _restorePipToFullPlayer,
+                        onMove: _movePipCorner,
+                        onToggleMute: () => unawaited(_togglePipMute()),
+                        onClose: () => unawaited(_closePip()),
+                      ),
                     ),
                   ),
-                ),
-              if (_organizerRequest != null && _playback == null)
-                Positioned.fill(
-                  left: 72,
-                  child: FocusScope.withExternalFocusNode(
-                    focusScopeNode: _personalTransientFocusScope,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final narrow = constraints.maxWidth < 760;
-                        final drawerWidth = narrow
-                            ? constraints.maxWidth
-                            : 360.0;
-                        return Stack(
-                          children: [
-                            Positioned.fill(
-                              right: drawerWidth,
-                              child: ModalBarrier(
-                                color: Colors.transparent,
-                                dismissible: !_organizerBusy,
-                                onDismiss: _closeOrganizer,
-                              ),
-                            ),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: SizedBox(
-                                width: drawerWidth,
-                                child: LibraryOrganizerPane(
-                                  request: _organizerRequest!,
-                                  port: _libraryOrganizationPort,
-                                  artworkLoader: _artworkProvider,
-                                  onClose: _closeOrganizer,
-                                  onSaved: _organizerSaved,
-                                  onBusyChanged: _organizerBusyChanged,
+                if (_organizerRequest != null && _playback == null)
+                  Positioned.fill(
+                    left: 72,
+                    child: FocusScope.withExternalFocusNode(
+                      focusScopeNode: _personalTransientFocusScope,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final narrow = constraints.maxWidth < 760;
+                          final drawerWidth = narrow
+                              ? constraints.maxWidth
+                              : 360.0;
+                          return Stack(
+                            children: [
+                              Positioned.fill(
+                                right: drawerWidth,
+                                child: ModalBarrier(
+                                  color: Colors.transparent,
+                                  dismissible: !_organizerBusy,
+                                  onDismiss: _closeOrganizer,
                                 ),
                               ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              if (_groupManagementRequest != null && _playback == null)
-                Positioned.fill(
-                  left: 72,
-                  child: FocusScope.withExternalFocusNode(
-                    focusScopeNode: _personalTransientFocusScope,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final narrow = constraints.maxWidth < 760;
-                        final paneWidth = narrow ? constraints.maxWidth : 460.0;
-                        return Stack(
-                          children: [
-                            Positioned.fill(
-                              right: paneWidth,
-                              child: ModalBarrier(
-                                color: Colors.transparent,
-                                dismissible: !_groupManagementBusy,
-                                onDismiss: _closeGroupManagement,
-                              ),
-                            ),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: SizedBox(
-                                width: paneWidth,
-                                child: LibraryGroupManagerPane(
-                                  request: _groupManagementRequest!,
-                                  port: _libraryOrganizationPort,
-                                  onClose: _closeGroupManagement,
-                                  onChanged: _groupManagementChanged,
-                                  onBusyChanged: _groupManagementBusyChanged,
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: SizedBox(
+                                  width: drawerWidth,
+                                  child: LibraryOrganizerPane(
+                                    request: _organizerRequest!,
+                                    port: _libraryOrganizationPort,
+                                    artworkLoader: _artworkProvider,
+                                    onClose: _closeOrganizer,
+                                    onSaved: _organizerSaved,
+                                    onBusyChanged: _organizerBusyChanged,
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
-                        );
-                      },
+                            ],
+                          );
+                        },
+                      ),
                     ),
                   ),
-                ),
-              if (_pipStopConfirmationOpen)
-                Positioned.fill(
-                  child: BlockSemantics(
-                    child: Stack(
-                      children: [
-                        PipStopConfirmation(
-                          focusScopeNode: _pipStopFocusScope,
-                          cancelFocus: _pipStopCancelFocus,
-                          stopFocus: _pipStopConfirmFocus,
-                          busy: _pipStopBusy,
-                          onCancel: _cancelPipStopConfirmation,
-                          onStop: () => unawaited(_confirmPipStop()),
-                        ),
-                      ],
+                if (_groupManagementRequest != null && _playback == null)
+                  Positioned.fill(
+                    left: 72,
+                    child: FocusScope.withExternalFocusNode(
+                      focusScopeNode: _personalTransientFocusScope,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final narrow = constraints.maxWidth < 760;
+                          final paneWidth = narrow
+                              ? constraints.maxWidth
+                              : 460.0;
+                          return Stack(
+                            children: [
+                              Positioned.fill(
+                                right: paneWidth,
+                                child: ModalBarrier(
+                                  color: Colors.transparent,
+                                  dismissible: !_groupManagementBusy,
+                                  onDismiss: _closeGroupManagement,
+                                ),
+                              ),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: SizedBox(
+                                  width: paneWidth,
+                                  child: LibraryGroupManagerPane(
+                                    request: _groupManagementRequest!,
+                                    port: _libraryOrganizationPort,
+                                    onClose: _closeGroupManagement,
+                                    onChanged: _groupManagementChanged,
+                                    onBusyChanged: _groupManagementBusyChanged,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
                     ),
                   ),
-                ),
-            ],
+                if (_pipStopConfirmationOpen)
+                  Positioned.fill(
+                    child: BlockSemantics(
+                      child: Stack(
+                        children: [
+                          PipStopConfirmation(
+                            focusScopeNode: _pipStopFocusScope,
+                            cancelFocus: _pipStopCancelFocus,
+                            stopFocus: _pipStopConfirmFocus,
+                            busy: _pipStopBusy,
+                            onCancel: _cancelPipStopConfirmation,
+                            onStop: () => unawaited(_confirmPipStop()),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -2011,7 +2080,7 @@ class _ShellBody extends StatelessWidget {
   final ValueChanged<SourceRosterEntry> onOpenLibraryVisibility;
   final VoidCallback onExitLibraryVisibility;
   final ValueChanged<bool> onLibraryVisibilityBusyChanged;
-  final M3uFilePicker m3uFilePicker;
+  final M3uFilePicker? m3uFilePicker;
   final SourceSetupController sourceController;
   final SourceManagementController sourceManagementController;
   final StartupPreferencesController? startupPreferencesController;

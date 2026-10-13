@@ -189,6 +189,9 @@ void main() {
   testWidgets(
     'persisted Settings entry reaches startup choices and Sources by D-pad',
     (tester) async {
+      // A 1080p TV at 2x density: 960x540 logical pixels.
+      await tester.binding.setSurfaceSize(const Size(960, 540));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
       final harness = _ShellHarness(
         resolution: const StartupResolution(
           destination: StartupDestinationSlug.settings,
@@ -236,6 +239,22 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(FocusManager.instance.primaryFocus?.debugLabel, 'home first item');
+
+      // Up from the leftmost startup choice reaches the header's Add source.
+      // Directional focus alone picks the rail: with nothing directly above,
+      // it takes the target horizontally closest to the band.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pump();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'startup home');
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'source management add',
+      );
     },
   );
 

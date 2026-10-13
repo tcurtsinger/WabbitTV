@@ -13,10 +13,12 @@ void main() {
   test('Xtream refresh is idempotent, retires missing rows, and roster rename is local', () async {
     var requests = 0;
     var second = false;
+    final ports = <int>{};
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
     server.listen((request) async {
       requests++;
+      ports.add(request.connectionInfo!.remotePort);
       final action = request.uri.queryParameters['action'];
       final body = switch (action) {
         'get_live_categories' => '[]',
@@ -78,6 +80,8 @@ void main() {
           .single['available'],
       0,
     );
+    // Each request opened its own connection (see initial_source_import_test).
+    expect(ports, hasLength(requests));
     final beforeRenameRequests = requests;
     await controller.renameManagedSource('x', 'After');
     expect(requests, beforeRenameRequests);

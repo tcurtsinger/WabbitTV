@@ -85,7 +85,8 @@ void main() {
         r'C:\Lists\weekend.m3u',
       );
 
-      await tester.enterText(
+      await _typeInto(
+        tester,
         find.byKey(const ValueKey('source-field-Source name')),
         'Weekend list',
       );
@@ -167,7 +168,8 @@ void main() {
         'Weekend',
       );
 
-      await tester.enterText(
+      await _typeInto(
+        tester,
         find.byKey(const ValueKey('source-field-Source name')),
         'Weekend renamed',
       );
@@ -403,4 +405,12 @@ class _NoopStore implements CredentialStore {
     required String password,
     String? serverUrl,
   }) async {}
+}
+
+/// Selects a source field before typing, as a TV remote has to.
+Future<void> _typeInto(WidgetTester tester, Finder field, String text) async {
+  await tester.ensureVisible(field);
+  await tester.tap(field);
+  await tester.pump();
+  await tester.enterText(field, text);
 }

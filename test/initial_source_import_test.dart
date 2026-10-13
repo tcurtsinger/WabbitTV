@@ -54,6 +54,36 @@ void main() {
     },
   );
 
+  test('each provider request opens its own connection', () async {
+    // On a TV stick one stage can keep the worker busy past the provider's
+    // keep-alive; a reused connection then fails the next stage.
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final ports = <int>[];
+    final requests = server.listen((request) async {
+      ports.add(request.connectionInfo!.remotePort);
+      request.response.write(
+        request.uri.queryParameters['action'] == null
+            ? '{"user_info":{"auth":1}}'
+            : '[]',
+      );
+      await request.response.close();
+    });
+    addTearDown(() async {
+      await server.close(force: true);
+      await requests.cancel();
+    });
+    final temp = await Directory.systemTemp.createTemp('wabbit-connections-');
+    addTearDown(() => temp.delete(recursive: true));
+
+    final import = await importFrom(server, temp);
+    await import.pending.timeout(const Duration(seconds: 5));
+    await import.activate().timeout(const Duration(seconds: 5));
+    await import.terminal;
+
+    expect(ports, hasLength(7));
+    expect(ports.toSet(), hasLength(7));
+  });
+
   test('a blank body is still reported as an empty response', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = server.listen((request) async {

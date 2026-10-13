@@ -226,6 +226,8 @@ class SourceSetupController extends ChangeNotifier {
     isImporting = true;
     isCancelling = false;
     _resetStages();
+    // An M3U playlist is Live only; Movies and Series have nothing to wait for.
+    _stages[SourceMediaKind.live] = ImportStageStatus.importing;
     _notify();
     try {
       final import = await _service.beginM3u(source);
@@ -239,6 +241,7 @@ class SourceSetupController extends ChangeNotifier {
       );
       final result = await import.activate();
       ready = result;
+      _completeStages();
       persisted = PersistedSource(
         id: source.id,
         name: source.name,
@@ -256,6 +259,7 @@ class SourceSetupController extends ChangeNotifier {
       }
     } catch (_) {
       failure = SourceImportFailureKind.emptyResponse;
+      _markCurrentStageError();
       final import = _import;
       if (import != null) {
         await _cleanupNonReady(import, source.credentialKey, true);
@@ -571,7 +575,7 @@ class SourceSetupController extends ChangeNotifier {
       final result = await refresh.completed;
       _m3uRefresh = null;
       ready = result;
-      _stages[SourceMediaKind.live] = ImportStageStatus.complete;
+      _completeStages();
     } on SourceImportFailure catch (error) {
       failure = error.kind == SourceImportFailureKind.cancelled
           ? null
@@ -778,9 +782,7 @@ class SourceSetupController extends ChangeNotifier {
       _m3uRefresh = refresh;
       final result = await refresh.completed;
       ready = result;
-      for (final kind in SourceMediaKind.values) {
-        _stages[kind] = ImportStageStatus.complete;
-      }
+      _completeStages();
     } on SourceImportFailure catch (error) {
       failure = error.kind == SourceImportFailureKind.cancelled
           ? null
@@ -854,6 +856,12 @@ class SourceSetupController extends ChangeNotifier {
         _stages[kind] = ImportStageStatus.error;
         return;
       }
+    }
+  }
+
+  void _completeStages() {
+    for (final kind in SourceMediaKind.values) {
+      _stages[kind] = ImportStageStatus.complete;
     }
   }
 
