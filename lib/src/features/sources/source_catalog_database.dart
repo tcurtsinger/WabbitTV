@@ -648,12 +648,15 @@ Future<Object?> _refreshJson(
     },
   );
   final requestDeadline = _boundedRefreshDeadline(deadline, requestLimit);
-  final response =
-      await (await client
-              .getUrl(uri)
-              .timeout(_remainingRefreshDeadline(requestDeadline)))
-          .close()
-          .timeout(_remainingRefreshDeadline(requestDeadline));
+  final request = await client
+      .getUrl(uri)
+      .timeout(_remainingRefreshDeadline(requestDeadline));
+  // Parsing a big stage can outlast the provider's keep-alive; see the
+  // import worker's _getJson.
+  request.persistentConnection = false;
+  final response = await request.close().timeout(
+    _remainingRefreshDeadline(requestDeadline),
+  );
   if (response.statusCode == 401 || response.statusCode == 403) {
     throw const SourceImportFailure(SourceImportFailureKind.authentication);
   }
@@ -2689,6 +2692,10 @@ class _InitialImportWorker {
     final request = await client!
         .getUrl(uri)
         .timeout(_remainingDeadline(requestDeadline));
+    // Saving a big stage can keep this isolate busy for minutes on a TV
+    // stick, long past the provider's keep-alive, and Dart reuses an idle
+    // connection without noticing the provider closed it. One per request.
+    request.persistentConnection = false;
     final response = await request.close().timeout(
       _remainingDeadline(requestDeadline),
     );
