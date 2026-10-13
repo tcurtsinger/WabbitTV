@@ -7,12 +7,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wabbit_tv/src/cinema.dart';
 import 'package:wabbit_tv/src/features/browse/playback_handoff.dart';
+import 'package:wabbit_tv/src/features/guide/guide_data.dart';
 import 'package:wabbit_tv/src/features/library/library_organization_service.dart';
 import 'package:wabbit_tv/src/features/playback/playback_manager.dart';
 import 'package:wabbit_tv/src/features/playback/playback_runtime_adapters.dart';
 import 'package:wabbit_tv/src/features/playback/playback_transport.dart';
 import 'package:wabbit_tv/src/features/playback/player_screen.dart';
 import 'package:wabbit_tv/src/features/sources/credential_store.dart';
+import 'package:wabbit_tv/src/features/sources/epg_models.dart';
 import 'package:wabbit_tv/src/features/sources/source_catalog_database.dart';
 import 'package:wabbit_tv/src/features/sources/source_models.dart';
 
@@ -819,6 +821,86 @@ void main() {
     expect(find.text("Couldn't update Favorites."), findsOneWidget);
     expect(changes, 1);
   });
+  testWidgets('a live channel with a guide shows now, its progress and next', (
+    tester,
+  ) async {
+    final now = DateTime.now().toUtc();
+    final guide = _Guide(
+      EpgNowNext(
+        current: EpgProgram(
+          catalogItemId: 'source:live:1',
+          startUtc: now.subtract(const Duration(minutes: 30)),
+          endUtc: now.add(const Duration(minutes: 30)),
+          title: 'Evening Report',
+        ),
+        next: EpgProgram(
+          catalogItemId: 'source:live:1',
+          startUtc: now.add(const Duration(minutes: 30)),
+          endUtc: now.add(const Duration(minutes: 90)),
+          title: 'World Report',
+        ),
+      ),
+    );
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'source',
+          title: 'City Desk',
+          providerItemId: '1',
+          extension: 'ts',
+        ),
+        transportFactory: _FakeTransport.ready,
+        guide: guide,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(guide.loaded, ['source:live:1']);
+    expect(guide.refreshed, isEmpty);
+    expect(
+      find.textContaining('Evening Report', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Up next · World Report', findRichText: true),
+      findsOneWidget,
+    );
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.descendant(
+        of: find.byKey(const ValueKey('player-guide-progress')),
+        matching: find.byType(LinearProgressIndicator),
+      ),
+    );
+    expect(bar.value, closeTo(0.5, 0.02));
+  });
+  testWidgets('a live channel without guide data shows no guide line', (
+    tester,
+  ) async {
+    final guide = _Guide(const EpgNowNext(current: null, next: null));
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'source',
+          title: 'City Desk',
+          providerItemId: '1',
+          extension: 'ts',
+        ),
+        transportFactory: _FakeTransport.ready,
+        guide: guide,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    // An empty cache asks the provider once, then shows nothing.
+    expect(guide.refreshed, [
+      ['source:live:1'],
+    ]);
+    expect(find.byKey(const ValueKey('player-guide-progress')), findsNothing);
+    expect(find.byKey(const ValueKey('player-guide-now')), findsNothing);
+    expect(find.textContaining('Up next', findRichText: true), findsNothing);
+  });
   testWidgets('no star without a library item or organization port', (
     tester,
   ) async {
@@ -1263,6 +1345,7 @@ Widget _host({
   bool? windowControls,
   LibraryOrganizationPort? organization,
   VoidCallback? onOrganizationChanged,
+  EpgWindowPort? guide,
 }) => MaterialApp(
   home: PlayerScreen(
     handoff: handoff,
@@ -1291,6 +1374,7 @@ Widget _host({
     windowControls: windowControls,
     organization: organization,
     onOrganizationChanged: onOrganizationChanged,
+    guide: guide,
     onExit: onExit ?? () {},
   ),
 );
@@ -1602,4 +1686,39 @@ class _Organization implements LibraryOrganizationPort {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _Guide implements EpgWindowPort {
+  _Guide(this.nowNext);
+  final EpgNowNext nowNext;
+  final loaded = <String>[];
+  final refreshed = <List<String>>[];
+
+  @override
+  Future<List<EpgChannelWindow>> loadEpgWindow({
+    required List<String> catalogItemIds,
+    required DateTime windowStartUtc,
+    required DateTime windowEndUtc,
+    required DateTime atUtc,
+  }) async {
+    loaded.addAll(catalogItemIds);
+    return [
+      for (final id in catalogItemIds)
+        EpgChannelWindow(
+          catalogItemId: id,
+          availability: EpgAvailability.available,
+          programs: [?nowNext.current, ?nowNext.next],
+          nowNext: nowNext,
+        ),
+    ];
+  }
+
+  @override
+  Future<EpgRefreshSummary> refreshCatalogItems(
+    Iterable<String> catalogItemIds, {
+    bool manualRetry = false,
+  }) async {
+    refreshed.add(catalogItemIds.toList());
+    return const EpgRefreshSummary.none();
+  }
 }

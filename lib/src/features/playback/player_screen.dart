@@ -10,8 +10,10 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../cinema.dart';
 import '../browse/playback_handoff.dart';
+import '../guide/guide_data.dart';
 import '../library/library_organization_service.dart';
 import '../sources/credential_store.dart';
+import '../sources/epg_models.dart';
 import '../sources/source_catalog_database.dart';
 import '../sources/source_models.dart';
 import 'playback_manager.dart';
@@ -88,6 +90,7 @@ class PlayerScreen extends StatefulWidget {
     this.windowControls,
     this.organization,
     this.onOrganizationChanged,
+    this.guide,
     this.onUsableVideo,
     this.source,
     this.credentialStore,
@@ -114,6 +117,9 @@ class PlayerScreen extends StatefulWidget {
   /// Reads and saves the playing item's Favorite flag; null hides the star.
   final LibraryOrganizationPort? organization;
   final VoidCallback? onOrganizationChanged;
+
+  /// Cached now/next for Xtream live channels; null or no data hides it.
+  final EpgWindowPort? guide;
   final UsableVideoCallback? onUsableVideo;
 
   // Legacy fixture seam. Production passes manager + sessionId.
@@ -177,6 +183,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _variantGeneration = 0;
   PersonalLibraryOrganization? _organization;
   int _organizationGeneration = 0;
+  EpgNowNext? _nowNext;
+  Timer? _guideTimer;
+  int _guideGeneration = 0;
   bool _favoriteBusy = false;
 
   PlaybackSessionSnapshot? get _snapshot =>
@@ -204,6 +213,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _stage.requestFocus();
       _showChrome();
       unawaited(_loadOrganization());
+      unawaited(_loadGuide());
       if (_sessionId == null) unawaited(_startLegacy());
       _changed();
     });
@@ -246,6 +256,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _handoff = widget.handoff;
       _resetVariants();
       unawaited(_loadOrganization());
+      unawaited(_loadGuide());
     } else if (widget.variantPort != oldWidget.variantPort) {
       _resetVariants();
     }
@@ -255,6 +266,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void dispose() {
     _chromeTimer?.cancel();
+    _guideTimer?.cancel();
     _manager.removeListener(_changed);
     if (_ownsManager) unawaited(_manager.close());
     for (final node in [
@@ -376,6 +388,60 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  String? get _guideCatalogId {
+    final handoff = _handoff;
+    return handoff is LivePlaybackHandoff
+        ? catalogItemId(
+            handoff.sourceId,
+            SourceMediaKind.live,
+            handoff.providerItemId,
+          )
+        : null;
+  }
+
+  Future<void> _loadGuide() async {
+    _guideTimer?.cancel();
+    final port = widget.guide;
+    final id = _guideCatalogId;
+    final generation = ++_guideGeneration;
+    if (_nowNext != null) setState(() => _nowNext = null);
+    if (port == null || id == null) return;
+    Future<EpgNowNext?> read() async {
+      final now = DateTime.now().toUtc();
+      final windows = await port.loadEpgWindow(
+        catalogItemIds: [id],
+        windowStartUtc: now.subtract(const Duration(hours: 2)),
+        windowEndUtc: now.add(const Duration(hours: 12)),
+        atUtc: now,
+      );
+      for (final window in windows) {
+        if (window.catalogItemId == id) return window.nowNext;
+      }
+      return null;
+    }
+
+    try {
+      var nowNext = await read();
+      if (nowNext?.current == null && generation == _guideGeneration) {
+        await port.refreshCatalogItems([id]);
+        nowNext = await read();
+      }
+      if (!mounted || generation != _guideGeneration) return;
+      setState(() => _nowNext = nowNext);
+      // Read again once this program ends so the line moves along.
+      final end = nowNext?.current?.endUtc;
+      final wait = end == null
+          ? const Duration(minutes: 15)
+          : end.difference(DateTime.now().toUtc()) + const Duration(seconds: 1);
+      _guideTimer = Timer(
+        wait.isNegative ? const Duration(minutes: 1) : wait,
+        () => unawaited(_loadGuide()),
+      );
+    } catch (_) {
+      // Now/next is optional; playback stays primary.
+    }
+  }
+
   Future<void> _toggleFavorite() async {
     final port = widget.organization;
     final current = _organization;
@@ -483,6 +549,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _resetVariants();
         });
         unawaited(_loadOrganization());
+        unawaited(_loadGuide());
       case PlaybackBlocked():
         setState(() => _message = 'That source variant is unavailable.');
     }
@@ -667,6 +734,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             right: 0,
                             child: _IdentityBand(
                               handoff: _handoff,
+                              now: _nowNext?.current,
                               focusNode: _back,
                               onBack: () => unawaited(_backOut()),
                               onDown: _returnToStage,
@@ -726,6 +794,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     live: _live,
                                     state: _state,
                                     audible: snapshot?.isAudible == true,
+                                    nowNext: _nowNext,
                                     windowControls:
                                         widget.windowControls ??
                                         !Platform.isAndroid,
@@ -913,11 +982,15 @@ class _Notice extends StatelessWidget {
 class _IdentityBand extends StatelessWidget {
   const _IdentityBand({
     required this.handoff,
+    required this.now,
     required this.focusNode,
     required this.onBack,
     required this.onDown,
   });
   final PlaybackHandoff handoff;
+
+  /// The program on now, when the guide knows it.
+  final EpgProgram? now;
   final FocusNode focusNode;
   final VoidCallback onBack, onDown;
   @override
@@ -939,16 +1012,47 @@ class _IdentityBand extends StatelessWidget {
             ),
             const SizedBox(width: 14),
             Expanded(
-              child: Text(
-                handoff.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Cinema.text,
-                  fontFamily: Cinema.display,
-                  fontSize: 23,
-                  fontWeight: FontWeight.w700,
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    handoff.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Cinema.text,
+                      fontFamily: Cinema.display,
+                      fontSize: 23,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (now case final now?) ...[
+                    const SizedBox(height: 3),
+                    Text.rich(
+                      key: const ValueKey('player-guide-now'),
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                            text: now.title,
+                            style: const TextStyle(
+                              color: Cinema.text,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          TextSpan(
+                            text:
+                                '   ${_clockTime(context, now.startUtc)} – '
+                                '${_clockTime(context, now.endUtc)}',
+                          ),
+                        ],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Cinema.quiet, fontSize: 13),
+                    ),
+                  ],
+                ],
               ),
             ),
             const SizedBox(width: 16),
@@ -1009,6 +1113,7 @@ class _BroadcastDeck extends StatelessWidget {
     required this.live,
     required this.state,
     required this.audible,
+    required this.nowNext,
     required this.windowControls,
     required this.nodes,
     required this.favorite,
@@ -1026,6 +1131,7 @@ class _BroadcastDeck extends StatelessWidget {
     required this.onDown,
   });
   final bool live, audible, windowControls;
+  final EpgNowNext? nowNext;
   final PlaybackTransportState state;
   final _DeckNodes nodes;
 
@@ -1226,6 +1332,9 @@ class _BroadcastDeck extends StatelessWidget {
                 onDown: onDown,
               ),
               const SizedBox(height: 12),
+            ] else if (nowNext?.current != null) ...[
+              _GuideProgress(nowNext: nowNext!),
+              const SizedBox(height: 12),
             ],
             LayoutBuilder(
               builder: (context, constraints) {
@@ -1250,6 +1359,89 @@ class _BroadcastDeck extends StatelessWidget {
     ),
   );
 }
+
+class _GuideProgress extends StatefulWidget {
+  const _GuideProgress({required this.nowNext});
+  final EpgNowNext nowNext;
+  @override
+  State<_GuideProgress> createState() => _GuideProgressState();
+}
+
+class _GuideProgressState extends State<_GuideProgress> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 30), (_) => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = widget.nowNext.current!;
+    final next = widget.nowNext.next;
+    final length = current.endUtc.difference(current.startUtc).inSeconds;
+    final elapsed = DateTime.now()
+        .toUtc()
+        .difference(current.startUtc)
+        .inSeconds;
+    return Row(
+      key: const ValueKey('player-guide-progress'),
+      children: [
+        Text(_clockTime(context, current.startUtc), style: _timeStyle),
+        const SizedBox(width: 12),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: length <= 0 ? 0 : (elapsed / length).clamp(0.0, 1.0),
+              minHeight: 4,
+              color: Cinema.amber,
+              backgroundColor: const Color(0x2EF5F1E8),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Text(_clockTime(context, current.endUtc), style: _timeStyle),
+        if (next != null) ...[
+          const SizedBox(width: 16),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  const TextSpan(text: 'Up next · '),
+                  TextSpan(
+                    text: next.title,
+                    style: const TextStyle(
+                      color: Cinema.text,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Cinema.quiet, fontSize: 12),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+String _clockTime(BuildContext context, DateTime utc) =>
+    MaterialLocalizations.of(context).formatTimeOfDay(
+      TimeOfDay.fromDateTime(utc.toLocal()),
+      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+    );
 
 List<Widget> _spaced(List<Widget> actions) => [
   for (var index = 0; index < actions.length; index++) ...[

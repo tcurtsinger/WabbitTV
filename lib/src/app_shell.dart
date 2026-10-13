@@ -1606,6 +1606,7 @@ class _WabbitShellState extends State<WabbitShell> {
             ? _beginSecondChannelSelection
             : null,
         organization: _libraryOrganizationPort,
+        guide: _guideData,
         onOrganizationChanged: () {
           setState(() => _organizationRevision += 1);
           unawaited(_homeController.refresh());

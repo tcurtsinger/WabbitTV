@@ -36,6 +36,13 @@ const _maximumPersonalLibraryDirectoryLimit = 200;
 const _maximumCustomGroups = _maximumPersonalLibraryDirectoryLimit - 1;
 const _maximumCustomGroupNameLength = 80;
 const _favoritesHomeOrdinalSettingKey = 'favorites_home_ordinal';
+
+/// The local id of one source's catalog row, which the guide is keyed by.
+String catalogItemId(
+  String sourceId,
+  SourceMediaKind kind,
+  String providerKey,
+) => '$sourceId:${kind.name}:$providerKey';
 const _catalogScopeSettingKey = 'catalog_scope';
 const _startupTargetSettingKey = 'startup_target';
 const _previousDestinationSettingKey = 'previous_destination';
@@ -5478,7 +5485,7 @@ void _writeStage(
     try {
       for (final item in items) {
         insert.execute([
-          '$sourceId:${kind.name}:${item.providerKey}',
+          catalogItemId(sourceId, kind, item.providerKey),
           sourceId,
           item.providerKey,
           kind.name,
@@ -5504,7 +5511,7 @@ void _writeStage(
          (library_item_id, title, supporting_text) VALUES (?, ?, ?)''');
     try {
       for (final item in items) {
-        final id = '$sourceId:${kind.name}:${item.providerKey}';
+        final id = catalogItemId(sourceId, kind, item.providerKey);
         identities.execute([
           id,
           kind.name,
@@ -5609,7 +5616,7 @@ void _upsertStage(
   final updatedAt = DateTime.now().toUtc().toIso8601String();
   try {
     for (final item in items) {
-      final id = '$sourceId:${kind.name}:${item.providerKey}';
+      final id = catalogItemId(sourceId, kind, item.providerKey);
       final normalizedTitle = item.title.toLowerCase();
       catalog.execute([
         id,
