@@ -1,3 +1,5 @@
+import 'dart:math' show pi;
+
 import 'package:flutter/widgets.dart';
 
 /// Night Cinema design tokens shared by the redesigned screens: an ink
@@ -29,4 +31,76 @@ abstract final class Cinema {
     end: fromTop ? Alignment.bottomCenter : Alignment.topCenter,
     colors: const [Color(0xE6040407), Color(0x00040407)],
   );
+}
+
+/// The Wabbit TV mark: two amber ears over a TV with a play triangle,
+/// drawn in a 512 box scaled to fit. [backdrop] fills the screen so the
+/// ears tuck behind it.
+class WabbitMarkPainter extends CustomPainter {
+  const WabbitMarkPainter({this.backdrop = Cinema.ink});
+
+  final Color backdrop;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scale = size.shortestSide / 512;
+    canvas
+      ..save()
+      ..translate(
+        (size.width - 512 * scale) / 2,
+        (size.height - 512 * scale) / 2,
+      )
+      ..scale(scale);
+    final amber = Paint()
+      ..color = Cinema.amber
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 28
+      ..strokeCap = StrokeCap.round;
+    for (final (left, degrees) in [(150.0, -16.0), (300.0, 16.0)]) {
+      canvas
+        ..save()
+        ..translate(left + 31, 142)
+        ..rotate(degrees * pi / 180)
+        ..translate(-(left + 31), -142)
+        ..drawRRect(
+          RRect.fromLTRBR(left, 62, left + 62, 222, const Radius.circular(31)),
+          amber,
+        )
+        ..restore();
+    }
+    final screen = RRect.fromLTRBR(
+      96,
+      204,
+      416,
+      420,
+      const Radius.circular(58),
+    );
+    canvas
+      ..drawRRect(screen, Paint()..color = backdrop)
+      ..drawRRect(screen, amber);
+    amber.strokeWidth = 26;
+    canvas
+      ..drawLine(const Offset(178, 436), const Offset(152, 470), amber)
+      ..drawLine(const Offset(334, 436), const Offset(360, 470), amber);
+    final play = Path()
+      ..moveTo(228, 268)
+      ..lineTo(228, 360)
+      ..lineTo(306, 314)
+      ..close();
+    canvas
+      ..drawPath(
+        play,
+        Paint()
+          ..color = Cinema.text
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 18
+          ..strokeJoin = StrokeJoin.round,
+      )
+      ..drawPath(play, Paint()..color = Cinema.text)
+      ..restore();
+  }
+
+  @override
+  bool shouldRepaint(WabbitMarkPainter oldDelegate) =>
+      oldDelegate.backdrop != backdrop;
 }
