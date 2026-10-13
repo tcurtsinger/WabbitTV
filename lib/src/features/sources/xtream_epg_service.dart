@@ -41,6 +41,10 @@ class XtreamEpgService {
 
   HttpClient? _activeClient;
   int _operation = 0;
+
+  /// Sources whose provider blocks the quick `get_short_epg` request but
+  /// serves the full-day `get_simple_data_table` one (same listing format).
+  final Set<String> _fullDaySources = {};
   final Set<String> _pendingCatalogItemIds = {};
   bool _pendingManualRetry = false;
   Completer<EpgRefreshSummary>? _refreshCompleter;
@@ -349,48 +353,38 @@ class XtreamEpgService {
           EpgRefreshFailure.credentialsUnavailable,
         );
       }
-      final uri = access.endpoint.replace(
-        queryParameters: {
-          'username': access.credential.username,
-          'password': access.credential.password,
-          'action': 'get_short_epg',
-          'stream_id': target.providerStreamId,
-          'limit': '$xtreamEpgRequestListingLimit',
-        },
-      );
-      final request = await client.getUrl(uri).timeout(xtreamEpgRequestTimeout);
-      request.followRedirects = false;
-      final response = await request.close().timeout(xtreamEpgRequestTimeout);
-      if (response.statusCode == HttpStatus.unauthorized ||
-          response.statusCode == HttpStatus.forbidden) {
-        // A provider's web proxy refuses with its own HTML page; an Xtream
-        // credential rejection is never a web page.
-        throw _EpgRequestFailure(
-          response.headers.contentType?.mimeType == 'text/html'
-              ? EpgRefreshFailure.providerBlocked
-              : EpgRefreshFailure.authentication,
+      Uint8List payload;
+      if (_fullDaySources.contains(target.sourceId)) {
+        payload = await _fetchListings(
+          client,
+          access,
+          target,
+          operation,
+          fullDay: true,
         );
-      }
-      if (response.statusCode == HttpStatus.notFound ||
-          response.statusCode == HttpStatus.methodNotAllowed ||
-          response.statusCode == HttpStatus.notImplemented) {
-        throw const _EpgRequestFailure(EpgRefreshFailure.unsupported);
-      }
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw const _EpgRequestFailure(EpgRefreshFailure.unreachable);
-      }
-      if (response.contentLength > xtreamEpgResponseByteLimit) {
-        throw const _EpgRequestFailure(EpgRefreshFailure.responseTooLarge);
-      }
-      final bytes = BytesBuilder(copy: false);
-      await for (final chunk in response.timeout(xtreamEpgRequestTimeout)) {
-        _throwIfCancelled(operation);
-        if (bytes.length + chunk.length > xtreamEpgResponseByteLimit) {
-          throw const _EpgRequestFailure(EpgRefreshFailure.responseTooLarge);
+      } else {
+        try {
+          payload = await _fetchListings(
+            client,
+            access,
+            target,
+            operation,
+            fullDay: false,
+          );
+        } on _EpgRequestFailure catch (error) {
+          if (error.failure != EpgRefreshFailure.providerBlocked) rethrow;
+          // Some providers block the quick request yet still serve the
+          // full-day one; remember that for this source once it works.
+          payload = await _fetchListings(
+            client,
+            access,
+            target,
+            operation,
+            fullDay: true,
+          );
+          _fullDaySources.add(target.sourceId);
         }
-        bytes.add(chunk);
       }
-      final payload = bytes.takeBytes();
       final parseResult = await Isolate.run<_XtreamEpgParseResult>(
         () => _parseXtreamEpgResponse(
           payload,
@@ -447,6 +441,60 @@ class XtreamEpgService {
           : EpgRefreshFailure.cancelled;
       return _recordTargetFailure(target, failure, nowUtc);
     }
+  }
+
+  /// Fetches one channel's listings: the quick `get_short_epg` request, or
+  /// with [fullDay] the `get_simple_data_table` one. Both answer with the
+  /// same `epg_listings` payload, which parsing trims to the Guide window.
+  Future<Uint8List> _fetchListings(
+    HttpClient client,
+    _XtreamEpgAccess access,
+    EpgRefreshTarget target,
+    int operation, {
+    required bool fullDay,
+  }) async {
+    final uri = access.endpoint.replace(
+      queryParameters: {
+        'username': access.credential.username,
+        'password': access.credential.password,
+        'action': fullDay ? 'get_simple_data_table' : 'get_short_epg',
+        'stream_id': target.providerStreamId,
+        if (!fullDay) 'limit': '$xtreamEpgRequestListingLimit',
+      },
+    );
+    final request = await client.getUrl(uri).timeout(xtreamEpgRequestTimeout);
+    request.followRedirects = false;
+    final response = await request.close().timeout(xtreamEpgRequestTimeout);
+    if (response.statusCode == HttpStatus.unauthorized ||
+        response.statusCode == HttpStatus.forbidden) {
+      // A provider's web proxy refuses with its own HTML page; an Xtream
+      // credential rejection is never a web page.
+      throw _EpgRequestFailure(
+        response.headers.contentType?.mimeType == 'text/html'
+            ? EpgRefreshFailure.providerBlocked
+            : EpgRefreshFailure.authentication,
+      );
+    }
+    if (response.statusCode == HttpStatus.notFound ||
+        response.statusCode == HttpStatus.methodNotAllowed ||
+        response.statusCode == HttpStatus.notImplemented) {
+      throw const _EpgRequestFailure(EpgRefreshFailure.unsupported);
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw const _EpgRequestFailure(EpgRefreshFailure.unreachable);
+    }
+    if (response.contentLength > xtreamEpgResponseByteLimit) {
+      throw const _EpgRequestFailure(EpgRefreshFailure.responseTooLarge);
+    }
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in response.timeout(xtreamEpgRequestTimeout)) {
+      _throwIfCancelled(operation);
+      if (bytes.length + chunk.length > xtreamEpgResponseByteLimit) {
+        throw const _EpgRequestFailure(EpgRefreshFailure.responseTooLarge);
+      }
+      bytes.add(chunk);
+    }
+    return bytes.takeBytes();
   }
 
   Future<_EpgTargetResult> _recordTargetFailure(
