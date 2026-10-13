@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../cinema.dart';
 import '../browse/playback_handoff.dart';
 import '../sources/credential_store.dart';
 import '../sources/source_catalog_database.dart';
@@ -16,15 +17,6 @@ import 'playback_runtime_adapters.dart';
 import 'playback_transport.dart';
 
 export 'playback_runtime_adapters.dart' show resolveXtreamPlaybackUri;
-
-const _graphite = Color(0xFF111212),
-    _surface = Color(0xFF191A1A),
-    _raised = Color(0xFF222321),
-    _line = Color(0xFF343534),
-    _warmWhite = Color(0xFFF4F0E7),
-    _quietText = Color(0xFFAAA8A2),
-    _amber = Color(0xFFFFB347),
-    _amberInk = Color(0xFF17120A);
 
 const productionPlayerStartupDeadline = playbackStartupDeadline;
 const _chromeDuration = Duration(seconds: 4);
@@ -91,6 +83,7 @@ class PlayerScreen extends StatefulWidget {
     this.onAddChannel,
     this.variantPort,
     this.fullscreenPort,
+    this.windowControls,
     this.onUsableVideo,
     this.source,
     this.credentialStore,
@@ -109,6 +102,10 @@ class PlayerScreen extends StatefulWidget {
   final FutureOr<void> Function()? onOpenSettings, onEnterPip, onAddChannel;
   final PlaybackExactVariantPort? variantPort;
   final FullscreenPort? fullscreenPort;
+
+  /// Mute, volume and fullscreen; off on Android, where the TV remote owns
+  /// volume and the app is always fullscreen.
+  final bool? windowControls;
   final UsableVideoCallback? onUsableVideo;
 
   // Legacy fixture seam. Production passes manager + sessionId.
@@ -574,7 +571,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             autofocus: true,
             onKeyEvent: _stageKey,
             child: Material(
-              color: _graphite,
+              color: Cinema.ink,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -593,11 +590,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       node: _chrome,
                       child: Stack(
                         children: [
-                          _IdentityBand(
-                            handoff: _handoff,
-                            focusNode: _back,
-                            onBack: () => unawaited(_backOut()),
-                            onDown: _returnToStage,
+                          if (_failed)
+                            const Positioned.fill(
+                              child: ColoredBox(color: Color(0x99050507)),
+                            ),
+                          Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            child: _IdentityBand(
+                              handoff: _handoff,
+                              focusNode: _back,
+                              onBack: () => unawaited(_backOut()),
+                              onDown: _returnToStage,
+                            ),
                           ),
                           if (snapshot != null &&
                               (snapshot.resume.didResume ||
@@ -605,7 +611,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                   snapshot.progressSaveFailed ||
                                   _message != null))
                             Positioned(
-                              top: 58,
+                              top: 96,
                               left: 0,
                               right: 0,
                               child: _Notice(
@@ -617,8 +623,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                         : 'Resumed at ${_time(snapshot.resume.appliedPosition)}.'),
                               ),
                             ),
-                          Align(
-                            alignment: Alignment.bottomCenter,
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            top: _failed ? 0 : null,
                             child: _failed
                                 ? _FailureDeck(
                                     failure:
@@ -650,6 +659,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     live: _live,
                                     state: _state,
                                     audible: snapshot?.isAudible == true,
+                                    windowControls:
+                                        widget.windowControls ??
+                                        !Platform.isAndroid,
                                     nodes: _DeckNodes(
                                       back10: _back10,
                                       play: _play,
@@ -773,7 +785,10 @@ class _StatusMark extends StatelessWidget {
         children: [
           const SizedBox.square(
             dimension: 16,
-            child: CircularProgressIndicator(strokeWidth: 2, color: _amber),
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Cinema.amber,
+            ),
           ),
           const SizedBox(width: 10),
           Flexible(
@@ -782,9 +797,10 @@ class _StatusMark extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: _warmWhite,
+                color: Cinema.text,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
+                shadows: [Shadow(color: Color(0xCC000000), blurRadius: 12)],
               ),
             ),
           ),
@@ -800,13 +816,18 @@ class _Notice extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Semantics(
     liveRegion: true,
-    child: Container(
-      key: const ValueKey('player-playback-notice'),
-      color: _surface,
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-      child: Text(
-        message,
-        style: const TextStyle(color: _quietText, fontSize: 13),
+    child: Center(
+      child: Container(
+        key: const ValueKey('player-playback-notice'),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: Cinema.card,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          message,
+          style: const TextStyle(color: Cinema.quiet, fontSize: 13),
+        ),
       ),
     ),
   );
@@ -823,48 +844,85 @@ class _IdentityBand extends StatelessWidget {
   final FocusNode focusNode;
   final VoidCallback onBack, onDown;
   @override
-  Widget build(BuildContext context) => SafeArea(
-    bottom: false,
-    child: Container(
-      height: 58,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: const BoxDecoration(
-        color: _surface,
-        border: Border(bottom: BorderSide(color: _line)),
-      ),
-      child: Row(
-        children: [
-          _DeckAction(
-            key: const ValueKey('player-back'),
-            focusNode: focusNode,
-            icon: Icons.arrow_back,
-            label: 'Back',
-            onPressed: onBack,
-            onDown: onDown,
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(
-              handoff.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: _warmWhite,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(gradient: Cinema.scrim(fromTop: true)),
+    child: SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(28, 20, 32, 44),
+        child: Row(
+          children: [
+            _DeckAction(
+              key: const ValueKey('player-back'),
+              focusNode: focusNode,
+              icon: Icons.arrow_back_rounded,
+              label: 'Back',
+              onPressed: onBack,
+              onDown: onDown,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                handoff.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Cinema.text,
+                  fontFamily: Cinema.display,
+                  fontSize: 23,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
-          ),
-          Text(
-            handoff.mediaKind.name.toUpperCase(),
-            style: const TextStyle(
-              color: _quietText,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
+            const SizedBox(width: 16),
+            const _Clock(),
+          ],
+        ),
       ),
+    ),
+  );
+}
+
+class _Clock extends StatefulWidget {
+  const _Clock();
+  @override
+  State<_Clock> createState() => _ClockState();
+}
+
+class _ClockState extends State<_Clock> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _schedule();
+  }
+
+  void _schedule() {
+    _tick = Timer(Duration(seconds: 60 - DateTime.now().second), () {
+      if (!mounted) return;
+      setState(() {});
+      _schedule();
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Text(
+    MaterialLocalizations.of(context).formatTimeOfDay(
+      TimeOfDay.now(),
+      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+    ),
+    style: const TextStyle(
+      color: Cinema.text,
+      fontFamily: Cinema.display,
+      fontSize: 20,
+      fontWeight: FontWeight.w600,
     ),
   );
 }
@@ -874,6 +932,7 @@ class _BroadcastDeck extends StatelessWidget {
     required this.live,
     required this.state,
     required this.audible,
+    required this.windowControls,
     required this.nodes,
     required this.onPlay,
     required this.onSeek,
@@ -887,7 +946,7 @@ class _BroadcastDeck extends StatelessWidget {
     required this.onBack,
     required this.onDown,
   });
-  final bool live, audible;
+  final bool live, audible, windowControls;
   final PlaybackTransportState state;
   final _DeckNodes nodes;
   final VoidCallback onPlay,
@@ -901,40 +960,107 @@ class _BroadcastDeck extends StatelessWidget {
   final ValueChanged<Duration> onSeek;
   final ValueChanged<double> onVolume;
 
-  Widget _primary() => Row(
-    key: const ValueKey('player-primary-controls'),
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      if (!live) ...[
+  // Play sits dead center; the smaller actions split evenly around it,
+  // with the seek buttons next to Play for movies and episodes.
+  Widget _transport({Widget? trailing}) {
+    final tracks = _DeckAction(
+      focusNode: nodes.tracks,
+      icon: Icons.subtitles_outlined,
+      label: 'Audio & subtitles',
+      onPressed: onTracks,
+      onDown: onDown,
+    );
+    final pip = onPip == null
+        ? null
+        : _DeckAction(
+            focusNode: nodes.pip,
+            icon: Icons.picture_in_picture_alt_outlined,
+            label: 'Picture in picture',
+            onPressed: onPip!,
+            onDown: onDown,
+          );
+    final List<Widget> left, right;
+    if (live) {
+      final small = [
+        tracks,
+        ?pip,
+        if (onAdd != null)
+          _DeckAction(
+            focusNode: nodes.add,
+            icon: Icons.splitscreen_outlined,
+            iconTurns: 1,
+            label: 'Watch two channels',
+            onPressed: onAdd!,
+            onDown: onDown,
+          ),
+      ];
+      final split = small.length ~/ 2;
+      left = small.sublist(0, split);
+      right = small.sublist(split);
+    } else {
+      left = [
+        tracks,
+        _DeckAction(
+          focusNode: nodes.startOver,
+          icon: Icons.restart_alt_rounded,
+          label: 'Start over',
+          onPressed: onStartOver,
+          onDown: onDown,
+        ),
         _DeckAction(
           focusNode: nodes.back10,
-          icon: Icons.replay_10,
+          icon: Icons.replay_10_rounded,
           label: 'Back 10 seconds',
           onPressed: () => onSeek(_boundedSeek(state, -10)),
           onDown: onDown,
         ),
-        const SizedBox(width: 8),
-      ],
-      _DeckAction(
-        key: const ValueKey('player-play-pause'),
-        focusNode: nodes.play,
-        icon: state.isPlaying ? Icons.pause : Icons.play_arrow,
-        label: state.isPlaying ? 'Pause' : 'Play',
-        onPressed: onPlay,
-        onDown: onDown,
-      ),
-      if (!live) ...[
-        const SizedBox(width: 8),
+      ];
+      right = [
         _DeckAction(
           focusNode: nodes.forward10,
-          icon: Icons.forward_10,
+          icon: Icons.forward_10_rounded,
           label: 'Forward 10 seconds',
           onPressed: () => onSeek(_boundedSeek(state, 10)),
           onDown: onDown,
         ),
+        ?pip,
+      ];
+    }
+    return Row(
+      children: [
+        Expanded(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: _spaced(left),
+          ),
+        ),
+        const SizedBox(width: 18),
+        KeyedSubtree(
+          key: const ValueKey('player-primary-controls'),
+          child: _DeckAction(
+            key: const ValueKey('player-play-pause'),
+            focusNode: nodes.play,
+            icon: state.isPlaying
+                ? Icons.pause_rounded
+                : Icons.play_arrow_rounded,
+            label: state.isPlaying ? 'Pause' : 'Play',
+            primary: true,
+            onPressed: onPlay,
+            onDown: onDown,
+          ),
+        ),
+        const SizedBox(width: 18),
+        Expanded(
+          child: Row(
+            children: [
+              ..._spaced(right),
+              if (trailing != null) ...[const Spacer(), trailing],
+            ],
+          ),
+        ),
       ],
-    ],
-  );
+    );
+  }
 
   Widget _utilities() => Row(
     key: const ValueKey('player-utility-controls'),
@@ -942,12 +1068,12 @@ class _BroadcastDeck extends StatelessWidget {
     children: [
       _DeckAction(
         focusNode: nodes.mute,
-        icon: audible ? Icons.volume_up : Icons.volume_off,
+        icon: audible ? Icons.volume_up_rounded : Icons.volume_off_rounded,
         label: audible ? 'Mute' : 'Unmute',
         onPressed: onMute,
         onDown: onDown,
       ),
-      const SizedBox(width: 8),
+      const SizedBox(width: 10),
       SizedBox(
         width: 112,
         child: _Volume(
@@ -957,11 +1083,11 @@ class _BroadcastDeck extends StatelessWidget {
           onDown: onDown,
         ),
       ),
-      const SizedBox(width: 8),
+      const SizedBox(width: 10),
       _DeckAction(
         key: const ValueKey('player-fullscreen'),
         focusNode: nodes.fullscreen,
-        icon: Icons.fullscreen,
+        icon: Icons.fullscreen_rounded,
         label: 'Fullscreen',
         onPressed: onFullscreen,
         onBack: onBack,
@@ -970,51 +1096,14 @@ class _BroadcastDeck extends StatelessWidget {
     ],
   );
 
-  List<Widget> _secondary() => [
-    if (!live)
-      _DeckAction(
-        focusNode: nodes.startOver,
-        icon: Icons.restart_alt,
-        label: 'Start over',
-        onPressed: onStartOver,
-        onDown: onDown,
-      ),
-    _DeckAction(
-      focusNode: nodes.tracks,
-      icon: Icons.audiotrack,
-      label: 'Tracks',
-      onPressed: onTracks,
-      onDown: onDown,
-    ),
-    if (onPip != null)
-      _DeckAction(
-        focusNode: nodes.pip,
-        icon: Icons.picture_in_picture_alt,
-        label: 'Picture in picture',
-        onPressed: onPip!,
-        onDown: onDown,
-      ),
-    if (onAdd != null)
-      _DeckAction(
-        focusNode: nodes.add,
-        icon: Icons.view_week_outlined,
-        label: 'Add channel',
-        onPressed: onAdd!,
-        onDown: onDown,
-      ),
-  ];
-
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) => SafeArea(
+  Widget build(BuildContext context) => DecoratedBox(
+    key: const ValueKey('player-broadcast-deck'),
+    decoration: BoxDecoration(gradient: Cinema.scrim(fromTop: false)),
+    child: SafeArea(
       top: false,
-      child: Container(
-        key: const ValueKey('player-broadcast-deck'),
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-        decoration: const BoxDecoration(
-          color: _surface,
-          border: Border(top: BorderSide(color: _line)),
-        ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(36, 48, 36, 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1026,34 +1115,38 @@ class _BroadcastDeck extends StatelessWidget {
                 onChanged: onSeek,
                 onDown: onDown,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
             ],
-            Wrap(spacing: 8, runSpacing: 8, children: _secondary()),
-            const SizedBox(height: 8),
-            if (constraints.maxWidth >= 1100)
-              Row(
-                children: [
-                  const Expanded(
-                    key: ValueKey('player-left-balance-zone'),
-                    child: SizedBox.shrink(),
-                  ),
-                  _primary(),
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: _utilities(),
-                    ),
-                  ),
-                ],
-              )
-            else
-              Row(children: [_primary(), const Spacer(), _utilities()]),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                // Volume and fullscreen only mean something in a window;
+                // a TV remote owns both.
+                if (!windowControls) return _transport();
+                if (constraints.maxWidth >= 900) {
+                  return _transport(trailing: _utilities());
+                }
+                return Column(
+                  children: [
+                    _transport(),
+                    const SizedBox(height: 10),
+                    _utilities(),
+                  ],
+                );
+              },
+            ),
           ],
         ),
       ),
     ),
   );
 }
+
+List<Widget> _spaced(List<Widget> actions) => [
+  for (var index = 0; index < actions.length; index++) ...[
+    if (index > 0) const SizedBox(width: 12),
+    actions[index],
+  ],
+];
 
 Duration _boundedSeek(PlaybackTransportState state, int seconds) {
   final target = state.position + Duration(seconds: seconds);
@@ -1097,7 +1190,7 @@ class _TracksLedger extends StatelessWidget {
       ...state.subtitleTracks,
     ];
     return ColoredBox(
-      color: const Color(0xC9111212),
+      color: const Color(0x99050507),
       child: Align(
         alignment: Alignment.bottomCenter,
         child: FocusScope(
@@ -1108,10 +1201,10 @@ class _TracksLedger extends StatelessWidget {
               key: const ValueKey('player-tracks-ledger'),
               width: double.infinity,
               constraints: const BoxConstraints(maxHeight: 420),
-              padding: const EdgeInsets.all(18),
+              padding: const EdgeInsets.fromLTRB(32, 24, 32, 24),
               decoration: const BoxDecoration(
-                color: _surface,
-                border: Border(top: BorderSide(color: _line)),
+                color: Cinema.card,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
               ),
               child: SingleChildScrollView(
                 child: Column(
@@ -1122,9 +1215,10 @@ class _TracksLedger extends StatelessWidget {
                       children: [
                         const Expanded(
                           child: Text(
-                            'Tracks',
+                            'Audio & subtitles',
                             style: TextStyle(
-                              color: _warmWhite,
+                              color: Cinema.text,
+                              fontFamily: Cinema.display,
                               fontSize: 20,
                               fontWeight: FontWeight.w700,
                             ),
@@ -1147,10 +1241,10 @@ class _TracksLedger extends StatelessWidget {
                           style: _ledgerEmpty,
                         ),
                       ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                      spacing: 10,
+                      runSpacing: 10,
                       children: [
                         for (var index = 0; index < audio.length; index++)
                           _TextAction(
@@ -1164,7 +1258,7 @@ class _TracksLedger extends StatelessWidget {
                           ),
                       ],
                     ),
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 20),
                     const Text('Subtitles', style: _ledgerHeading),
                     if (state.subtitleTracks.isEmpty)
                       const Padding(
@@ -1174,10 +1268,10 @@ class _TracksLedger extends StatelessWidget {
                           style: _ledgerEmpty,
                         ),
                       ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                      spacing: 10,
+                      runSpacing: 10,
                       children: [
                         for (final track in subtitles)
                           _TextAction(
@@ -1210,11 +1304,11 @@ class _TracksLedger extends StatelessWidget {
 }
 
 const _ledgerHeading = TextStyle(
-  color: _warmWhite,
+  color: Cinema.text,
   fontSize: 14,
   fontWeight: FontWeight.w700,
 );
-const _ledgerEmpty = TextStyle(color: _quietText, fontSize: 13);
+const _ledgerEmpty = TextStyle(color: Cinema.faint, fontSize: 13);
 
 String _trackLabel(PlaybackMediaTrack track) =>
     track.language == null || track.language == track.label
@@ -1248,106 +1342,148 @@ class _FailureDeck extends StatelessWidget {
   final VoidCallback onDetails, onPrimary, onBack, onDown;
   final ValueChanged<PlaybackVariantCandidate> onVariant;
 
+  String get title => switch (handoff.mediaKind) {
+    PlaybackMediaKind.live => "Can't play this channel",
+    PlaybackMediaKind.movie => "Can't play this movie",
+    PlaybackMediaKind.episode => "Can't play this episode",
+  };
+
   String get failureMessage => switch (failure) {
     PlaybackSessionFailure.credentialsUnavailable =>
-      'This source needs its saved account details restored in Settings.',
-    PlaybackSessionFailure.unavailable => 'Playback is unavailable right now.',
-    PlaybackSessionFailure.timedOut => 'Playback did not start in time.',
+      "This source's login needs to be entered again.",
+    PlaybackSessionFailure.unavailable => "The stream isn't available.",
+    PlaybackSessionFailure.timedOut => 'The stream took too long to start.',
   };
 
   @override
-  Widget build(BuildContext context) => SafeArea(
-    top: false,
-    child: Container(
-      key: const ValueKey('player-failure-deck'),
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
-      decoration: const BoxDecoration(
-        color: _surface,
-        border: Border(top: BorderSide(color: _line)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            failureMessage,
-            style: const TextStyle(
-              color: _warmWhite,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
+  Widget build(BuildContext context) => Center(
+    child: SingleChildScrollView(
+      child: Container(
+        key: const ValueKey('player-failure-deck'),
+        width: 420,
+        margin: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(28, 28, 28, 18),
+        decoration: BoxDecoration(
+          color: Cinema.card,
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x8C000000),
+              blurRadius: 60,
+              offset: Offset(0, 24),
             ),
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _TextAction(
-                key: const ValueKey('player-recovery-primary'),
-                focusRingKey: const ValueKey(
-                  'player-recovery-primary-focus-ring',
-                ),
-                focusNode: primaryFocus,
-                primary: true,
-                label: failure == PlaybackSessionFailure.credentialsUnavailable
-                    ? 'Open Settings'
-                    : 'Retry',
-                onPressed: onPrimary,
-                onDown: onDown,
-                onLeft: detailsFocus.requestFocus,
-                onRight: backFocus.requestFocus,
-              ),
-              _TextAction(
-                key: const ValueKey('player-recovery-back'),
-                focusRingKey: const ValueKey('player-recovery-back-focus-ring'),
-                focusNode: backFocus,
-                label: 'Back',
-                onPressed: onBack,
-                onDown: onDown,
-                onLeft: primaryFocus.requestFocus,
-                onRight: detailsFocus.requestFocus,
-              ),
-              _TextAction(
-                key: const ValueKey('player-recovery-details'),
-                focusRingKey: const ValueKey(
-                  'player-recovery-details-focus-ring',
-                ),
-                focusNode: detailsFocus,
-                label: detailsVisible
-                    ? 'Hide technical details'
-                    : 'Technical details',
-                onPressed: onDetails,
-                onDown: onDown,
-                onLeft: backFocus.requestFocus,
-                onRight: primaryFocus.requestFocus,
-              ),
-              for (final variant in variants)
-                _TextAction(
-                  label: 'Try ${variant.label}',
-                  onPressed: () => onVariant(variant),
-                  onDown: onDown,
-                ),
-            ],
-          ),
-          if (message != null) ...[
-            const SizedBox(height: 10),
-            Text(message!, style: _ledgerEmpty),
           ],
-          if (detailsVisible)
-            Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Text(
-                'Category: ${failure.name}\nMedia: ${handoff.mediaKind.name}\nAttempts: $attempts\nLocal time: ${_localTime()}',
-                key: const ValueKey('player-technical-details'),
-                style: const TextStyle(
-                  color: _quietText,
-                  fontSize: 13,
-                  height: 1.4,
-                ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: const BoxDecoration(
+                color: Color(0x24FFB547),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.error_outline_rounded,
+                color: Cinema.amber,
+                size: 24,
               ),
             ),
-        ],
+            const SizedBox(height: 14),
+            Text(
+              title,
+              style: const TextStyle(
+                color: Cinema.text,
+                fontFamily: Cinema.display,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              failureMessage,
+              style: const TextStyle(
+                color: Cinema.quiet,
+                fontSize: 14,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                _TextAction(
+                  key: const ValueKey('player-recovery-primary'),
+                  focusRingKey: const ValueKey(
+                    'player-recovery-primary-focus-ring',
+                  ),
+                  focusNode: primaryFocus,
+                  primary: true,
+                  label:
+                      failure == PlaybackSessionFailure.credentialsUnavailable
+                      ? 'Open Settings'
+                      : 'Try again',
+                  onPressed: onPrimary,
+                  onDown: onDown,
+                  onLeft: detailsFocus.requestFocus,
+                  onRight: backFocus.requestFocus,
+                ),
+                _TextAction(
+                  key: const ValueKey('player-recovery-back'),
+                  focusRingKey: const ValueKey(
+                    'player-recovery-back-focus-ring',
+                  ),
+                  focusNode: backFocus,
+                  label: 'Back',
+                  onPressed: onBack,
+                  onDown: onDown,
+                  onLeft: primaryFocus.requestFocus,
+                  onRight: detailsFocus.requestFocus,
+                ),
+                for (final variant in variants)
+                  _TextAction(
+                    label: 'Try ${variant.label}',
+                    onPressed: () => onVariant(variant),
+                    onDown: onDown,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _TextAction(
+              key: const ValueKey('player-recovery-details'),
+              focusRingKey: const ValueKey(
+                'player-recovery-details-focus-ring',
+              ),
+              focusNode: detailsFocus,
+              quiet: true,
+              label: detailsVisible ? 'Hide details' : 'Details',
+              onPressed: onDetails,
+              onDown: onDown,
+              onLeft: backFocus.requestFocus,
+              onRight: primaryFocus.requestFocus,
+            ),
+            if (message != null) ...[
+              const SizedBox(height: 10),
+              Text(message!, style: _ledgerEmpty),
+            ],
+            if (detailsVisible)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'Category: ${failure.name}\nMedia: ${handoff.mediaKind.name}\nAttempts: $attempts\nLocal time: ${_localTime()}',
+                  key: const ValueKey('player-technical-details'),
+                  style: const TextStyle(
+                    color: Cinema.faint,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     ),
   );
@@ -1408,51 +1544,53 @@ class _TimelineState extends State<_Timeline> {
         slider: true,
         label: 'Playback timeline',
         value: '${_time(position)} of ${_time(widget.duration)}',
-        child: Container(
+        child: AnimatedContainer(
           key: const ValueKey('player-timeline'),
-          height: 28,
+          duration: const Duration(milliseconds: 120),
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            border: Border.all(
-              color: focused ? _amber : _line,
-              width: focused ? 2 : 1,
-            ),
-            borderRadius: BorderRadius.circular(6),
+            color: focused ? Cinema.glass : Colors.transparent,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: focused ? Cinema.focusGlow : null,
           ),
           child: Row(
             children: [
-              SizedBox(
-                width: 58,
-                child: Center(
-                  child: Text(_time(position), style: _ledgerEmpty),
-                ),
-              ),
+              Text(_time(position), style: _timeStyle),
               Expanded(
-                child: Slider(
-                  value: value,
-                  max: maximum <= 0 ? 1 : maximum,
-                  onChangeStart: (_) => dragActive = true,
-                  onChanged: maximum <= 0
-                      ? null
-                      : (value) {
-                          final target = Duration(milliseconds: value.round());
-                          if (!dragActive) return widget.onChanged(target);
-                          setState(() => dragging = target);
-                        },
-                  onChangeEnd: (value) {
-                    dragActive = false;
-                    setState(() => dragging = null);
-                    widget.onChanged(Duration(milliseconds: value.round()));
-                  },
-                  activeColor: _amber,
-                  inactiveColor: _raised,
+                child: SliderTheme(
+                  data: SliderThemeData(
+                    trackHeight: 4,
+                    activeTrackColor: Cinema.amber,
+                    inactiveTrackColor: const Color(0x2EF5F1E8),
+                    thumbColor: Cinema.amber,
+                    thumbShape: RoundSliderThumbShape(
+                      enabledThumbRadius: focused ? 8 : 6,
+                    ),
+                    overlayShape: SliderComponentShape.noOverlay,
+                  ),
+                  child: Slider(
+                    value: value,
+                    max: maximum <= 0 ? 1 : maximum,
+                    onChangeStart: (_) => dragActive = true,
+                    onChanged: maximum <= 0
+                        ? null
+                        : (value) {
+                            final target = Duration(
+                              milliseconds: value.round(),
+                            );
+                            if (!dragActive) return widget.onChanged(target);
+                            setState(() => dragging = target);
+                          },
+                    onChangeEnd: (value) {
+                      dragActive = false;
+                      setState(() => dragging = null);
+                      widget.onChanged(Duration(milliseconds: value.round()));
+                    },
+                  ),
                 ),
               ),
-              SizedBox(
-                width: 58,
-                child: Center(
-                  child: Text(_time(widget.duration), style: _ledgerEmpty),
-                ),
-              ),
+              Text(_time(widget.duration), style: _timeStyle),
             ],
           ),
         ),
@@ -1460,6 +1598,12 @@ class _TimelineState extends State<_Timeline> {
     );
   }
 }
+
+const _timeStyle = TextStyle(
+  color: Cinema.faint,
+  fontSize: 12,
+  fontFeatures: [FontFeature.tabularFigures()],
+);
 
 class _Volume extends StatefulWidget {
   const _Volume({
@@ -1503,21 +1647,29 @@ class _VolumeState extends State<_Volume> {
       slider: true,
       label: 'Volume',
       value: '${widget.value.round()} percent',
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
         height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
         decoration: BoxDecoration(
-          border: Border.all(
-            color: focused ? _amber : _line,
-            width: focused ? 2 : 1,
-          ),
-          borderRadius: BorderRadius.circular(6),
+          color: focused ? Cinema.glassFocused : Cinema.glass,
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: focused ? Cinema.focusGlow : null,
         ),
-        child: Slider(
-          value: widget.value.clamp(0, 100),
-          max: 100,
-          onChanged: widget.onChanged,
-          activeColor: _amber,
-          inactiveColor: _raised,
+        child: SliderTheme(
+          data: SliderThemeData(
+            trackHeight: 4,
+            activeTrackColor: Cinema.text,
+            inactiveTrackColor: const Color(0x33F5F1E8),
+            thumbColor: Cinema.text,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+            overlayShape: SliderComponentShape.noOverlay,
+          ),
+          child: Slider(
+            value: widget.value.clamp(0, 100),
+            max: 100,
+            onChanged: widget.onChanged,
+          ),
         ),
       ),
     ),
@@ -1531,6 +1683,8 @@ class _DeckAction extends StatefulWidget {
     required this.label,
     required this.onPressed,
     this.focusNode,
+    this.primary = false,
+    this.iconTurns = 0,
     this.onBack,
     this.onDown,
   });
@@ -1538,6 +1692,10 @@ class _DeckAction extends StatefulWidget {
   final String label;
   final VoidCallback onPressed;
   final FocusNode? focusNode;
+
+  /// The one amber, larger action in a row: Play/Pause.
+  final bool primary;
+  final int iconTurns;
   final VoidCallback? onBack, onDown;
   @override
   State<_DeckAction> createState() => _DeckActionState();
@@ -1546,57 +1704,69 @@ class _DeckAction extends StatefulWidget {
 class _DeckActionState extends State<_DeckAction> {
   bool focused = false;
   @override
-  Widget build(BuildContext context) => Focus(
-    focusNode: widget.focusNode,
-    onFocusChange: (value) => setState(() => focused = value),
-    onKeyEvent: (_, event) {
-      if (event is! KeyDownEvent) return KeyEventResult.ignored;
-      if ((event.logicalKey == LogicalKeyboardKey.escape ||
-              event.logicalKey == LogicalKeyboardKey.browserBack) &&
-          widget.onBack != null) {
-        widget.onBack!();
-        return KeyEventResult.handled;
-      }
-      if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
-          widget.onDown != null) {
-        widget.onDown!();
-        return KeyEventResult.handled;
-      }
-      if (event.logicalKey == LogicalKeyboardKey.enter ||
-          event.logicalKey == LogicalKeyboardKey.select) {
-        widget.onPressed();
-        return KeyEventResult.handled;
-      }
-      return KeyEventResult.ignored;
-    },
-    child: Tooltip(
-      message: widget.label,
-      child: Semantics(
-        button: true,
-        label: widget.label,
-        child: GestureDetector(
-          onTap: () {
-            widget.focusNode?.requestFocus();
-            widget.onPressed();
-          },
-          child: Container(
-            width: 44,
-            height: 44,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: focused ? _raised : Colors.transparent,
-              border: Border.all(
-                color: focused ? _amber : _line,
-                width: focused ? 2 : 1,
+  Widget build(BuildContext context) {
+    final size = widget.primary ? 56.0 : 44.0;
+    return Focus(
+      focusNode: widget.focusNode,
+      onFocusChange: (value) => setState(() => focused = value),
+      onKeyEvent: (_, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if ((event.logicalKey == LogicalKeyboardKey.escape ||
+                event.logicalKey == LogicalKeyboardKey.browserBack) &&
+            widget.onBack != null) {
+          widget.onBack!();
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
+            widget.onDown != null) {
+          widget.onDown!();
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.enter ||
+            event.logicalKey == LogicalKeyboardKey.select) {
+          widget.onPressed();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Tooltip(
+        message: widget.label,
+        child: Semantics(
+          button: true,
+          label: widget.label,
+          child: GestureDetector(
+            onTap: () {
+              widget.focusNode?.requestFocus();
+              widget.onPressed();
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              width: size,
+              height: size,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: widget.primary
+                    ? Cinema.amber
+                    : focused
+                    ? Cinema.glassFocused
+                    : Cinema.glass,
+                boxShadow: focused ? Cinema.focusGlow : null,
               ),
-              borderRadius: BorderRadius.circular(6),
+              child: RotatedBox(
+                quarterTurns: widget.iconTurns,
+                child: Icon(
+                  widget.icon,
+                  color: widget.primary ? Cinema.amberInk : Cinema.text,
+                  size: widget.primary ? 28 : 22,
+                ),
+              ),
             ),
-            child: Icon(widget.icon, color: _warmWhite, size: 22),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _TextAction extends StatefulWidget {
@@ -1606,6 +1776,7 @@ class _TextAction extends StatefulWidget {
     required this.onPressed,
     this.focusNode,
     this.primary = false,
+    this.quiet = false,
     this.onDown,
     this.focusRingKey,
     this.onLeft,
@@ -1614,7 +1785,9 @@ class _TextAction extends StatefulWidget {
   final String label;
   final VoidCallback? onPressed;
   final FocusNode? focusNode;
-  final bool primary;
+
+  /// Amber fill for the main choice; [quiet] is a bare text link.
+  final bool primary, quiet;
   final VoidCallback? onDown;
   final Key? focusRingKey;
   final VoidCallback? onLeft, onRight;
@@ -1659,34 +1832,35 @@ class _TextActionState extends State<_TextAction> {
       enabled: widget.onPressed != null,
       label: widget.label,
       excludeSemantics: true,
-      child: DecoratedBox(
-        key: widget.focusRingKey,
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: focused ? _amber : Colors.transparent,
-            width: 2,
+      child: GestureDetector(
+        onTap: widget.onPressed,
+        child: AnimatedContainer(
+          key: widget.focusRingKey,
+          duration: const Duration(milliseconds: 120),
+          height: 44,
+          padding: EdgeInsets.symmetric(horizontal: widget.quiet ? 12 : 22),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: widget.primary
+                ? Cinema.amber
+                : widget.quiet && !focused
+                ? Colors.transparent
+                : focused
+                ? Cinema.glassFocused
+                : Cinema.glass,
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: focused ? Cinema.focusGlow : null,
           ),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: GestureDetector(
-          onTap: widget.onPressed,
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 40, minWidth: 92),
-            margin: const EdgeInsets.all(2),
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: widget.primary ? _amber : _raised,
-              border: Border.all(color: _line),
-              borderRadius: BorderRadius.circular(3),
-            ),
-            child: Text(
-              widget.label,
-              style: TextStyle(
-                color: widget.primary ? _amberInk : _warmWhite,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              color: widget.primary
+                  ? Cinema.amberInk
+                  : widget.quiet
+                  ? Cinema.faint
+                  : Cinema.text,
+              fontSize: widget.quiet ? 13 : 14,
+              fontWeight: widget.primary ? FontWeight.w700 : FontWeight.w600,
             ),
           ),
         ),

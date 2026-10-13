@@ -425,8 +425,8 @@ void main() {
       PlaybackSessionPhase.failed,
     );
     expect(find.byKey(const ValueKey('player-failure-deck')), findsOneWidget);
-    expect(find.text('Playback is unavailable right now.'), findsOneWidget);
-    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text("The stream isn't available."), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
     expect(harness.startup.savedLastItems, isEmpty);
   });
 }
