@@ -141,6 +141,19 @@ https://stream.example/repeat
       key('https://stream.example/news?token=two'),
     );
   });
+  test('identity digests stay standard 64-bit FNV-1a', () {
+    final stage = connector.parseBytes(
+      utf8.encode(
+        '#EXTINF:-1 group-title="foobar",One\nhttps://stream.example/one\n',
+      ),
+      sourceId: 's',
+    );
+
+    // Published FNV-1a 64 vector for "foobar": stored identities must not
+    // change when the hash implementation does.
+    expect(stage.categories.single.providerKey, 'm3u:s:group:85944171f73967e8');
+  });
+
   test('a malformed header escape drops only that header', () {
     final stage = connector.parseBytes(
       utf8.encode('''#EXTINF:-1,Bad escapes

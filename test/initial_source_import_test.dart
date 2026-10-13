@@ -9,6 +9,77 @@ import 'package:wabbit_tv/src/features/sources/source_models.dart';
 import 'package:wabbit_tv/src/features/sources/xtream_connector.dart';
 
 void main() {
+  Future<InitialSourceImport> importFrom(HttpServer server, Directory temp) =>
+      SourceCatalogDatabase(
+        databasePath: '${temp.path}${Platform.pathSeparator}catalog.sqlite',
+      ).beginInitialImport(
+        SourceDefinition(
+          id: 'body-source',
+          name: 'Fixture',
+          serverUrl: 'http://${server.address.address}:${server.port}',
+          username: 'fixture-user',
+          password: 'fixture-password',
+          credentialKey: 'fixture-key',
+        ),
+      );
+
+  test(
+    'an HTML error page fails at its first chunk, not at the deadline',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final requests = server.listen((request) async {
+        // A captive-portal style page that never finishes downloading.
+        request.response.bufferOutput = false;
+        request.response.write('<html><body>Sign in');
+        await request.response.flush();
+      });
+      addTearDown(() async {
+        await server.close(force: true);
+        await requests.cancel();
+      });
+      final temp = await Directory.systemTemp.createTemp('wabbit-html-body-');
+      addTearDown(() => temp.delete(recursive: true));
+
+      final import = await importFrom(server, temp);
+      await expectLater(
+        import.pending.timeout(const Duration(seconds: 5)),
+        throwsA(
+          isA<SourceImportFailure>().having(
+            (error) => error.kind,
+            'kind',
+            SourceImportFailureKind.emptyResponse,
+          ),
+        ),
+      );
+    },
+  );
+
+  test('a blank body is still reported as an empty response', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = server.listen((request) async {
+      request.response.write(' \n');
+      await request.response.close();
+    });
+    addTearDown(() async {
+      await server.close(force: true);
+      await requests.cancel();
+    });
+    final temp = await Directory.systemTemp.createTemp('wabbit-blank-body-');
+    addTearDown(() => temp.delete(recursive: true));
+
+    final import = await importFrom(server, temp);
+    await expectLater(
+      import.pending.timeout(const Duration(seconds: 5)),
+      throwsA(
+        isA<SourceImportFailure>().having(
+          (error) => error.kind,
+          'kind',
+          SourceImportFailureKind.emptyResponse,
+        ),
+      ),
+    );
+  });
+
   test('worker cancellation force-closes a stalled local provider and removes pending rows', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final received = Completer<void>();
