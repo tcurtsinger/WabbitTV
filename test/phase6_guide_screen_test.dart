@@ -20,6 +20,25 @@ import 'package:wabbit_tv/src/features/sources/source_models.dart';
 import 'package:wabbit_tv/src/home_fixture_mode.dart';
 
 void main() {
+  testWidgets('a provider refusing guide requests is named plainly', (
+    tester,
+  ) async {
+    final data = _GuideFixtureData(
+      availability: EpgAvailability.providerBlocked,
+      programs: const [],
+    );
+    await tester.pumpWidget(_guideApp(data: data));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        "Your provider isn't sending guide data right now · channels remain ready to tune",
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('guide-retry')), findsOneWidget);
+  });
+
   testWidgets('With schedule narrows the Guide until it is switched off', (
     tester,
   ) async {

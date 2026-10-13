@@ -20,6 +20,10 @@ const xtreamEpgFutureHorizon = Duration(hours: 24);
 const xtreamEpgTransientRetry = Duration(minutes: 5);
 const xtreamEpgUnsupportedRetry = Duration(hours: 6);
 
+/// A provider that refuses guide requests is left alone this long, so the
+/// app does not keep a block (or a ban) going.
+const xtreamEpgBlockedRetry = Duration(hours: 1);
+
 class XtreamEpgService {
   XtreamEpgService({
     required this.database,
@@ -359,7 +363,13 @@ class XtreamEpgService {
       final response = await request.close().timeout(xtreamEpgRequestTimeout);
       if (response.statusCode == HttpStatus.unauthorized ||
           response.statusCode == HttpStatus.forbidden) {
-        throw const _EpgRequestFailure(EpgRefreshFailure.authentication);
+        // A provider's web proxy refuses with its own HTML page; an Xtream
+        // credential rejection is never a web page.
+        throw _EpgRequestFailure(
+          response.headers.contentType?.mimeType == 'text/html'
+              ? EpgRefreshFailure.providerBlocked
+              : EpgRefreshFailure.authentication,
+        );
       }
       if (response.statusCode == HttpStatus.notFound ||
           response.statusCode == HttpStatus.methodNotAllowed ||
@@ -477,6 +487,7 @@ class XtreamEpgService {
     final retry = switch (failure) {
       EpgRefreshFailure.cancelled => Duration.zero,
       EpgRefreshFailure.unsupported => xtreamEpgUnsupportedRetry,
+      EpgRefreshFailure.providerBlocked => xtreamEpgBlockedRetry,
       _ => xtreamEpgTransientRetry,
     };
     try {

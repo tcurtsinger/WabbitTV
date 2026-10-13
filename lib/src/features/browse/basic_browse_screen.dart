@@ -833,6 +833,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         EpgAvailability.available when window.programs.isEmpty =>
           const Duration(minutes: 30),
         EpgAvailability.unsupported => const Duration(hours: 6),
+        EpgAvailability.providerBlocked => const Duration(hours: 1),
         EpgAvailability.available => null,
       };
       if (fallbackDelay != null) {

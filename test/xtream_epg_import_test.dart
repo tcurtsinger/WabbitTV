@@ -359,6 +359,57 @@ void main() {
   );
 
   test(
+    "a provider's HTML refusal pauses guide requests for an hour, source-wide",
+    () async {
+      final now = DateTime.utc(2026, 8, 19, 12);
+      var requests = 0;
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        requests++;
+        request.response
+          ..statusCode = HttpStatus.forbidden
+          ..headers.contentType = ContentType.html
+          ..write('<html><body>403 Forbidden</body></html>');
+        await request.response.close();
+      });
+      final fixture = await _ImportFixture.create(server, itemCount: 2);
+      addTearDown(fixture.dispose);
+      final service = XtreamEpgService(
+        database: fixture.database,
+        credentialStore: fixture.credentials,
+        now: () => now,
+      );
+
+      await service.refreshCatalogItems(const ['source:live:item-0']);
+      expect(
+        (await service.refreshCatalogItems(const ['source:live:item-1']))
+            .claimed,
+        0,
+      );
+      expect(requests, 1);
+      final window = (await fixture.database.loadEpgWindow(
+        catalogItemIds: const ['source:live:item-1'],
+        windowStartUtc: now,
+        windowEndUtc: now.add(const Duration(hours: 2)),
+        atUtc: now,
+      )).single;
+      expect(window.availability, EpgAvailability.providerBlocked);
+
+      final db = sqlite3.open(fixture.path);
+      addTearDown(db.close);
+      final state = db
+          .select('SELECT retry_after_utc_ms, last_error FROM epg_source_state')
+          .single;
+      expect(state['last_error'], EpgRefreshFailure.providerBlocked.name);
+      expect(
+        state['retry_after_utc_ms'],
+        now.add(xtreamEpgBlockedRetry).millisecondsSinceEpoch,
+      );
+    },
+  );
+
+  test(
     'explicit manual retry bypasses persisted authentication backoff',
     () async {
       final now = DateTime.utc(2026, 8, 19, 12);

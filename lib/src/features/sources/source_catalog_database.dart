@@ -2078,6 +2078,10 @@ EpgAvailability _epgAvailability(
   DateTime atUtc,
 ) {
   if (capability == 'unsupported') return EpgAvailability.unsupported;
+  if (sourceError == EpgRefreshFailure.providerBlocked.name &&
+      (sourceRetryAfterUtcMs ?? 0) > atUtc.millisecondsSinceEpoch) {
+    return EpgAvailability.providerBlocked;
+  }
   final sourceFailureActive =
       (sourceError == EpgRefreshFailure.credentialsUnavailable.name ||
           sourceError == EpgRefreshFailure.authentication.name) &&
@@ -2339,6 +2343,7 @@ bool _failEpgRefreshTargetOnWorker(
           break;
         case EpgRefreshFailure.credentialsUnavailable:
         case EpgRefreshFailure.authentication:
+        case EpgRefreshFailure.providerBlocked:
           _markEpgSourceTransientFailure(
             db,
             target.sourceId,

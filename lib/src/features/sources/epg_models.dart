@@ -7,6 +7,10 @@ enum EpgAvailability {
   empty,
   temporarilyUnavailable,
   unsupported,
+
+  /// The provider's web front refuses guide requests (an HTML 401/403 page),
+  /// while its login and catalog still work.
+  providerBlocked,
 }
 
 enum EpgRefreshFailure {
@@ -19,6 +23,7 @@ enum EpgRefreshFailure {
   localPersistence,
   cancelled,
   unsupported,
+  providerBlocked,
 }
 
 /// One provider-owned programme attached to an exact local Live catalog row.

@@ -1154,6 +1154,7 @@ class _GuideScreenState extends State<GuideScreen> {
         EpgAvailability.available when window.programs.isEmpty =>
           const Duration(minutes: 30),
         EpgAvailability.unsupported => const Duration(hours: 6),
+        EpgAvailability.providerBlocked => const Duration(hours: 1),
         EpgAvailability.available => null,
       };
       if (fallbackDelay != null) {
@@ -1985,6 +1986,9 @@ class _GuideScreenState extends State<GuideScreen> {
     final anyFailure = windows.any(
       (window) => window.availability == EpgAvailability.temporarilyUnavailable,
     );
+    final providerBlocked = windows.any(
+      (window) => window.availability == EpgAvailability.providerBlocked,
+    );
     final allUnsupported =
         _activeEpgIds.isNotEmpty &&
         _activeEpgIds.every(
@@ -2006,6 +2010,8 @@ class _GuideScreenState extends State<GuideScreen> {
       text = 'Earlier channels could not be loaded · current channels remain available';
     } else if (pageFailure == _GuidePageFailure.more) {
       text = 'More channels could not be loaded · current channels remain available';
+    } else if (providerBlocked) {
+      text = "Your provider isn't sending guide data right now · channels remain ready to tune";
     } else if (hasEpgFailure && anySaved) {
       text = 'Guide update failed · showing saved schedule';
     } else if (hasEpgFailure && !anySaved) {
@@ -2025,7 +2031,7 @@ class _GuideScreenState extends State<GuideScreen> {
       children: [
         Expanded(
           child: Semantics(
-            liveRegion: pageFailure != null || hasEpgFailure,
+            liveRegion: pageFailure != null || hasEpgFailure || providerBlocked,
             child: Text(
               text,
               key: const ValueKey('guide-status'),
@@ -2035,7 +2041,7 @@ class _GuideScreenState extends State<GuideScreen> {
             ),
           ),
         ),
-        if (pageFailure != null || hasEpgFailure) ...[
+        if (pageFailure != null || hasEpgFailure || providerBlocked) ...[
           const SizedBox(width: 12),
           _GuideButton(
             key: const ValueKey('guide-retry'),
@@ -2484,7 +2490,8 @@ class _GuideRow extends StatelessWidget {
       null ||
       EpgAvailability.unknown ||
       EpgAvailability.refreshing => 'Preparing schedule…',
-      EpgAvailability.temporarilyUnavailable => 'Schedule unavailable',
+      EpgAvailability.temporarilyUnavailable ||
+      EpgAvailability.providerBlocked => 'Schedule unavailable',
       EpgAvailability.available ||
       EpgAvailability.empty ||
       EpgAvailability.unsupported => 'No schedule available',
