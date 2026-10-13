@@ -125,6 +125,54 @@ void main() {
     );
   });
 
+  test('a failed first migration leaves nothing behind', () async {
+    final fixture = await _SchemaFixture.create();
+    addTearDown(fixture.dispose);
+    // Takes the name of v1's last index, so v1 fails after its tables.
+    final obstacle = sqlite3.open(fixture.path);
+    obstacle.execute('CREATE TABLE catalog_items_source_kind (x)');
+    obstacle.close();
+
+    await expectLater(fixture.database.loadSourceRoster(), throwsA(anything));
+    final db = sqlite3.open(fixture.path);
+    addTearDown(db.close);
+    expect(_tableNames(db), isNot(contains('sources')));
+
+    db.execute('DROP TABLE catalog_items_source_kind');
+    expect(await fixture.database.loadSourceRoster(), isEmpty);
+    expect(db.select('SELECT * FROM schema_migrations').length, 12);
+  });
+
+  test('concurrent opens of a v3 catalog upgrade it exactly once', () async {
+    final fixture = await _SchemaFixture.create();
+    addTearDown(fixture.dispose);
+    final legacy = sqlite3.open(fixture.path);
+    _createVersion3Database(legacy);
+    legacy.execute(
+      '''INSERT INTO sources VALUES
+         ('legacy', 'xtream', 'Legacy', 'provider.example', 'legacy-key', 1, 1, 'ready', NULL, NULL, '{}')''',
+    );
+    legacy.close();
+
+    // Both opens read v3, then queue for the writer lock behind the blocker.
+    final blocker = sqlite3.open(fixture.path);
+    blocker.execute('BEGIN IMMEDIATE');
+    final opens = [
+      SourceCatalogDatabase(databasePath: fixture.path).loadSourceRoster(),
+      SourceCatalogDatabase(databasePath: fixture.path).loadSourceRoster(),
+    ];
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    blocker.execute('COMMIT');
+    blocker.close();
+
+    final rosters = await Future.wait(opens)
+        .timeout(const Duration(seconds: 10));
+    expect(rosters.map((roster) => roster.single.id), ['legacy', 'legacy']);
+    final db = sqlite3.open(fixture.path);
+    addTearDown(db.close);
+    expect(db.select('SELECT * FROM schema_migrations').length, 12);
+  });
+
   test('visibility category directory counts use the source-group availability index', () async {
     final fixture = await _SchemaFixture.create();
     addTearDown(fixture.dispose);

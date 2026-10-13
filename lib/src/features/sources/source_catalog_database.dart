@@ -5698,16 +5698,40 @@ Database _openDatabase(String path) {
   return db;
 }
 
+/// The highest `schema_migrations` version [_migrate] installs.
+const _latestSchemaVersion = 12;
+
 void _migrate(Database db) {
   db.execute(
     'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)',
   );
-  final version =
-      db
-              .select('SELECT MAX(version) AS version FROM schema_migrations')
-              .first['version']
-          as int? ??
-      0;
+  if (_schemaVersion(db) >= _latestSchemaVersion && !_progressNeedsRepair(db)) {
+    return;
+  }
+  // One writer-locked transaction: a crash mid-upgrade rolls back whole, and a
+  // connection that queued for the lock re-reads what another one installed.
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    _migrateLocked(db, _schemaVersion(db));
+    db.execute('COMMIT');
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  }
+}
+
+int _schemaVersion(Database db) =>
+    db
+            .select('SELECT MAX(version) AS version FROM schema_migrations')
+            .first['version']
+        as int? ??
+    0;
+
+bool _progressNeedsRepair(Database db) =>
+    !_tableHasColumn(db, 'playback_progress', 'watched_ms') ||
+    !_tableHasColumn(db, 'playback_progress', 'cleared');
+
+void _migrateLocked(Database db, int version) {
   if (version < 1) {
     db.execute(
       '''CREATE TABLE sources (id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, display_endpoint TEXT NOT NULL, credential_key TEXT NOT NULL, enabled INTEGER NOT NULL, refresh_generation INTEGER NOT NULL, refresh_state TEXT NOT NULL, last_refresh_at TEXT, last_error TEXT, settings_json TEXT NOT NULL)''',
@@ -5739,363 +5763,265 @@ void _migrate(Database db) {
     db.execute('INSERT INTO schema_migrations(version) VALUES (3)');
   }
   if (version < 4) {
-    db.execute('BEGIN IMMEDIATE');
-    try {
-      db.execute(
-        'ALTER TABLE sources ADD COLUMN reported_connection_limit INTEGER',
-      );
-      db.execute(
-        'ALTER TABLE sources ADD COLUMN connection_limit_override INTEGER',
-      );
-      db.execute('INSERT INTO schema_migrations(version) VALUES (4)');
-      db.execute('COMMIT');
-    } catch (_) {
-      db.execute('ROLLBACK');
-      rethrow;
-    }
+    db.execute(
+      'ALTER TABLE sources ADD COLUMN reported_connection_limit INTEGER',
+    );
+    db.execute(
+      'ALTER TABLE sources ADD COLUMN connection_limit_override INTEGER',
+    );
+    db.execute('INSERT INTO schema_migrations(version) VALUES (4)');
   }
   if (version < 5) {
-    db.execute('BEGIN IMMEDIATE');
-    try {
-      db.execute(
-        '''CREATE TABLE library_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, display_title TEXT NOT NULL, normalized_title TEXT NOT NULL, artwork_locator TEXT)''',
-      );
-      db.execute(
-        '''CREATE TABLE library_members (library_item_id TEXT NOT NULL, catalog_item_id TEXT NOT NULL UNIQUE, preferred INTEGER NOT NULL, PRIMARY KEY (library_item_id, catalog_item_id))''',
-      );
-      db.execute(
-        '''CREATE TABLE favorites (library_item_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)''',
-      );
-      db.execute(
-        '''CREATE TABLE custom_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, home_ordinal INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)''',
-      );
-      db.execute(
-        '''CREATE TABLE custom_group_items (custom_group_id TEXT NOT NULL, library_item_id TEXT NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY (custom_group_id, library_item_id))''',
-      );
-      db.execute(
-        '''CREATE TABLE watch_state (library_item_id TEXT PRIMARY KEY, position_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL, completed INTEGER NOT NULL, last_played_at TEXT NOT NULL)''',
-      );
-      db.execute(
-        'CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
-      );
-      db.execute('''CREATE VIRTUAL TABLE library_fts USING fts5(
-         library_item_id UNINDEXED, title, supporting_text)''');
-      db.execute(
-        'CREATE INDEX catalog_items_parent ON catalog_items(parent_id)',
-      );
-      db.execute(
-        'CREATE INDEX catalog_items_source_group ON catalog_items(source_group_id)',
-      );
-      db.execute(
-        'CREATE INDEX catalog_items_available ON catalog_items(available)',
-      );
-      db.execute(
-        'CREATE INDEX custom_group_items_group_ordinal ON custom_group_items(custom_group_id, ordinal)',
-      );
-      db.execute(
-        'CREATE INDEX watch_state_last_played ON watch_state(last_played_at)',
-      );
-      // Existing Phase 1 catalog rows deterministically become their own
-      // identities. Only display/search text is copied into the FTS table.
-      db.execute(
-        '''INSERT INTO library_items (id, kind, display_title, normalized_title, artwork_locator)
-         SELECT id, kind, title, normalized_title, artwork_locator FROM catalog_items''',
-      );
-      db.execute('''INSERT INTO library_members (library_item_id, catalog_item_id, preferred)
-         SELECT id, id, 1 FROM catalog_items''');
-      db.execute(
-        '''INSERT INTO library_fts (library_item_id, title, supporting_text)
-         SELECT catalog.id, catalog.title, COALESCE(groups.name, '')
-         FROM catalog_items AS catalog
-         LEFT JOIN source_groups AS groups ON groups.id = catalog.source_group_id''',
-      );
-      db.execute('INSERT INTO schema_migrations(version) VALUES (5)');
-      db.execute('COMMIT');
-    } catch (_) {
-      db.execute('ROLLBACK');
-      rethrow;
-    }
+    db.execute(
+      '''CREATE TABLE library_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, display_title TEXT NOT NULL, normalized_title TEXT NOT NULL, artwork_locator TEXT)''',
+    );
+    db.execute(
+      '''CREATE TABLE library_members (library_item_id TEXT NOT NULL, catalog_item_id TEXT NOT NULL UNIQUE, preferred INTEGER NOT NULL, PRIMARY KEY (library_item_id, catalog_item_id))''',
+    );
+    db.execute(
+      '''CREATE TABLE favorites (library_item_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)''',
+    );
+    db.execute(
+      '''CREATE TABLE custom_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, home_ordinal INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)''',
+    );
+    db.execute(
+      '''CREATE TABLE custom_group_items (custom_group_id TEXT NOT NULL, library_item_id TEXT NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY (custom_group_id, library_item_id))''',
+    );
+    db.execute(
+      '''CREATE TABLE watch_state (library_item_id TEXT PRIMARY KEY, position_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL, completed INTEGER NOT NULL, last_played_at TEXT NOT NULL)''',
+    );
+    db.execute(
+      'CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+    );
+    db.execute('''CREATE VIRTUAL TABLE library_fts USING fts5(
+       library_item_id UNINDEXED, title, supporting_text)''');
+    db.execute('CREATE INDEX catalog_items_parent ON catalog_items(parent_id)');
+    db.execute(
+      'CREATE INDEX catalog_items_source_group ON catalog_items(source_group_id)',
+    );
+    db.execute(
+      'CREATE INDEX catalog_items_available ON catalog_items(available)',
+    );
+    db.execute(
+      'CREATE INDEX custom_group_items_group_ordinal ON custom_group_items(custom_group_id, ordinal)',
+    );
+    db.execute(
+      'CREATE INDEX watch_state_last_played ON watch_state(last_played_at)',
+    );
+    // Existing Phase 1 catalog rows deterministically become their own
+    // identities. Only display/search text is copied into the FTS table.
+    db.execute(
+      '''INSERT INTO library_items (id, kind, display_title, normalized_title, artwork_locator)
+       SELECT id, kind, title, normalized_title, artwork_locator FROM catalog_items''',
+    );
+    db.execute('''INSERT INTO library_members (library_item_id, catalog_item_id, preferred)
+       SELECT id, id, 1 FROM catalog_items''');
+    db.execute(
+      '''INSERT INTO library_fts (library_item_id, title, supporting_text)
+       SELECT catalog.id, catalog.title, COALESCE(groups.name, '')
+       FROM catalog_items AS catalog
+       LEFT JOIN source_groups AS groups ON groups.id = catalog.source_group_id''',
+    );
+    db.execute('INSERT INTO schema_migrations(version) VALUES (5)');
   }
   if (version < 6) {
-    db.execute('BEGIN IMMEDIATE');
-    try {
-      // Visibility is a compact local preference carried by the durable
-      // provider identities. Refresh upserts intentionally omit these fields,
-      // preserving user choices while new provider rows start included.
-      if (!_tableHasColumn(db, 'source_groups', 'hidden')) {
-        db.execute(
-          'ALTER TABLE source_groups ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0',
-        );
-      }
-      if (!_tableHasColumn(db, 'catalog_items', 'hidden')) {
-        db.execute(
-          'ALTER TABLE catalog_items ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0',
-        );
-      }
+    // Visibility is a compact local preference carried by the durable
+    // provider identities. Refresh upserts intentionally omit these fields,
+    // preserving user choices while new provider rows start included.
+    if (!_tableHasColumn(db, 'source_groups', 'hidden')) {
       db.execute(
-        'CREATE INDEX IF NOT EXISTS source_groups_visibility ON source_groups(source_id, content_kind, hidden, sort_key, id)',
+        'ALTER TABLE source_groups ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0',
       );
-      db.execute(
-        'CREATE INDEX IF NOT EXISTS catalog_items_visibility_page ON catalog_items(source_id, kind, available, hidden, source_group_id, normalized_title, id)',
-      );
-      db.execute(
-        'CREATE INDEX IF NOT EXISTS catalog_items_visibility_all ON catalog_items(source_id, kind, available, hidden, normalized_title, id)',
-      );
-      // The visibility directory is driven by provider groups and counts each
-      // group's available items.  The broader availability index turns that
-      // into a catalog-wide scan for every group at Strong scale.
-      db.execute(
-        'CREATE INDEX IF NOT EXISTS catalog_items_source_group_available ON catalog_items(source_group_id, available)',
-      );
-      db.execute('INSERT INTO schema_migrations(version) VALUES (6)');
-      db.execute('COMMIT');
-    } catch (_) {
-      db.execute('ROLLBACK');
-      rethrow;
     }
+    if (!_tableHasColumn(db, 'catalog_items', 'hidden')) {
+      db.execute(
+        'ALTER TABLE catalog_items ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS source_groups_visibility ON source_groups(source_id, content_kind, hidden, sort_key, id)',
+    );
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS catalog_items_visibility_page ON catalog_items(source_id, kind, available, hidden, source_group_id, normalized_title, id)',
+    );
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS catalog_items_visibility_all ON catalog_items(source_id, kind, available, hidden, normalized_title, id)',
+    );
+    // The visibility directory is driven by provider groups and counts each
+    // group's available items.  The broader availability index turns that
+    // into a catalog-wide scan for every group at Strong scale.
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS catalog_items_source_group_available ON catalog_items(source_group_id, available)',
+    );
+    db.execute('INSERT INTO schema_migrations(version) VALUES (6)');
   }
   if (version < 7) {
-    db.execute('BEGIN IMMEDIATE');
-    try {
-      // Provider categories remain durable so local hidden preferences survive
-      // a temporary provider omission. Availability determines whether a
-      // group belongs to the current refreshed catalog.
-      if (!_tableHasColumn(db, 'source_groups', 'generation')) {
-        db.execute(
-          'ALTER TABLE source_groups ADD COLUMN generation INTEGER NOT NULL DEFAULT 1',
-        );
-      }
-      if (!_tableHasColumn(db, 'source_groups', 'available')) {
-        db.execute(
-          'ALTER TABLE source_groups ADD COLUMN available INTEGER NOT NULL DEFAULT 1',
-        );
-      }
-      db.execute('''UPDATE source_groups
-           SET generation = COALESCE((
-             SELECT refresh_generation FROM sources
-             WHERE sources.id = source_groups.source_id
-           ), 1), available = 1''');
+    // Provider categories remain durable so local hidden preferences survive
+    // a temporary provider omission. Availability determines whether a
+    // group belongs to the current refreshed catalog.
+    if (!_tableHasColumn(db, 'source_groups', 'generation')) {
       db.execute(
-        'CREATE INDEX IF NOT EXISTS source_groups_active_directory ON source_groups(source_id, content_kind, available, hidden, sort_key, id)',
+        'ALTER TABLE source_groups ADD COLUMN generation INTEGER NOT NULL DEFAULT 1',
       );
-      db.execute('INSERT INTO schema_migrations(version) VALUES (7)');
-      db.execute('COMMIT');
-    } catch (_) {
-      db.execute('ROLLBACK');
-      rethrow;
     }
+    if (!_tableHasColumn(db, 'source_groups', 'available')) {
+      db.execute(
+        'ALTER TABLE source_groups ADD COLUMN available INTEGER NOT NULL DEFAULT 1',
+      );
+    }
+    db.execute('''UPDATE source_groups
+         SET generation = COALESCE((
+           SELECT refresh_generation FROM sources
+           WHERE sources.id = source_groups.source_id
+         ), 1), available = 1''');
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS source_groups_active_directory ON source_groups(source_id, content_kind, available, hidden, sort_key, id)',
+    );
+    db.execute('INSERT INTO schema_migrations(version) VALUES (7)');
   }
   if (version < 8) {
-    db.execute('BEGIN IMMEDIATE');
-    try {
-      db.execute(
-        'CREATE INDEX IF NOT EXISTS favorites_recent_page ON favorites(created_at DESC, library_item_id ASC)',
-      );
-      db.execute(
-        'CREATE INDEX IF NOT EXISTS custom_group_items_page ON custom_group_items(custom_group_id, ordinal, library_item_id)',
-      );
-      db.execute('INSERT INTO schema_migrations(version) VALUES (8)');
-      db.execute('COMMIT');
-    } catch (_) {
-      db.execute('ROLLBACK');
-      rethrow;
-    }
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS favorites_recent_page ON favorites(created_at DESC, library_item_id ASC)',
+    );
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS custom_group_items_page ON custom_group_items(custom_group_id, ordinal, library_item_id)',
+    );
+    db.execute('INSERT INTO schema_migrations(version) VALUES (8)');
   }
   if (version < 9) {
-    db.execute('BEGIN IMMEDIATE');
-    try {
-      if (!_tableHasColumn(db, 'custom_groups', 'directory_ordinal')) {
-        db.execute(
-          'ALTER TABLE custom_groups ADD COLUMN directory_ordinal INTEGER NOT NULL DEFAULT 0',
-        );
-      }
-      db.execute('''WITH ordered AS (
-           SELECT id,
-                  ROW_NUMBER() OVER (
-                    ORDER BY name COLLATE NOCASE ASC, id ASC
-                  ) - 1 AS ordinal
-           FROM custom_groups
-         )
-         UPDATE custom_groups
-         SET directory_ordinal = (
-           SELECT ordinal FROM ordered WHERE ordered.id = custom_groups.id
-         )''');
+    if (!_tableHasColumn(db, 'custom_groups', 'directory_ordinal')) {
       db.execute(
-        'CREATE INDEX IF NOT EXISTS custom_groups_directory ON custom_groups(directory_ordinal, id)',
+        'ALTER TABLE custom_groups ADD COLUMN directory_ordinal INTEGER NOT NULL DEFAULT 0',
       );
-      db.execute(
-        'CREATE INDEX IF NOT EXISTS custom_groups_home ON custom_groups(home_ordinal, id)',
-      );
-      db.execute('INSERT INTO schema_migrations(version) VALUES (9)');
-      db.execute('COMMIT');
-    } catch (_) {
-      db.execute('ROLLBACK');
-      rethrow;
     }
+    db.execute('''WITH ordered AS (
+         SELECT id,
+                ROW_NUMBER() OVER (
+                  ORDER BY name COLLATE NOCASE ASC, id ASC
+                ) - 1 AS ordinal
+         FROM custom_groups
+       )
+       UPDATE custom_groups
+       SET directory_ordinal = (
+         SELECT ordinal FROM ordered WHERE ordered.id = custom_groups.id
+       )''');
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS custom_groups_directory ON custom_groups(directory_ordinal, id)',
+    );
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS custom_groups_home ON custom_groups(home_ordinal, id)',
+    );
+    db.execute('INSERT INTO schema_migrations(version) VALUES (9)');
   }
   if (version < 10) {
-    db.execute('BEGIN IMMEDIATE');
-    try {
-      // Item organization replaces one identity's complete membership set.
-      // Keep that lookup keyed by the identity rather than scanning every
-      // membership in every custom group at Strong scale.
-      db.execute(
-        'CREATE INDEX IF NOT EXISTS custom_group_items_library ON custom_group_items(library_item_id, custom_group_id)',
-      );
-      db.execute('INSERT INTO schema_migrations(version) VALUES (10)');
-      db.execute('COMMIT');
-    } catch (_) {
-      db.execute('ROLLBACK');
-      rethrow;
-    }
+    // Item organization replaces one identity's complete membership set.
+    // Keep that lookup keyed by the identity rather than scanning every
+    // membership in every custom group at Strong scale.
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS custom_group_items_library ON custom_group_items(library_item_id, custom_group_id)',
+    );
+    db.execute('INSERT INTO schema_migrations(version) VALUES (10)');
   }
   if (version < 11) {
-    db.execute('BEGIN IMMEDIATE');
-    try {
-      // Another isolate may have completed v11 while this connection waited
-      // for the write lock. Re-read under the lock before any DDL/version row.
-      final lockedVersion =
-          db
-                  .select(
-                    'SELECT MAX(version) AS version FROM schema_migrations',
-                  )
-                  .first['version']
-              as int? ??
-          0;
-      if (lockedVersion < 11) {
-        // Episodes share the durable series identity but retain independent
-        // progress through an opaque exact media key. No playback locator,
-        // title, provider response, or engine error belongs in this table.
-        db.execute('''CREATE TABLE IF NOT EXISTS playback_progress (
-             library_item_id TEXT NOT NULL,
-             media_key TEXT NOT NULL,
-             position_ms INTEGER NOT NULL,
-             duration_ms INTEGER NOT NULL,
-             watched_ms INTEGER NOT NULL DEFAULT 0,
-             completed INTEGER NOT NULL,
-             cleared INTEGER NOT NULL DEFAULT 0,
-             updated_at_us INTEGER NOT NULL,
-             PRIMARY KEY (library_item_id, media_key),
-             CHECK (position_ms >= 0),
-             CHECK (duration_ms >= 0),
-             CHECK (watched_ms >= 0),
-             CHECK (completed IN (0, 1)),
-             CHECK (cleared IN (0, 1))
-           )''');
-        // Version 4 reserved these columns before a UI exposed them. Normalize
-        // an invalid local/manual value before installing the permanent guard.
-        db.execute('''UPDATE sources SET connection_limit_override = NULL
-           WHERE connection_limit_override IS NOT NULL
-             AND connection_limit_override NOT IN (1, 2)''');
-        db.execute(
-          '''CREATE TRIGGER IF NOT EXISTS sources_connection_override_insert
-           BEFORE INSERT ON sources
-           WHEN NEW.connection_limit_override IS NOT NULL
-             AND NEW.connection_limit_override NOT IN (1, 2)
-           BEGIN
-             SELECT RAISE(ABORT, 'invalid connection limit override');
-           END''',
-        );
-        db.execute(
-          '''CREATE TRIGGER IF NOT EXISTS sources_connection_override_update
-           BEFORE UPDATE OF connection_limit_override ON sources
-           WHEN NEW.connection_limit_override IS NOT NULL
-             AND NEW.connection_limit_override NOT IN (1, 2)
-           BEGIN
-             SELECT RAISE(ABORT, 'invalid connection limit override');
-           END''',
-        );
-        db.execute('INSERT INTO schema_migrations(version) VALUES (11)');
-      }
-      db.execute('COMMIT');
-    } catch (_) {
-      db.execute('ROLLBACK');
-      rethrow;
-    }
+    // Episodes share the durable series identity but retain independent
+    // progress through an opaque exact media key. No playback locator,
+    // title, provider response, or engine error belongs in this table.
+    db.execute('''CREATE TABLE IF NOT EXISTS playback_progress (
+         library_item_id TEXT NOT NULL,
+         media_key TEXT NOT NULL,
+         position_ms INTEGER NOT NULL,
+         duration_ms INTEGER NOT NULL,
+         watched_ms INTEGER NOT NULL DEFAULT 0,
+         completed INTEGER NOT NULL,
+         cleared INTEGER NOT NULL DEFAULT 0,
+         updated_at_us INTEGER NOT NULL,
+         PRIMARY KEY (library_item_id, media_key),
+         CHECK (position_ms >= 0),
+         CHECK (duration_ms >= 0),
+         CHECK (watched_ms >= 0),
+         CHECK (completed IN (0, 1)),
+         CHECK (cleared IN (0, 1))
+       )''');
+    // Version 4 reserved these columns before a UI exposed them. Normalize
+    // an invalid local/manual value before installing the permanent guard.
+    db.execute('''UPDATE sources SET connection_limit_override = NULL
+       WHERE connection_limit_override IS NOT NULL
+         AND connection_limit_override NOT IN (1, 2)''');
+    db.execute(
+      '''CREATE TRIGGER IF NOT EXISTS sources_connection_override_insert
+       BEFORE INSERT ON sources
+       WHEN NEW.connection_limit_override IS NOT NULL
+         AND NEW.connection_limit_override NOT IN (1, 2)
+       BEGIN
+         SELECT RAISE(ABORT, 'invalid connection limit override');
+       END''',
+    );
+    db.execute(
+      '''CREATE TRIGGER IF NOT EXISTS sources_connection_override_update
+       BEFORE UPDATE OF connection_limit_override ON sources
+       WHEN NEW.connection_limit_override IS NOT NULL
+         AND NEW.connection_limit_override NOT IN (1, 2)
+       BEGIN
+         SELECT RAISE(ABORT, 'invalid connection limit override');
+       END''',
+    );
+    db.execute('INSERT INTO schema_migrations(version) VALUES (11)');
   }
   // Pre-verification v11 databases may already contain progress rows from the
   // first Phase 5 build. Repair that same unshipped schema in place and
   // backfill new state to zero without changing exact keys.
-  if (version >= 11 &&
-      (!_tableHasColumn(db, 'playback_progress', 'watched_ms') ||
-          !_tableHasColumn(db, 'playback_progress', 'cleared'))) {
-    db.execute('BEGIN IMMEDIATE');
-    try {
-      if (!_tableHasColumn(db, 'playback_progress', 'watched_ms')) {
-        db.execute('''ALTER TABLE playback_progress
-             ADD COLUMN watched_ms INTEGER NOT NULL DEFAULT 0
-             CHECK (watched_ms >= 0)''');
-      }
-      if (!_tableHasColumn(db, 'playback_progress', 'cleared')) {
-        db.execute('''ALTER TABLE playback_progress
-             ADD COLUMN cleared INTEGER NOT NULL DEFAULT 0
-             CHECK (cleared IN (0, 1))''');
-      }
-      db.execute('COMMIT');
-    } catch (_) {
-      db.execute('ROLLBACK');
-      rethrow;
+  if (version >= 11 && _progressNeedsRepair(db)) {
+    if (!_tableHasColumn(db, 'playback_progress', 'watched_ms')) {
+      db.execute('''ALTER TABLE playback_progress
+           ADD COLUMN watched_ms INTEGER NOT NULL DEFAULT 0
+           CHECK (watched_ms >= 0)''');
+    }
+    if (!_tableHasColumn(db, 'playback_progress', 'cleared')) {
+      db.execute('''ALTER TABLE playback_progress
+           ADD COLUMN cleared INTEGER NOT NULL DEFAULT 0
+           CHECK (cleared IN (0, 1))''');
     }
   }
   if (version < 12) {
-    db.execute('BEGIN IMMEDIATE');
-    try {
-      // App startup, a guide fetch, and catalog reads may all open this file at
-      // once. Re-read under the writer lock so v12 is installed exactly once.
-      final lockedVersion =
-          db
-                  .select(
-                    'SELECT MAX(version) AS version FROM schema_migrations',
-                  )
-                  .first['version']
-              as int? ??
-          0;
-      if (lockedVersion < 12) {
-        db.execute('''CREATE TABLE IF NOT EXISTS epg_source_state (
-             source_id TEXT PRIMARY KEY,
-             capability TEXT NOT NULL DEFAULT 'unknown',
-             last_attempt_utc_ms INTEGER,
-             last_success_utc_ms INTEGER,
-             retry_after_utc_ms INTEGER NOT NULL DEFAULT 0,
-             last_error TEXT,
-             CHECK (capability IN ('unknown', 'available', 'unsupported')),
-             CHECK (retry_after_utc_ms >= 0)
-           )''');
-        db.execute('''CREATE TABLE IF NOT EXISTS epg_channel_state (
-             catalog_item_id TEXT PRIMARY KEY,
-             generation INTEGER NOT NULL DEFAULT 0,
-             refresh_state TEXT NOT NULL DEFAULT 'unknown',
-             last_attempt_utc_ms INTEGER,
-             last_success_utc_ms INTEGER,
-             retry_after_utc_ms INTEGER NOT NULL DEFAULT 0,
-             last_error TEXT,
-             CHECK (generation >= 0),
-             CHECK (refresh_state IN
-               ('unknown', 'refreshing', 'available', 'empty', 'error')),
-             CHECK (retry_after_utc_ms >= 0)
-           )''');
-        db.execute('''CREATE TABLE IF NOT EXISTS epg_programs (
-             catalog_item_id TEXT NOT NULL,
-             start_utc_ms INTEGER NOT NULL,
-             end_utc_ms INTEGER NOT NULL,
-             title TEXT NOT NULL,
-             description TEXT,
-             PRIMARY KEY (catalog_item_id, start_utc_ms, end_utc_ms),
-             CHECK (start_utc_ms >= 0),
-             CHECK (end_utc_ms > start_utc_ms),
-             CHECK (end_utc_ms - start_utc_ms <=
-               ${epgMaximumProgramDuration.inMilliseconds}),
-             CHECK (length(title) > 0)
-           ) WITHOUT ROWID''');
-        db.execute('''CREATE INDEX IF NOT EXISTS epg_programs_expiry
-             ON epg_programs(end_utc_ms)''');
-        db.execute('INSERT INTO schema_migrations(version) VALUES (12)');
-      }
-      db.execute('COMMIT');
-    } catch (_) {
-      db.execute('ROLLBACK');
-      rethrow;
-    }
+    db.execute('''CREATE TABLE IF NOT EXISTS epg_source_state (
+         source_id TEXT PRIMARY KEY,
+         capability TEXT NOT NULL DEFAULT 'unknown',
+         last_attempt_utc_ms INTEGER,
+         last_success_utc_ms INTEGER,
+         retry_after_utc_ms INTEGER NOT NULL DEFAULT 0,
+         last_error TEXT,
+         CHECK (capability IN ('unknown', 'available', 'unsupported')),
+         CHECK (retry_after_utc_ms >= 0)
+       )''');
+    db.execute('''CREATE TABLE IF NOT EXISTS epg_channel_state (
+         catalog_item_id TEXT PRIMARY KEY,
+         generation INTEGER NOT NULL DEFAULT 0,
+         refresh_state TEXT NOT NULL DEFAULT 'unknown',
+         last_attempt_utc_ms INTEGER,
+         last_success_utc_ms INTEGER,
+         retry_after_utc_ms INTEGER NOT NULL DEFAULT 0,
+         last_error TEXT,
+         CHECK (generation >= 0),
+         CHECK (refresh_state IN
+           ('unknown', 'refreshing', 'available', 'empty', 'error')),
+         CHECK (retry_after_utc_ms >= 0)
+       )''');
+    db.execute('''CREATE TABLE IF NOT EXISTS epg_programs (
+         catalog_item_id TEXT NOT NULL,
+         start_utc_ms INTEGER NOT NULL,
+         end_utc_ms INTEGER NOT NULL,
+         title TEXT NOT NULL,
+         description TEXT,
+         PRIMARY KEY (catalog_item_id, start_utc_ms, end_utc_ms),
+         CHECK (start_utc_ms >= 0),
+         CHECK (end_utc_ms > start_utc_ms),
+         CHECK (end_utc_ms - start_utc_ms <=
+           ${epgMaximumProgramDuration.inMilliseconds}),
+         CHECK (length(title) > 0)
+       ) WITHOUT ROWID''');
+    db.execute('''CREATE INDEX IF NOT EXISTS epg_programs_expiry
+         ON epg_programs(end_utc_ms)''');
+    db.execute('INSERT INTO schema_migrations(version) VALUES (12)');
   }
 }
 
