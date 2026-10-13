@@ -6,8 +6,8 @@ import 'package:flutter/material.dart';
 import '../sources/source_models.dart';
 import 'artwork_loader.dart';
 
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
+const _raised = Color(0xFF1C1C22);
+const _logoTile = Color(0xFF3A3A43);
 const _quietText = Color(0xFFAAA8A2);
 
 /// Fixed-geometry provider artwork with an opt-in bounded visible-row load.
@@ -180,23 +180,37 @@ class _SourceArtworkState extends State<SourceArtwork> {
     height: widget.height,
     child: ClipRRect(
       borderRadius: BorderRadius.circular(4),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: _raised,
-          border: Border.all(color: _line),
-        ),
+      child: ColoredBox(
+        // A lighter tile keeps dark channel logos readable.
+        color: widget.kind == SourceMediaKind.live ? _logoTile : _raised,
         child: _bytes == null
             ? _ArtworkFallback(kind: widget.kind, loading: _loading)
-            : Image(
-                image: _decodedImage(_bytes!),
-                fit: BoxFit.cover,
-                gaplessPlayback: true,
-                errorBuilder: (_, _, _) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) _decodeFailed();
-                  });
-                  return _ArtworkFallback(kind: widget.kind, loading: false);
-                },
+            : Padding(
+                // Channel logos show whole with room around them; posters
+                // and stills fill the box.
+                padding: widget.kind == SourceMediaKind.live
+                    ? EdgeInsets.symmetric(
+                        horizontal: widget.width.isFinite
+                            ? widget.width * 0.14
+                            : 12,
+                        vertical: widget.height.isFinite
+                            ? widget.height * 0.16
+                            : 8,
+                      )
+                    : EdgeInsets.zero,
+                child: Image(
+                  image: _decodedImage(_bytes!),
+                  fit: widget.kind == SourceMediaKind.live
+                      ? BoxFit.contain
+                      : BoxFit.cover,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, _, _) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) _decodeFailed();
+                    });
+                    return _ArtworkFallback(kind: widget.kind, loading: false);
+                  },
+                ),
               ),
       ),
     ),

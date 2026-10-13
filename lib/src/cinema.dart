@@ -19,7 +19,7 @@ abstract final class Cinema {
 
   /// The ring and glow a focused control wears.
   static const focusGlow = [
-    BoxShadow(color: Color(0x4DFFB547), spreadRadius: 4),
+    BoxShadow(color: Color(0xD9FFB547), spreadRadius: 3),
     BoxShadow(color: Color(0x40FFB547), blurRadius: 24, offset: Offset(0, 8)),
   ];
 
