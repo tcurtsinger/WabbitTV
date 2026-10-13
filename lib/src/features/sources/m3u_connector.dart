@@ -103,7 +103,9 @@ class M3uConnector {
     try {
       text = utf8.decode(bytes);
     } on FormatException {
-      throw const SourceImportFailure(SourceImportFailureKind.emptyResponse);
+      // Older playlists are often Latin-1/Windows-1252. Latin-1 accepts every
+      // byte, so binary junk still ends as an empty import below.
+      text = latin1.decode(bytes);
     }
 
     final categories = <String, ImportedCategory>{};
@@ -307,9 +309,16 @@ class _Entry {
       if (separator <= 0) {
         continue;
       }
-      final name = Uri.decodeComponent(segment.substring(0, separator)).trim();
-      final headerValue = Uri.decodeComponent(segment.substring(separator + 1))
-          .trim();
+      final String name;
+      final String headerValue;
+      try {
+        name = Uri.decodeComponent(segment.substring(0, separator)).trim();
+        headerValue = Uri.decodeComponent(segment.substring(separator + 1))
+            .trim();
+      } catch (_) {
+        // A bad % escape drops this header, not the whole playlist.
+        continue;
+      }
       if (_isSafeHeaderName(name) && headerValue.isNotEmpty) {
         headers[name] = headerValue;
       }

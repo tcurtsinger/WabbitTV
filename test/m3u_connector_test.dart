@@ -141,6 +141,36 @@ https://stream.example/repeat
       key('https://stream.example/news?token=two'),
     );
   });
+  test('a malformed header escape drops only that header', () {
+    final stage = connector.parseBytes(
+      utf8.encode('''#EXTINF:-1,Bad escapes
+#KODIPROP:inputstream.adaptive.stream_headers=Referer=%zz&X-Bad=%E9&X-Token=abc
+https://stream.example/one
+#EXTINF:-1,Clean
+https://stream.example/two
+'''),
+      sourceId: 'source-a',
+    );
+
+    expect(stage.items.map((item) => item.title), ['Bad escapes', 'Clean']);
+    final ref =
+        jsonDecode(stage.items.first.playbackRef) as Map<String, dynamic>;
+    expect(ref['headers'], {'X-Token': 'abc'});
+  });
+
+  test('decodes a Latin-1 playlist instead of rejecting it', () {
+    final stage = connector.parseBytes(
+      latin1.encode(
+        '#EXTINF:-1 group-title="Télé",Télé-Québec\n'
+        'https://stream.example/tq\n',
+      ),
+      sourceId: 'source-a',
+    );
+
+    expect(stage.items.single.title, 'Télé-Québec');
+    expect(stage.categories.single.name, 'Télé');
+  });
+
   test('acquires M3U from loopback URL and local file', () async {
     const body = '#EXTINF:-1 tvg-id="one",One\nhttps://stream.example/one\n';
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
