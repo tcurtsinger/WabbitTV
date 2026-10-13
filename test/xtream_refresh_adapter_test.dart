@@ -10,6 +10,80 @@ import 'package:wabbit_tv/src/features/sources/source_setup_controller.dart';
 import 'package:wabbit_tv/src/features/sources/xtream_connector.dart';
 
 void main() {
+  test(
+    'refresh saves guide identities and the schedule filter uses them',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        final body = switch (request.uri.queryParameters['action']) {
+          'get_live_categories' => '[]',
+          'get_vod_categories' || 'get_series_categories' => '[]',
+          'get_live_streams' =>
+            '[{"stream_id":"a","name":"A","epg_channel_id":"a.us"},'
+                '{"stream_id":"b","name":"B","epg_channel_id":""},'
+                '{"stream_id":"c","name":"C","epg_channel_id":null}]',
+          'get_vod_streams' => '[]',
+          'get_series' => '[]',
+          _ => '{"user_info":{"auth":1}}',
+        };
+        request.response.write(body);
+        await request.response.close();
+      });
+      final dir = await Directory.systemTemp.createTemp('wabbit-guide-keys-');
+      addTearDown(() => dir.delete(recursive: true));
+      final database = SourceCatalogDatabase(
+        databasePath: '${dir.path}${Platform.pathSeparator}catalog.sqlite',
+      );
+      final source = SourceDefinition(
+        id: 'x',
+        name: 'Fixture',
+        serverUrl: 'http://${server.address.address}:${server.port}',
+        username: 'u',
+        password: 'p',
+        credentialKey: 'key',
+      );
+      // A catalog imported before guide identities were saved.
+      await database.commitInitialSource(source, [
+        const ImportedStage(
+          kind: SourceMediaKind.live,
+          categories: [],
+          items: [
+            ImportedCatalogItem(
+              providerKey: 'a',
+              title: 'A',
+              categoryKey: null,
+              playbackRef: 'a',
+            ),
+          ],
+        ),
+      ]);
+      expect(await database.hasScheduledChannels('x'), isFalse);
+
+      await SourceSetupController(
+        productionService: SourceSetupService(database: database),
+        credentialStore: _Credentials(source.serverUrl),
+      ).refreshManagedSource('x');
+
+      expect(await database.hasScheduledChannels('x'), isTrue);
+      Future<List<String>> titles(BrowseCategorySelection selection) async =>
+          (await database.browsePage(
+            sourceId: 'x',
+            kind: SourceMediaKind.live,
+            selection: selection,
+          )).items.map((item) => item.title).toList();
+      expect(await titles(const BrowseCategorySelection.all()), [
+        'A',
+        'B',
+        'C',
+      ]);
+      expect(
+        await titles(const BrowseCategorySelection.all(scheduledOnly: true)),
+        ['A'],
+      );
+    },
+  );
+
   test('Xtream refresh is idempotent, retires missing rows, and roster rename is local', () async {
     var requests = 0;
     var second = false;
