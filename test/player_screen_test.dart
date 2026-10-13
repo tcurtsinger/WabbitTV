@@ -331,6 +331,38 @@ void main() {
     },
     skip: !Platform.isWindows,
   );
+  testWidgets('dragging the timeline seeks once, on release', (tester) async {
+    final transport = _FakeTransport.ready();
+    await tester.pumpWidget(
+      _host(
+        handoff: const MoviePlaybackHandoff(
+          sourceId: 'source',
+          title: 'Movie',
+          providerItemId: '2',
+          extension: 'mp4',
+        ),
+        transportFactory: () => transport,
+      ),
+    );
+    await tester.pump();
+    transport.commands.clear();
+
+    await tester.timedDrag(
+      find.descendant(
+        of: find.byKey(const ValueKey('player-timeline')),
+        matching: find.byType(Slider),
+      ),
+      const Offset(200, 0),
+      const Duration(milliseconds: 300),
+    );
+    await tester.pump();
+
+    expect(
+      transport.commands.where((command) => command.startsWith('seek:')),
+      hasLength(1),
+    );
+  });
+
   testWidgets('desktop player shortcuts drive playback from the stage', (
     tester,
   ) async {

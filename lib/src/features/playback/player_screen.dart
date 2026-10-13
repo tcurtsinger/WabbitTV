@@ -1371,12 +1371,15 @@ class _Timeline extends StatefulWidget {
 
 class _TimelineState extends State<_Timeline> {
   bool focused = false;
+  // A drag previews here and seeks once on release, not once per frame.
+  Duration? dragging;
   @override
   Widget build(BuildContext context) {
     final maximum = widget.duration.inMilliseconds.toDouble();
+    final position = dragging ?? widget.position;
     final value = maximum <= 0
         ? 0.0
-        : widget.position.inMilliseconds.clamp(0, maximum).toDouble();
+        : position.inMilliseconds.clamp(0, maximum).toDouble();
     return Focus(
       focusNode: widget.focusNode,
       onFocusChange: (value) => setState(() => focused = value),
@@ -1401,7 +1404,7 @@ class _TimelineState extends State<_Timeline> {
       child: Semantics(
         slider: true,
         label: 'Playback timeline',
-        value: '${_time(widget.position)} of ${_time(widget.duration)}',
+        value: '${_time(position)} of ${_time(widget.duration)}',
         child: Container(
           key: const ValueKey('player-timeline'),
           height: 28,
@@ -1417,7 +1420,7 @@ class _TimelineState extends State<_Timeline> {
               SizedBox(
                 width: 58,
                 child: Center(
-                  child: Text(_time(widget.position), style: _ledgerEmpty),
+                  child: Text(_time(position), style: _ledgerEmpty),
                 ),
               ),
               Expanded(
@@ -1426,9 +1429,14 @@ class _TimelineState extends State<_Timeline> {
                   max: maximum <= 0 ? 1 : maximum,
                   onChanged: maximum <= 0
                       ? null
-                      : (value) => widget.onChanged(
-                          Duration(milliseconds: value.round()),
+                      : (value) => setState(
+                          () =>
+                              dragging = Duration(milliseconds: value.round()),
                         ),
+                  onChangeEnd: (value) {
+                    setState(() => dragging = null);
+                    widget.onChanged(Duration(milliseconds: value.round()));
+                  },
                   activeColor: _amber,
                   inactiveColor: _raised,
                 ),
