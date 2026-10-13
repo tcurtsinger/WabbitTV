@@ -4,6 +4,7 @@
 // FIRST VIEWPORT: A centered form owns attention while three equal media stages hold operational truth below.
 // FORM: Crisp 6–8 px edges, semantic controls, visible focus, and short state changes preserve desk-and-couch clarity.
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -636,6 +637,8 @@ class _SourceForm extends StatelessWidget {
                 onFocused: onFocused,
                 obscureText: !showPassword,
                 textInputAction: TextInputAction.done,
+                // Done would otherwise drop focus out of the form.
+                onEditingComplete: connectFocus.requestFocus,
                 suffix: IconButton(
                   focusNode: visibilityFocus,
                   tooltip: showPassword ? 'Hide password' : 'Show password',
@@ -663,6 +666,7 @@ class _SourceForm extends StatelessWidget {
                     ? TextInputType.url
                     : TextInputType.text,
                 textInputAction: TextInputAction.done,
+                onEditingComplete: connectFocus.requestFocus,
               ),
               if (kind == SourceEditorKind.m3uFile) ...[
                 const SizedBox(height: 10),
@@ -752,7 +756,7 @@ class _SourceForm extends StatelessWidget {
   }
 }
 
-class _Field extends StatelessWidget {
+class _Field extends StatefulWidget {
   const _Field({
     required this.label,
     required this.controller,
@@ -765,6 +769,7 @@ class _Field extends StatelessWidget {
     this.obscureText = false,
     this.keyboardType,
     this.textInputAction,
+    this.onEditingComplete,
     this.suffix,
   });
 
@@ -778,15 +783,68 @@ class _Field extends StatelessWidget {
   final bool obscureText;
   final TextInputType? keyboardType;
   final TextInputAction? textInputAction;
+  final VoidCallback? onEditingComplete;
   final Widget? suffix;
   final ValueChanged<FocusNode> onFocused;
 
   @override
+  State<_Field> createState() => _FieldState();
+}
+
+class _FieldState extends State<_Field> {
+  // A TextField opens the system keyboard the moment it gets focus unless it
+  // is read-only, so on an Android TV remote every Down onto a field popped
+  // the keyboard. There a field stays read-only until Select, like a native
+  // TV text box.
+  static bool get _selectToEdit =>
+      defaultTargetPlatform == TargetPlatform.android;
+  bool _editing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.focusNode.addListener(_focusChanged);
+  }
+
+  @override
+  void didUpdateWidget(_Field oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.focusNode != widget.focusNode) {
+      oldWidget.focusNode.removeListener(_focusChanged);
+      widget.focusNode.addListener(_focusChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.focusNode.removeListener(_focusChanged);
+    super.dispose();
+  }
+
+  void _focusChanged() {
+    if (!widget.focusNode.hasFocus && _editing) {
+      setState(() => _editing = false);
+    }
+  }
+
+  void _edit() {
+    if (!_selectToEdit) return;
+    if (_editing) {
+      // Back hid the keyboard but left the field focused.
+      SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+    } else {
+      // EditableText opens the keyboard once a focused field turns editable.
+      setState(() => _editing = true);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final focusNode = widget.focusNode;
     return Focus(
       skipTraversal: true,
       onFocusChange: (focused) {
-        if (focused) onFocused(focusNode);
+        if (focused) widget.onFocused(focusNode);
       },
       // These fields are single-line, so Up/Down have no caret job: move
       // between fields, since a TV remote has no Tab key. Left/Right still
@@ -802,41 +860,51 @@ class _Field extends StatelessWidget {
             ignoreTextFields: false,
           ),
         },
-        child: TextField(
-          key: ValueKey('source-field-$label'),
-          controller: controller,
-          focusNode: focusNode,
-          autofocus: autofocus,
-          enabled: enabled,
-          obscureText: obscureText,
-          keyboardType: keyboardType,
-          textInputAction: textInputAction,
-          style: const TextStyle(color: _warmWhite, fontSize: 16),
-          decoration: InputDecoration(
-            labelText: label,
-            hintText: hint,
-            errorText: errorText,
-            suffixIcon: suffix,
-            filled: true,
-            fillColor: _raised,
-            labelStyle: const TextStyle(color: _quietText),
-            hintStyle: const TextStyle(color: _quietText),
-            errorStyle: const TextStyle(color: Color(0xFFFFC1B3)),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: const BorderSide(color: _line),
+        child: Actions(
+          actions: {
+            ActivateIntent: CallbackAction<ActivateIntent>(
+              onInvoke: (_) => _edit(),
             ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: const BorderSide(color: _amber, width: 2),
-            ),
-            errorBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: const BorderSide(color: Color(0xFFFFC1B3)),
-            ),
-            focusedErrorBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: const BorderSide(color: _amber, width: 2),
+          },
+          child: TextField(
+            key: ValueKey('source-field-${widget.label}'),
+            controller: widget.controller,
+            focusNode: focusNode,
+            autofocus: widget.autofocus,
+            enabled: widget.enabled,
+            readOnly: _selectToEdit && !_editing,
+            onTap: _edit,
+            obscureText: widget.obscureText,
+            keyboardType: widget.keyboardType,
+            textInputAction: widget.textInputAction,
+            onEditingComplete: widget.onEditingComplete,
+            style: const TextStyle(color: _warmWhite, fontSize: 16),
+            decoration: InputDecoration(
+              labelText: widget.label,
+              hintText: widget.hint,
+              errorText: widget.errorText,
+              suffixIcon: widget.suffix,
+              filled: true,
+              fillColor: _raised,
+              labelStyle: const TextStyle(color: _quietText),
+              hintStyle: const TextStyle(color: _quietText),
+              errorStyle: const TextStyle(color: Color(0xFFFFC1B3)),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: _line),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: _amber, width: 2),
+              ),
+              errorBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: Color(0xFFFFC1B3)),
+              ),
+              focusedErrorBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(6),
+                borderSide: const BorderSide(color: _amber, width: 2),
+              ),
             ),
           ),
         ),
