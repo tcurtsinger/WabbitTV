@@ -34,7 +34,7 @@ Wabbit TV turns large Xtream and M3U catalogs into one quiet, keyboard-first lib
 
 **Sources**
 - Xtream Codes accounts, M3U playlist URLs, and local M3U files
-- As many sources as you like, each refreshable, renamable and switchable on or off
+- Up to 100 sources, each refreshable, renamable and switchable on or off
 - Background import that copes with catalogs of 250,000+ items
 
 **Library**
