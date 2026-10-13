@@ -76,7 +76,7 @@ extension ShellDestinationLabel on ShellDestination {
   IconData get icon => switch (this) {
     ShellDestination.home => Icons.home_outlined,
     ShellDestination.live => Icons.live_tv_outlined,
-    ShellDestination.guide => Icons.view_week_outlined,
+    ShellDestination.guide => Icons.calendar_view_day_outlined,
     ShellDestination.movies => Icons.movie_outlined,
     ShellDestination.series => Icons.tv_outlined,
     ShellDestination.search => Icons.search,

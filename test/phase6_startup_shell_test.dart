@@ -345,7 +345,7 @@ void main() {
       contains(StartupDestinationSlug.movies),
     );
 
-    await tester.tap(find.byIcon(Icons.view_week_outlined));
+    await tester.tap(find.byIcon(Icons.calendar_view_day_outlined));
     await tester.pumpAndSettle();
     expect(
       harness.startup.savedDestinations,
