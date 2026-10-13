@@ -14,7 +14,7 @@ void main() {
 
     final db = sqlite3.open(fixture.path);
     addTearDown(db.close);
-    expect(db.select('SELECT version FROM schema_migrations'), hasLength(12));
+    expect(db.select('SELECT version FROM schema_migrations'), hasLength(13));
     final tables = db
         .select("SELECT name FROM sqlite_master WHERE type = 'table'")
         .map((row) => row['name']);
@@ -46,7 +46,7 @@ void main() {
     legacy.execute('DROP TABLE epg_programs');
     legacy.execute('DROP TABLE epg_channel_state');
     legacy.execute('DROP TABLE epg_source_state');
-    legacy.execute('DELETE FROM schema_migrations WHERE version = 12');
+    legacy.execute('DELETE FROM schema_migrations WHERE version >= 12');
     legacy.close();
 
     final blocker = sqlite3.open(fixture.path);

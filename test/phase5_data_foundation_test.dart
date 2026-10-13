@@ -26,7 +26,7 @@ void main() {
 
       final db = sqlite3.open(fixture.path);
       addTearDown(db.close);
-      expect(db.select('SELECT version FROM schema_migrations'), hasLength(12));
+      expect(db.select('SELECT version FROM schema_migrations'), hasLength(13));
       expect(
         db
             .select('PRAGMA table_info(playback_progress)')

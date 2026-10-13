@@ -313,7 +313,7 @@ void main() {
           upgraded
               .select('SELECT MAX(version) AS version FROM schema_migrations')
               .single['version'],
-          12,
+          13,
         );
       } finally {
         upgraded.close();

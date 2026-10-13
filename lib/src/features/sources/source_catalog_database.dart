@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 
@@ -660,24 +660,47 @@ Future<Object?> _refreshJson(
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw HttpException('request');
   }
-  final bytes = BytesBuilder();
-  await (() async {
-    await for (final chunk in response) {
-      if (cancelled()) {
-        throw const SourceImportFailure(SourceImportFailureKind.cancelled);
-      }
-      if (bytes.length + chunk.length > max) {
-        throw const SourceImportFailure(SourceImportFailureKind.tooLarge);
-      }
-      bytes.add(chunk);
+  return _decodeJsonBody(response, max, () {
+    if (cancelled()) {
+      throw const SourceImportFailure(SourceImportFailureKind.cancelled);
     }
-  })().timeout(_remainingRefreshDeadline(requestDeadline));
-  final text = utf8.decode(bytes.takeBytes());
-  if (text.trim().isEmpty) {
-    throw const SourceImportFailure(SourceImportFailureKind.emptyResponse);
-  }
-  return jsonDecode(text);
+  }).timeout(_remainingRefreshDeadline(requestDeadline));
 }
+
+/// Parses a JSON body as it arrives, so the raw bytes and the whole decoded
+/// string are never held next to the parsed tree (catalog lists can be
+/// hundreds of MB). [onChunk] runs per chunk for cancel/deadline checks.
+Future<Object?> _decodeJsonBody(
+  Stream<List<int>> body,
+  int maxBytes,
+  void Function() onChunk,
+) async {
+  var received = 0;
+  var sawContent = false;
+  try {
+    return await body
+        .map((chunk) {
+          onChunk();
+          received += chunk.length;
+          if (received > maxBytes) {
+            throw const SourceImportFailure(SourceImportFailureKind.tooLarge);
+          }
+          sawContent = sawContent || chunk.any(_isJsonContentByte);
+          return chunk;
+        })
+        .transform(utf8.decoder)
+        .transform(json.decoder)
+        .single;
+  } on FormatException {
+    if (!sawContent) {
+      throw const SourceImportFailure(SourceImportFailureKind.emptyResponse);
+    }
+    rethrow;
+  }
+}
+
+bool _isJsonContentByte(int byte) =>
+    byte != 0x20 && byte != 0x0A && byte != 0x0D && byte != 0x09;
 
 DateTime _boundedRefreshDeadline(
   DateTime importDeadline,
@@ -2679,22 +2702,14 @@ class _InitialImportWorker {
     if (response.contentLength > maxBytes) {
       throw const SourceImportFailure(SourceImportFailureKind.tooLarge);
     }
-    final bytes = BytesBuilder(copy: false);
-    await for (final chunk in response.timeout(
-      _remainingDeadline(requestDeadline),
-    )) {
-      _throwIfCancelled();
-      _remainingDeadline(requestDeadline);
-      if (bytes.length + chunk.length > maxBytes) {
-        throw const SourceImportFailure(SourceImportFailureKind.tooLarge);
-      }
-      bytes.add(chunk);
-    }
-    final text = utf8.decode(bytes.takeBytes());
-    if (text.trim().isEmpty) {
-      throw const SourceImportFailure(SourceImportFailureKind.emptyResponse);
-    }
-    return jsonDecode(text);
+    return _decodeJsonBody(
+      response.timeout(_remainingDeadline(requestDeadline)),
+      maxBytes,
+      () {
+        _throwIfCancelled();
+        _remainingDeadline(requestDeadline);
+      },
+    );
   }
 
   DateTime _boundedDeadline(DateTime importDeadline) {
@@ -3565,6 +3580,76 @@ BrowseCatalogItem? _loadVisibleCatalogItemOnWorker(
   }
 }
 
+/// One page of identities, each with its preferred visible variant.
+///
+/// Parameters are numbered so absent filters bind null: ?1 kind, ?2 source
+/// id, ?3 FTS match, ?4/?5 cursor title/id, ?6 limit. Browse walks the
+/// `library_items_browse` index in title order and stops at the limit; the
+/// old `ROW_NUMBER()` form ranked and sorted the whole kind on every page.
+@visibleForTesting
+String libraryPageSql({
+  required bool search,
+  required bool kind,
+  required bool source,
+  required bool cursor,
+}) {
+  List<String> visible(String catalog, String sourceAlias, String group) => [
+    '$catalog.available = 1',
+    '$catalog.hidden = 0',
+    '''NOT EXISTS (
+         SELECT 1 FROM source_groups AS $group
+         WHERE $group.id = $catalog.source_group_id
+           AND $group.hidden = 1
+       )''',
+    '$sourceAlias.enabled = 1',
+    "$sourceAlias.refresh_state IN ('ready', 'refreshing')",
+    if (kind) '$catalog.kind = ?1',
+    if (source) '$catalog.source_id = ?2',
+  ];
+  final filters = [
+    if (kind) 'library.kind = ?1',
+    if (search) 'library_fts MATCH ?3',
+    if (cursor) '(library.normalized_title, library.id) > (?4, ?5)',
+    ...visible('catalog', 'source', 'visibility_group'),
+    '''member.catalog_item_id = (
+         SELECT variant.catalog_item_id
+         FROM library_members AS variant
+         CROSS JOIN catalog_items AS variant_catalog
+           ON variant_catalog.id = variant.catalog_item_id
+         CROSS JOIN sources AS variant_source
+           ON variant_source.id = variant_catalog.source_id
+         WHERE variant.library_item_id = library.id
+           AND ${visible('variant_catalog', 'variant_source', 'variant_group').join(' AND ')}
+         ORDER BY variant.preferred DESC,
+                  variant_catalog.source_id ASC,
+                  variant_catalog.id ASC
+         LIMIT 1
+       )''',
+  ];
+  // CROSS JOIN pins the join order; left free, SQLite drove the variant
+  // lookup from the availability index and took seconds per page.
+  return '''SELECT library.id AS library_item_id,
+                catalog.id AS catalog_item_id,
+                catalog.source_id,
+                source.name AS source_display_name,
+                catalog.kind,
+                library.display_title,
+                library.normalized_title,
+                library.artwork_locator,
+                catalog.playback_ref
+         ${search ? '''FROM library_fts
+         CROSS JOIN library_items AS library
+           ON library.id = library_fts.library_item_id''' : 'FROM library_items AS library'}
+         CROSS JOIN library_members AS member
+           ON member.library_item_id = library.id
+         CROSS JOIN catalog_items AS catalog
+           ON catalog.id = member.catalog_item_id
+         CROSS JOIN sources AS source ON source.id = catalog.source_id
+         WHERE ${filters.join(' AND ')}
+         ORDER BY library.normalized_title ASC, library.id ASC
+         LIMIT ?6''';
+}
+
 LibraryPage _libraryPageOnWorker(
   String path,
   LibraryScope scope,
@@ -3576,83 +3661,29 @@ LibraryPage _libraryPageOnWorker(
   if (!File(path).existsSync()) {
     return const LibraryPage(items: [], nextCursor: null);
   }
+  String? match;
+  if (query != null) {
+    match = _literalFtsQuery(query);
+    if (match == null) return const LibraryPage(items: [], nextCursor: null);
+  }
   final db = _openDatabase(path);
   try {
-    final filters = <String>[
-      'catalog.available = 1',
-      'catalog.hidden = 0',
-      '''NOT EXISTS (
-           SELECT 1 FROM source_groups AS visibility_group
-           WHERE visibility_group.id = catalog.source_group_id
-             AND visibility_group.hidden = 1
-         )''',
-      'source.enabled = 1',
-      "source.refresh_state IN ('ready', 'refreshing')",
-    ];
-    final arguments = <Object?>[];
-    if (kind != null) {
-      filters.add('catalog.kind = ?');
-      arguments.add(kind.name);
-    }
-    if (scope.sourceId != null) {
-      filters.add('catalog.source_id = ?');
-      arguments.add(scope.sourceId);
-    }
-    if (query != null) {
-      final match = _literalFtsQuery(query);
-      if (match == null) {
-        return const LibraryPage(items: [], nextCursor: null);
-      }
-      filters.add('library_fts MATCH ?');
-      arguments.add(match);
-    }
-    final cursorFilter = cursor == null
-        ? ''
-        : '''AND (normalized_title > ?
-             OR (normalized_title = ? AND library_item_id > ?))''';
-    if (cursor != null) {
-      arguments.addAll([
-        cursor.normalizedTitle,
-        cursor.normalizedTitle,
-        cursor.id,
-      ]);
-    }
-    arguments.add(limit + 1);
-    final rows = db.select('''WITH ranked AS (
-           SELECT library.id AS library_item_id,
-                  catalog.id AS catalog_item_id,
-                  catalog.source_id,
-                  source.name AS source_display_name,
-                  catalog.kind,
-                  library.display_title,
-                  library.normalized_title,
-                  library.artwork_locator,
-                  catalog.playback_ref,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY library.id
-                    ORDER BY member.preferred DESC,
-                             catalog.source_id ASC,
-                             catalog.id ASC
-                  ) AS variant_rank
-           ${query == null ? 'FROM library_items AS library' : '''FROM library_fts
-           CROSS JOIN library_items AS library
-             ON library.id = library_fts.library_item_id'''}
-           ${query == null ? 'JOIN' : 'CROSS JOIN'} library_members AS member
-             ON member.library_item_id = library.id
-           ${query == null ? 'JOIN' : 'CROSS JOIN'} catalog_items AS catalog
-             ON catalog.id = member.catalog_item_id
-           ${query == null ? 'JOIN' : 'CROSS JOIN'} sources AS source
-             ON source.id = catalog.source_id
-           WHERE ${filters.join(' AND ')}
-         )
-         SELECT library_item_id, catalog_item_id, source_id,
-                source_display_name, kind, display_title, normalized_title,
-                artwork_locator, playback_ref
-         FROM ranked
-         WHERE variant_rank = 1
-         $cursorFilter
-         ORDER BY normalized_title ASC, library_item_id ASC
-         LIMIT ?''', arguments);
+    final rows = db.select(
+      libraryPageSql(
+        search: match != null,
+        kind: kind != null,
+        source: scope.sourceId != null,
+        cursor: cursor != null,
+      ),
+      [
+        kind?.name,
+        scope.sourceId,
+        match,
+        cursor?.normalizedTitle,
+        cursor?.id,
+        limit + 1,
+      ],
+    );
     final hasMore = rows.length > limit;
     final visibleRows = hasMore ? rows.take(limit) : rows;
     final items = visibleRows
@@ -5699,7 +5730,7 @@ Database _openDatabase(String path) {
 }
 
 /// The highest `schema_migrations` version [_migrate] installs.
-const _latestSchemaVersion = 12;
+const _latestSchemaVersion = 13;
 
 void _migrate(Database db) {
   db.execute(
@@ -6022,6 +6053,14 @@ void _migrateLocked(Database db, int version) {
     db.execute('''CREATE INDEX IF NOT EXISTS epg_programs_expiry
          ON epg_programs(end_utc_ms)''');
     db.execute('INSERT INTO schema_migrations(version) VALUES (12)');
+  }
+  if (version < 13) {
+    // Browse pages walk identities in title order per kind and stop at the
+    // page limit instead of sorting the whole kind.
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS library_items_browse ON library_items(kind, normalized_title, id)',
+    );
+    db.execute('INSERT INTO schema_migrations(version) VALUES (13)');
   }
 }
 

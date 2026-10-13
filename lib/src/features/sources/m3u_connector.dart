@@ -399,12 +399,11 @@ String _canonical(_Entry entry, String locator) =>
 String _digest(String value) {
   // A 64-bit FNV-1a digest keeps provider identity compact without retaining
   // a locator or headers outside playback_ref.
-  var hash = BigInt.parse('14695981039346656037');
-  const prime = 1099511628211;
-  final mask = (BigInt.one << 64) - BigInt.one;
+  // Native ints wrap at 64 bits, which is exactly FNV's modulus.
+  var hash = 0xcbf29ce484222325;
   for (final unit in utf8.encode(value)) {
-    hash ^= BigInt.from(unit);
-    hash = (hash * BigInt.from(prime)) & mask;
+    hash = (hash ^ unit) * 0x100000001b3;
   }
-  return hash.toRadixString(16).padLeft(16, '0');
+  return (hash >>> 32).toRadixString(16).padLeft(8, '0') +
+      (hash & 0xffffffff).toRadixString(16).padLeft(8, '0');
 }

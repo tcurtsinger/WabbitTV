@@ -28,7 +28,7 @@ void main() {
         db.select('PRAGMA table_info(sources)').map((row) => row['name']),
         containsAll(['reported_connection_limit', 'connection_limit_override']),
       );
-      expect(db.select('SELECT * FROM schema_migrations').length, 12);
+      expect(db.select('SELECT * FROM schema_migrations').length, 13);
       expect(_tableNames(db), contains('playback_progress'));
       expect(
         db
@@ -103,7 +103,7 @@ void main() {
     expect(roster.single.counts[SourceMediaKind.live], 1);
     final migrated = sqlite3.open(fixture.path);
     addTearDown(migrated.close);
-    expect(migrated.select('SELECT * FROM schema_migrations').length, 12);
+    expect(migrated.select('SELECT * FROM schema_migrations').length, 13);
     expect(
       migrated.select(
         'SELECT library_item_id, title, supporting_text FROM library_fts',
@@ -140,7 +140,7 @@ void main() {
 
     db.execute('DROP TABLE catalog_items_source_kind');
     expect(await fixture.database.loadSourceRoster(), isEmpty);
-    expect(db.select('SELECT * FROM schema_migrations').length, 12);
+    expect(db.select('SELECT * FROM schema_migrations').length, 13);
   });
 
   test('concurrent opens of a v3 catalog upgrade it exactly once', () async {
@@ -170,7 +170,7 @@ void main() {
     expect(rosters.map((roster) => roster.single.id), ['legacy', 'legacy']);
     final db = sqlite3.open(fixture.path);
     addTearDown(db.close);
-    expect(db.select('SELECT * FROM schema_migrations').length, 12);
+    expect(db.select('SELECT * FROM schema_migrations').length, 13);
   });
 
   test('visibility category directory counts use the source-group availability index', () async {
@@ -710,109 +710,45 @@ void main() {
 
     final bundledSqlite = sqlite3.open(fixture.path);
     addTearDown(bundledSqlite.close);
+    // Plans of the exact SQL the app runs, not a hand-kept copy.
     final pagePlan = bundledSqlite.select(
-      '''EXPLAIN QUERY PLAN WITH ranked AS (
-           SELECT library.id AS library_item_id,
-                  catalog.id AS catalog_item_id,
-                  catalog.source_id,
-                  source.name AS source_display_name,
-                  catalog.kind,
-                  library.display_title,
-                  library.normalized_title,
-                  library.artwork_locator,
-                  catalog.playback_ref,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY library.id
-                    ORDER BY member.preferred DESC,
-                             catalog.source_id ASC,
-                             catalog.id ASC
-                  ) AS variant_rank
-           FROM library_fts
-           CROSS JOIN library_items AS library
-             ON library.id = library_fts.library_item_id
-           CROSS JOIN library_members AS member
-             ON member.library_item_id = library.id
-           CROSS JOIN catalog_items AS catalog
-             ON catalog.id = member.catalog_item_id
-           CROSS JOIN sources AS source ON source.id = catalog.source_id
-           WHERE catalog.available = 1
-             AND catalog.hidden = 0
-             AND NOT EXISTS (
-               SELECT 1 FROM source_groups AS visibility_group
-               WHERE visibility_group.id = catalog.source_group_id
-                 AND visibility_group.hidden = 1
-             )
-             AND source.enabled = 1
-             AND source.refresh_state IN ('ready', 'refreshing')
-             AND catalog.kind = ?
-             AND library_fts MATCH ?
-         )
-         SELECT library_item_id, catalog_item_id, source_id,
-                source_display_name, kind, display_title, normalized_title,
-                artwork_locator, playback_ref
-         FROM ranked
-         WHERE variant_rank = 1
-         ORDER BY normalized_title ASC, library_item_id ASC
-         LIMIT ?''',
-      [SourceMediaKind.live.name, '"Fox"', 201],
+      'EXPLAIN QUERY PLAN ${libraryPageSql(search: true, kind: true, source: false, cursor: false)}',
+      [SourceMediaKind.live.name, null, '"Fox"', null, null, 201],
     );
     final scopedCursorPagePlan = bundledSqlite.select(
-      '''EXPLAIN QUERY PLAN WITH ranked AS (
-           SELECT library.id AS library_item_id,
-                  catalog.id AS catalog_item_id,
-                  catalog.source_id,
-                  source.name AS source_display_name,
-                  catalog.kind,
-                  library.display_title,
-                  library.normalized_title,
-                  library.artwork_locator,
-                  catalog.playback_ref,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY library.id
-                    ORDER BY member.preferred DESC,
-                             catalog.source_id ASC,
-                             catalog.id ASC
-                  ) AS variant_rank
-           FROM library_fts
-           CROSS JOIN library_items AS library
-             ON library.id = library_fts.library_item_id
-           CROSS JOIN library_members AS member
-             ON member.library_item_id = library.id
-           CROSS JOIN catalog_items AS catalog
-             ON catalog.id = member.catalog_item_id
-           CROSS JOIN sources AS source ON source.id = catalog.source_id
-           WHERE catalog.available = 1
-             AND catalog.hidden = 0
-             AND NOT EXISTS (
-               SELECT 1 FROM source_groups AS visibility_group
-               WHERE visibility_group.id = catalog.source_group_id
-                 AND visibility_group.hidden = 1
-             )
-             AND source.enabled = 1
-             AND source.refresh_state IN ('ready', 'refreshing')
-             AND catalog.kind = ?
-             AND catalog.source_id = ?
-             AND library_fts MATCH ?
-         )
-         SELECT library_item_id, catalog_item_id, source_id,
-                source_display_name, kind, display_title, normalized_title,
-                artwork_locator, playback_ref
-         FROM ranked
-         WHERE variant_rank = 1
-           AND (normalized_title > ?
-             OR (normalized_title = ? AND library_item_id > ?))
-         ORDER BY normalized_title ASC, library_item_id ASC
-         LIMIT ?''',
+      'EXPLAIN QUERY PLAN ${libraryPageSql(search: true, kind: true, source: true, cursor: true)}',
       [
         SourceMediaKind.live.name,
         'bulk',
         '"Fox"',
         search.nextCursor!.normalizedTitle,
-        search.nextCursor!.normalizedTitle,
         search.nextCursor!.id,
         201,
       ],
     );
+    // Browse walks identities in title order and stops at the limit, so no
+    // page sorts the whole kind (Movies: 0.64 s to ~2 ms per page on 182k).
+    for (final cursor in [false, true]) {
+      final browsePlan = bundledSqlite
+          .select(
+            'EXPLAIN QUERY PLAN ${libraryPageSql(search: false, kind: true, source: false, cursor: cursor)}',
+            [
+              SourceMediaKind.live.name,
+              null,
+              null,
+              first.nextCursor!.normalizedTitle,
+              first.nextCursor!.id,
+              201,
+            ],
+          )
+          .map((row) => row['detail']! as String)
+          .toList();
+      expect(
+        browsePlan.first,
+        allOf(startsWith('SEARCH library '), contains('library_items_browse')),
+        reason: browsePlan.join('\n'),
+      );
+    }
     final countPlan = bundledSqlite.select(
       '''EXPLAIN QUERY PLAN
          SELECT COUNT(DISTINCT library.id) AS count
