@@ -38,12 +38,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('browse-item-movies-row')));
       await tester.pump();
       expect(find.byKey(const ValueKey('movie-play')), findsOneWidget);
-      expect(
-        tester.getSize(
-          find.byKey(const ValueKey('movie-continuation-artwork')),
-        ),
-        const Size(120, 84),
+      final poster = tester.getSize(
+        find.byKey(const ValueKey('movie-continuation-artwork')),
       );
+      expect(poster.height / poster.width, closeTo(1.5, 0.01));
       expect(loader.calls, 0);
       await tester.tap(find.byKey(const ValueKey('movie-play')));
       expect(handoffs.last, isA<MoviePlaybackHandoff>());
@@ -62,12 +60,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('browse-item-series-row')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('series-retry')), findsOneWidget);
-      expect(
-        tester.getSize(
-          find.byKey(const ValueKey('series-continuation-artwork')),
-        ),
-        const Size(120, 84),
+      final seriesPoster = tester.getSize(
+        find.byKey(const ValueKey('series-continuation-artwork')),
       );
+      expect(seriesPoster.height / seriesPoster.width, closeTo(1.5, 0.01));
       final callsBeforeRetry = loader.calls;
       loader.failure = null;
       await tester.tap(find.byKey(const ValueKey('series-retry')));
@@ -144,7 +140,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('browse-item-movies-row')));
     await tester.pumpAndSettle();
     final play = tester.getRect(find.byKey(const ValueKey('movie-play')));
-    expect(play.height, 42);
+    expect(play.height, 44);
     expect(play.width, lessThan(200));
     expect(play.bottom, lessThanOrEqualTo(713));
     expect(

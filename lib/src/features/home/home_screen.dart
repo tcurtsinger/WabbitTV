@@ -1505,9 +1505,12 @@ class _HomeHero extends StatelessWidget {
   final HomeArtworkBuilder? artworkBuilder;
   final VoidCallback onActivate;
 
+  static const _heroLogoSize = Size(267, 150);
+
   @override
   Widget build(BuildContext context) {
     final entry = item.item;
+    final logo = entry.kind == SourceMediaKind.live;
     final action = switch (entry.kind) {
       SourceMediaKind.live => 'Watch',
       SourceMediaKind.movies => 'Open',
@@ -1525,50 +1528,79 @@ class _HomeHero extends StatelessWidget {
           borderRadius: BorderRadius.circular(20),
           child: Stack(
             children: [
-              Positioned(
-                top: 0,
-                right: 0,
-                bottom: 0,
-                width: compact ? 0 : null,
-                left: compact ? null : 0,
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: FractionallySizedBox(
-                    widthFactor: 0.62,
-                    heightFactor: 1,
-                    child: RepaintBoundary(
-                      // Fade the artwork in from the left so a logo tile
-                      // has no hard edge against the hero.
-                      child: ShaderMask(
-                        blendMode: BlendMode.dstIn,
-                        shaderCallback: (bounds) => const LinearGradient(
-                          colors: [Color(0x00000000), Color(0xFF000000)],
-                          stops: [0, 0.4],
-                        ).createShader(bounds),
-                        child:
-                            artworkBuilder?.call(context, item, false) ??
-                            _HomeArtworkPlaceholder(kind: entry.kind),
+              // A channel logo sits whole in its own tile; dark logos would
+              // vanish under the scrim that posters fade behind.
+              if (logo && !compact)
+                Positioned(
+                  top: 0,
+                  right: 28,
+                  bottom: 0,
+                  child: Center(
+                    child: SizedBox(
+                      width: _heroLogoSize.width,
+                      height: _heroLogoSize.height,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: RepaintBoundary(
+                          child:
+                              artworkBuilder?.call(context, item, false) ??
+                              _HomeArtworkPlaceholder(kind: entry.kind),
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              const Positioned.fill(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Color(0xF5090810),
-                        Color(0xC2090810),
-                        Color(0x00090810),
-                      ],
-                      stops: [0, 0.42, 0.78],
+              if (!logo) ...[
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  width: compact ? 0 : null,
+                  left: compact ? null : 0,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: FractionallySizedBox(
+                      widthFactor: 0.62,
+                      heightFactor: 1,
+                      child: RepaintBoundary(
+                        // Fade the artwork in from the left so a logo tile
+                        // has no hard edge against the hero.
+                        child: ShaderMask(
+                          blendMode: BlendMode.dstIn,
+                          shaderCallback: (bounds) => const LinearGradient(
+                            colors: [Color(0x00000000), Color(0xFF000000)],
+                            stops: [0, 0.4],
+                          ).createShader(bounds),
+                          child:
+                              artworkBuilder?.call(context, item, false) ??
+                              _HomeArtworkPlaceholder(kind: entry.kind),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
+                const Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Color(0xF5090810),
+                          Color(0xC2090810),
+                          Color(0x00090810),
+                        ],
+                        stops: [0, 0.42, 0.78],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
               Padding(
-                padding: const EdgeInsets.fromLTRB(28, 24, 28, 24),
+                padding: EdgeInsets.fromLTRB(
+                  28,
+                  24,
+                  logo && !compact ? 28 + _heroLogoSize.width + 20 : 28,
+                  24,
+                ),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 480),
                   child: Column(
