@@ -873,6 +873,7 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
                     controller: widget.startupPreferencesController!,
                     onContentFocus: widget.onContentFocus,
                     onMoveToSources: _focusPrimarySourceTarget,
+                    onMoveAbove: _addFocus.requestFocus,
                   ),
                 ],
                 const SizedBox(height: 28),

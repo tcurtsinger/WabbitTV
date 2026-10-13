@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
+import 'content_focus_node.dart';
 import 'features/artwork/artwork_loader.dart';
 import 'features/artwork/source_artwork.dart';
 import 'features/browse/basic_browse_screen.dart';
@@ -168,7 +170,9 @@ class WabbitShell extends StatefulWidget {
 
 class _WabbitShellState extends State<WabbitShell> {
   final FocusNode _railFocus = FocusNode(debugLabel: 'navigation rail');
-  final FocusNode _firstContentFocus = FocusNode(debugLabel: 'home first item');
+  final FocusNode _firstContentFocus = ContentFocusNode(
+    debugLabel: 'home first item',
+  );
   final FocusScopeNode _personalTransientFocusScope = FocusScopeNode(
     debugLabel: 'personal library transient',
     traversalEdgeBehavior: TraversalEdgeBehavior.closedLoop,
@@ -782,6 +786,11 @@ class _WabbitShellState extends State<WabbitShell> {
 
   void _applyDestination(ShellDestination destination) {
     _clearStartupNotice();
+    // The shared first-content node keeps "unfocusable" from the screen that
+    // last used it (a disabled Source setup field during import), and Focus
+    // widgets that don't set canRequestFocus inherit it. Each destination
+    // starts focusable; its widgets still disable the node explicitly.
+    _firstContentFocus.canRequestFocus = true;
     if (destination == ShellDestination.library && _myLibraryNeedsRefresh) {
       _myLibrarySession = MyLibrarySession();
       _myLibraryNeedsRefresh = false;
@@ -1668,7 +1677,13 @@ class _WabbitShellState extends State<WabbitShell> {
                         onExitLibraryVisibility: _exitLibraryVisibility,
                         onLibraryVisibilityBusyChanged:
                             _libraryVisibilityBusyChanged,
-                        m3uFilePicker: widget.m3uFilePicker ?? _pickM3uFile,
+                        // Android TV / Fire TV devices often have no system
+                        // file picker; M3U URL covers them.
+                        m3uFilePicker:
+                            widget.m3uFilePicker ??
+                            (defaultTargetPlatform == TargetPlatform.android
+                                ? null
+                                : _pickM3uFile),
                         sourceController: _sourceController,
                         sourceManagementController: _sourceManagementController,
                         startupPreferencesController: _startupPreferencesEnabled
@@ -2065,7 +2080,7 @@ class _ShellBody extends StatelessWidget {
   final ValueChanged<SourceRosterEntry> onOpenLibraryVisibility;
   final VoidCallback onExitLibraryVisibility;
   final ValueChanged<bool> onLibraryVisibilityBusyChanged;
-  final M3uFilePicker m3uFilePicker;
+  final M3uFilePicker? m3uFilePicker;
   final SourceSetupController sourceController;
   final SourceManagementController sourceManagementController;
   final StartupPreferencesController? startupPreferencesController;

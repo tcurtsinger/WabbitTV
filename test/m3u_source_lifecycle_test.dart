@@ -232,6 +232,11 @@ void main() {
         isNot(contains(file.path)),
       );
       expect(credentials.values.values.single.serverUrl, file.path);
+      // M3U is Live only: a finished import must not leave the dock waiting.
+      expect(
+        controller.stages.values,
+        everyElement(ImportStageStatus.complete),
+      );
     },
   );
 

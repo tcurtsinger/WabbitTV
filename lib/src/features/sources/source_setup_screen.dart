@@ -427,11 +427,16 @@ class _ConnectorPicker extends StatelessWidget {
   const _ConnectorPicker({
     required this.kind,
     required this.enabled,
+    required this.showLocalFile,
     required this.onSelected,
   });
 
   final SourceEditorKind kind;
   final bool enabled;
+
+  /// False where there is no file picker (Android TV / Fire TV often ship
+  /// without one), so "Local M3U file" is not offered there.
+  final bool showLocalFile;
   final ValueChanged<SourceEditorKind> onSelected;
 
   @override
@@ -452,27 +457,30 @@ class _ConnectorPicker extends StatelessWidget {
         runSpacing: 10,
         children: [
           for (final candidate in SourceEditorKind.values)
-            OutlinedButton(
-              key: ValueKey('source-connector-${candidate.name}'),
-              onPressed: enabled ? () => onSelected(candidate) : null,
-              style:
-                  OutlinedButton.styleFrom(
-                    foregroundColor: candidate == kind
-                        ? _warmWhite
-                        : _quietText,
-                    backgroundColor: candidate == kind ? _raised : _surface,
-                    disabledForegroundColor: candidate == kind
-                        ? _warmWhite
-                        : _quietText,
-                    minimumSize: const Size(0, 42),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
+            if (candidate != SourceEditorKind.m3uFile ||
+                showLocalFile ||
+                candidate == kind)
+              OutlinedButton(
+                key: ValueKey('source-connector-${candidate.name}'),
+                onPressed: enabled ? () => onSelected(candidate) : null,
+                style:
+                    OutlinedButton.styleFrom(
+                      foregroundColor: candidate == kind
+                          ? _warmWhite
+                          : _quietText,
+                      backgroundColor: candidate == kind ? _raised : _surface,
+                      disabledForegroundColor: candidate == kind
+                          ? _warmWhite
+                          : _quietText,
+                      minimumSize: const Size(0, 42),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ).copyWith(
+                      side: focusEdge(rest: const BorderSide(color: _line)),
                     ),
-                  ).copyWith(
-                    side: focusEdge(rest: const BorderSide(color: _line)),
-                  ),
-              child: Text(candidate.label),
-            ),
+                child: Text(candidate.label),
+              ),
         ],
       ),
     ],
@@ -574,6 +582,7 @@ class _SourceForm extends StatelessWidget {
             _ConnectorPicker(
               kind: kind,
               enabled: !disabled && !editing,
+              showLocalFile: pickerAvailable,
               onSelected: onSelectKind,
             ),
             if (editing) ...[
@@ -687,7 +696,7 @@ class _SourceForm extends StatelessWidget {
                   Semantics(
                     liveRegion: true,
                     child: const Text(
-                      'The Windows file picker could not be opened. Try again.',
+                      'The file picker could not be opened. Try again.',
                       key: ValueKey('source-m3u-picker-failure'),
                       style: TextStyle(color: Color(0xFFFFC1B3), fontSize: 13),
                     ),

@@ -505,6 +505,36 @@ void main() {
     );
   });
 
+  testWidgets('Local M3U file is offered only where a file picker exists', (
+    tester,
+  ) async {
+    Widget screen({M3uFilePicker? picker}) => MaterialApp(
+      home: Scaffold(
+        body: SourceSetupScreen(
+          key: UniqueKey(),
+          initialFocus: FocusNode(),
+          onContentFocus: (_) {},
+          onExit: () {},
+          onBrowse: (_) {},
+          m3uFilePicker: picker,
+          controller: SourceSetupController(
+            service: _WidgetSourcePort(),
+            credentialStore: _WidgetCredentialStore(),
+          ),
+        ),
+      ),
+    );
+    const localFile = ValueKey('source-connector-m3uFile');
+
+    // Android TV / Fire TV: no system picker is passed in.
+    await tester.pumpWidget(screen());
+    expect(find.byKey(localFile), findsNothing);
+    expect(find.byKey(const ValueKey('source-connector-m3uUrl')), findsOne);
+
+    await tester.pumpWidget(screen(picker: () async => null));
+    expect(find.byKey(localFile), findsOneWidget);
+  });
+
   testWidgets('remote Up and Down move between fields, not the caret', (
     tester,
   ) async {
@@ -825,7 +855,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('The Windows file picker could not be opened. Try again.'),
+      find.text('The file picker could not be opened. Try again.'),
       findsOneWidget,
     );
     expect(find.textContaining('provider-secret'), findsNothing);
