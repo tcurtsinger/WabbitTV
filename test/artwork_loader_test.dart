@@ -133,7 +133,7 @@ void main() {
     ]);
   });
 
-  testWidgets('posters decode at one dimension so cover does not squash', (
+  testWidgets('posters decode bounded without squashing before cover', (
     tester,
   ) async {
     final loader = _FakeArtworkProvider(focusDwell: Duration.zero);
@@ -154,10 +154,12 @@ void main() {
     await tester.pump();
     await tester.pump();
 
+    // Both sides bounded (no unbounded decode), aspect kept (no squash).
     final image = tester.widget<Image>(find.byType(Image)).image;
     expect(image, isA<ResizeImage>());
-    expect((image as ResizeImage).width, 240);
-    expect(image.height, isNull);
+    expect((image as ResizeImage).policy, ResizeImagePolicy.fit);
+    expect(image.width, 360);
+    expect(image.height, 360);
   });
 
   testWidgets('expanded artwork omits non-finite decode cache dimensions', (
