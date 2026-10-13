@@ -2219,6 +2219,7 @@ class _ShellBody extends StatelessWidget {
         data: guideData,
         onBrowseLive: () => onSelectDestination(ShellDestination.live),
         onOpenSettings: () => onSelectDestination(ShellDestination.settings),
+        artworkLoader: artworkProvider,
       );
     }
 

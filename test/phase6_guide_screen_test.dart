@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wabbit_tv/src/cinema.dart';
 import 'package:wabbit_tv/src/features/browse/basic_browse_screen.dart';
 import 'package:wabbit_tv/src/app_shell.dart';
 import 'package:wabbit_tv/src/features/browse/playback_handoff.dart';
@@ -19,6 +20,52 @@ import 'package:wabbit_tv/src/features/sources/source_models.dart';
 import 'package:wabbit_tv/src/home_fixture_mode.dart';
 
 void main() {
+  testWidgets('With schedule narrows the Guide until it is switched off', (
+    tester,
+  ) async {
+    final data = _ScheduledGuideData(scheduled: {'channel-1'});
+    final session = GuideSession();
+    await tester.pumpWidget(_guideApp(data: data, session: session));
+    await tester.pumpAndSettle();
+
+    final filter = find.byKey(const ValueKey('guide-schedule-filter'));
+    expect(filter, findsOneWidget);
+    expect(data.selections.last.scheduledOnly, isTrue);
+    expect(_inGrid(find.text('Channel One')), findsOneWidget);
+    expect(_inGrid(find.text('Channel Two')), findsNothing);
+
+    await tester.tap(filter);
+    await tester.pumpAndSettle();
+    expect(session.scheduledOnly, isFalse);
+    expect(data.selections.last.scheduledOnly, isFalse);
+    expect(_inGrid(find.text('Channel Two')), findsOneWidget);
+  });
+
+  testWidgets('a category without schedules offers every channel', (
+    tester,
+  ) async {
+    final data = _ScheduledGuideData(scheduled: const {});
+    await tester.pumpWidget(_guideApp(data: data));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No schedules in All Live'), findsOneWidget);
+    await tester.tap(find.text('Show all channels'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('guide-schedule-empty')), findsNothing);
+    expect(_inGrid(find.text('Channel One')), findsOneWidget);
+  });
+
+  testWidgets('no schedule filter before a source saves guide IDs', (
+    tester,
+  ) async {
+    final data = _GuideFixtureData();
+    await tester.pumpWidget(_guideApp(data: data));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('guide-schedule-filter')), findsNothing);
+    expect(_inGrid(find.text('Channel One')), findsOneWidget);
+  });
+
   testWidgets('classic matrix loads cache first and tunes exact channel', (
     tester,
   ) async {
@@ -32,8 +79,8 @@ void main() {
     expect(find.text('Guide'), findsOneWidget);
     expect(find.text('Fixture Xtream'), findsWidgets);
     expect(find.text('All Live'), findsWidgets);
-    expect(find.text('Channel One'), findsOneWidget);
-    expect(find.text('Morning News'), findsOneWidget);
+    expect(_inGrid(find.text('Channel One')), findsOneWidget);
+    expect(_inGrid(find.text('Morning News')), findsOneWidget);
     expect(find.byKey(const ValueKey('guide-channel-list')), findsOneWidget);
     expect(data.loadedWindowIds, isNotEmpty);
     expect(data.loadedWindowIds.length, lessThanOrEqualTo(20));
@@ -108,8 +155,8 @@ void main() {
     await tester.tap(find.text('News').last);
     await tester.pumpAndSettle();
 
-    expect(find.text('Channel One'), findsOneWidget);
-    expect(find.text('Channel Two'), findsNothing);
+    expect(_inGrid(find.text('Channel One')), findsOneWidget);
+    expect(_inGrid(find.text('Channel Two')), findsNothing);
     expect(data.lastSelection?.sourceGroupId, 7);
   });
 
@@ -132,7 +179,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Channel One'), findsOneWidget);
+    expect(_inGrid(find.text('Channel One')), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('guide-dropdown-Source')));
     await tester.pumpAndSettle();
@@ -141,7 +188,7 @@ void main() {
 
     expect(session.sourceId, 'source-2');
     expect(find.text('Guide unavailable'), findsOneWidget);
-    expect(find.text('Channel One'), findsNothing);
+    expect(_inGrid(find.text('Channel One')), findsNothing);
     expect(find.byKey(const ValueKey('guide-channel-channel-1')), findsNothing);
     expect(tuned, isNull);
     expect(data.cancelCalls, 1);
@@ -151,8 +198,8 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    expect(find.text('Backup News'), findsOneWidget);
-    expect(find.text('Channel One'), findsNothing);
+    expect(_inGrid(find.text('Backup News')), findsOneWidget);
+    expect(_inGrid(find.text('Channel One')), findsNothing);
     await tester.tap(
       find.byKey(const ValueKey('guide-channel-channel-backup')),
     );
@@ -266,7 +313,7 @@ void main() {
     await tester.pumpWidget(_guideApp(data: data));
     await tester.pumpAndSettle();
 
-    expect(find.text('Morning News'), findsOneWidget);
+    expect(_inGrid(find.text('Morning News')), findsOneWidget);
     expect(
       find.text('Guide update failed · showing saved schedule'),
       findsOneWidget,
@@ -587,12 +634,12 @@ void main() {
     await tester.drag(list, const Offset(0, 720));
     await tester.pump(const Duration(milliseconds: 160));
     await tester.pump();
-    expect(find.text('Channel 001'), findsOneWidget);
+    expect(_inGrid(find.text('Channel 001')), findsOneWidget);
     expect(find.text('Preparing schedule…'), findsNothing);
 
     middleRead.complete();
     await tester.pumpAndSettle();
-    expect(find.text('Channel 001'), findsOneWidget);
+    expect(_inGrid(find.text('Channel 001')), findsOneWidget);
     expect(find.text('Preparing schedule…'), findsNothing);
     expect(
       find.text(
@@ -809,14 +856,14 @@ void main() {
 
       expect(data.cancelCalls, 2);
       expect(find.text('Sports'), findsOneWidget);
-      expect(find.text('Channel Two'), findsOneWidget);
-      expect(find.text('Channel One'), findsNothing);
+      expect(_inGrid(find.text('Channel Two')), findsOneWidget);
+      expect(_inGrid(find.text('Channel One')), findsNothing);
 
       firstCancel.complete();
       await tester.pumpAndSettle();
       expect(find.text('Sports'), findsOneWidget);
-      expect(find.text('Channel Two'), findsOneWidget);
-      expect(find.text('Channel One'), findsNothing);
+      expect(_inGrid(find.text('Channel Two')), findsOneWidget);
+      expect(_inGrid(find.text('Channel One')), findsNothing);
     },
   );
 
@@ -843,8 +890,8 @@ void main() {
     await tester.tap(find.text('Keep current category'));
     await tester.pumpAndSettle();
     expect(find.text('Guide category unavailable'), findsNothing);
-    expect(find.text('Channel One'), findsOneWidget);
-    expect(find.text('Channel Two'), findsOneWidget);
+    expect(_inGrid(find.text('Channel One')), findsOneWidget);
+    expect(_inGrid(find.text('Channel Two')), findsOneWidget);
     expect(session.category.kind, BrowseCategorySelectionKind.all);
 
     await tester.tap(find.byKey(const ValueKey('guide-dropdown-Category')));
@@ -857,8 +904,8 @@ void main() {
 
     expect(find.text('Guide category unavailable'), findsNothing);
     expect(find.text('News'), findsWidgets);
-    expect(find.text('Channel One'), findsOneWidget);
-    expect(find.text('Channel Two'), findsNothing);
+    expect(_inGrid(find.text('Channel One')), findsOneWidget);
+    expect(_inGrid(find.text('Channel Two')), findsNothing);
     expect(session.category.sourceGroupId, 7);
   });
 
@@ -1012,7 +1059,7 @@ void main() {
     await tester.pump();
     expect(tuned, isA<LivePlaybackHandoff>());
     expect(session.focusedProgramEndUtcMs, firstEnd.millisecondsSinceEpoch);
-    expect(find.textContaining('One Minute One ·'), findsOneWidget);
+    expect(_focusContext(tester), contains('One Minute One ·'));
     var decoration =
         tester
                 .widget<AnimatedContainer>(
@@ -1025,12 +1072,12 @@ void main() {
                 )
                 .decoration
             as BoxDecoration;
-    expect(decoration.border!.top.color, const Color(0xFFFFB347));
+    expect(decoration.boxShadow, Cinema.focusGlow);
 
     await tester.tap(secondVisual);
     await tester.pump();
     expect(session.focusedProgramEndUtcMs, secondEnd.millisecondsSinceEpoch);
-    expect(find.textContaining('One Minute Two ·'), findsOneWidget);
+    expect(_focusContext(tester), contains('One Minute Two ·'));
     decoration =
         tester
                 .widget<AnimatedContainer>(
@@ -1043,7 +1090,7 @@ void main() {
                 )
                 .decoration
             as BoxDecoration;
-    expect(decoration.border!.top.color, const Color(0xFFFFB347));
+    expect(decoration.boxShadow, Cinema.focusGlow);
   });
 
   testWidgets('matrix retains its composition at constrained high text scale', (
@@ -1065,7 +1112,7 @@ void main() {
       find.byKey(const ValueKey('guide-time-ruler-scroll')),
       findsOneWidget,
     );
-    expect(find.text('Morning News'), findsOneWidget);
+    expect(_inGrid(find.text('Morning News')), findsOneWidget);
   });
 
   testWidgets('Live browse shows quiet exact cached Now and Next only', (
@@ -1627,7 +1674,7 @@ void main() {
     expect(first.focusNode?.hasFocus, isTrue);
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
-    expect(find.text('Channel 003 · Live channel'), findsOneWidget);
+    expect(_focusContext(tester), 'Channel 003 · Live channel');
     expect(
       find.textContaining('Saved Guide channel is no longer available'),
       findsNothing,
@@ -1657,12 +1704,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text(message), findsNothing);
-      expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey('guide-focus-context')))
-            .data,
-        contains('Local Weather'),
-      );
+      expect(_focusContext(tester), contains('Local Weather'));
       final settled = tester.getSemantics(
         find.byKey(const ValueKey('guide-focus-context')),
       );
@@ -2032,8 +2074,8 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pumpAndSettle();
     expect(
-      find.textContaining('Repeated Hour · 1:30 AM CDT UTC−05:00'),
-      findsOneWidget,
+      _focusContext(tester),
+      contains('Repeated Hour · 1:30 AM CDT UTC−05:00'),
     );
   });
 
@@ -2064,10 +2106,10 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pumpAndSettle();
     expect(
-      find.textContaining(
+      _focusContext(tester),
+      contains(
         'Spring Transition · 1:30 AM CST UTC−06:00–3:30 AM CDT UTC−05:00',
       ),
-      findsOneWidget,
     );
   });
 
@@ -2124,10 +2166,8 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pumpAndSettle();
     expect(
-      find.textContaining(
-        'Repeated Hour · 1:30 AM Central Daylight Time UTC−05:00',
-      ),
-      findsOneWidget,
+      _focusContext(tester),
+      contains('Repeated Hour · 1:30 AM Central Daylight Time UTC−05:00'),
     );
   });
 
@@ -2710,4 +2750,55 @@ class _GuideTransport implements PlaybackTransport {
   Future<void> setMuted(bool muted) async {}
   @override
   Future<void> setVolume(double volume) async {}
+}
+
+/// Channel and program names also appear in the info panel; these checks
+/// mean the Guide grid itself.
+Finder _inGrid(Finder finder) => find.descendant(
+  of: find.byKey(const ValueKey('guide-channel-list')),
+  matching: finder,
+);
+
+/// The focus context the info panel announces.
+String? _focusContext(WidgetTester tester) => tester
+    .widget<Semantics>(find.byKey(const ValueKey('guide-focus-context')))
+    .properties
+    .label;
+
+/// A source that has saved guide IDs; only [scheduled] channels carry one.
+class _ScheduledGuideData extends _GuideFixtureData
+    implements GuideScheduleDataPort {
+  _ScheduledGuideData({required this.scheduled});
+
+  final Set<String> scheduled;
+  final selections = <BrowseCategorySelection>[];
+
+  @override
+  Future<bool> hasScheduledChannels(String sourceId) async => true;
+
+  @override
+  Future<BrowsePage> browsePage({
+    required String sourceId,
+    required SourceMediaKind kind,
+    required BrowseCategorySelection selection,
+    BrowseCursor? cursor,
+    int limit = 100,
+  }) async {
+    selections.add(selection);
+    final page = await super.browsePage(
+      sourceId: sourceId,
+      kind: kind,
+      selection: selection,
+      cursor: cursor,
+      limit: limit,
+    );
+    if (!selection.scheduledOnly) return page;
+    return BrowsePage(
+      items: [
+        for (final channel in page.items)
+          if (scheduled.contains(channel.id)) channel,
+      ],
+      nextCursor: null,
+    );
+  }
 }
