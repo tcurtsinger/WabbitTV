@@ -42,8 +42,7 @@ import 'features/sources/startup_models.dart';
 import 'features/sources/xtream_epg_service.dart';
 import 'home_fixture_mode.dart';
 
-const _railSelected = Color(0x29FFB547);
-const _railSelectedHover = Color(0x3DFFB547);
+const _railOpen = Color(0xFF141419);
 const _line = Color(0xFF343534);
 const _warmWhite = Color(0xFFF4F0E7);
 const _lastChannelUnavailableNotice =
@@ -2396,7 +2395,7 @@ class _NavigationRail extends StatelessWidget {
       curve: Curves.easeOutCubic,
       width: railWidth,
       decoration: BoxDecoration(
-        color: isExpanded ? Cinema.card : Cinema.ink,
+        color: isExpanded ? _railOpen : Cinema.ink,
         boxShadow: isExpanded
             ? const [BoxShadow(color: Color(0xA6000000), blurRadius: 48)]
             : const [],
@@ -2581,7 +2580,8 @@ class _RailPill extends StatelessWidget {
         decoration: BoxDecoration(
           color: fill,
           borderRadius: BorderRadius.circular(22),
-          boxShadow: focused ? Cinema.focusGlow : const [],
+          // Focus is a solid amber pill, so only the soft glow applies.
+          boxShadow: focused ? [Cinema.focusGlow.last] : const [],
         ),
         child: Row(
           children: [
@@ -2688,18 +2688,18 @@ class _RailDestinationState extends State<_RailDestination> {
                 label: widget.destination.label,
                 expanded: widget.expanded,
                 focused: focused,
-                fill: selected
-                    ? _hovered
-                          ? _railSelectedHover
-                          : _railSelected
-                    : focused
-                    ? Cinema.glassFocused
+                fill: focused
+                    ? Cinema.amber
                     : _hovered
+                    ? Cinema.glassFocused
+                    : selected
                     ? Cinema.glass
                     : const Color(0x00000000),
-                ink: selected
+                ink: focused
+                    ? Cinema.amberInk
+                    : selected
                     ? Cinema.amber
-                    : focused || _hovered
+                    : _hovered
                     ? Cinema.text
                     : Cinema.faint,
                 bold: selected,
@@ -2781,8 +2781,12 @@ class _RailNowPlayingState extends State<_RailNowPlaying> {
               label: 'Now Playing',
               expanded: widget.expanded,
               focused: focused,
-              fill: focused || _hovered ? Cinema.glassFocused : Cinema.glass,
-              ink: Cinema.text,
+              fill: focused
+                  ? Cinema.amber
+                  : _hovered
+                  ? Cinema.glassFocused
+                  : Cinema.glass,
+              ink: focused ? Cinema.amberInk : Cinema.text,
               bold: true,
             ),
           ),

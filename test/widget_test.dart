@@ -219,6 +219,9 @@ void main() {
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
+      // Focus turns the pill solid amber, so its icon goes dark to stay
+      // readable.
+      expect(iconColor('home'), Cinema.amberInk);
 
       final homeSemantics = tester
           .getSemantics(find.byKey(const ValueKey('shell-destination-home')))

@@ -1537,9 +1537,18 @@ class _HomeHero extends StatelessWidget {
                     widthFactor: 0.62,
                     heightFactor: 1,
                     child: RepaintBoundary(
-                      child:
-                          artworkBuilder?.call(context, item, false) ??
-                          _HomeArtworkPlaceholder(kind: entry.kind),
+                      // Fade the artwork in from the left so a logo tile
+                      // has no hard edge against the hero.
+                      child: ShaderMask(
+                        blendMode: BlendMode.dstIn,
+                        shaderCallback: (bounds) => const LinearGradient(
+                          colors: [Color(0x00000000), Color(0xFF000000)],
+                          stops: [0, 0.4],
+                        ).createShader(bounds),
+                        child:
+                            artworkBuilder?.call(context, item, false) ??
+                            _HomeArtworkPlaceholder(kind: entry.kind),
+                      ),
                     ),
                   ),
                 ),
