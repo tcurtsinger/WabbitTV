@@ -103,7 +103,7 @@ class M3uConnector {
     try {
       text = utf8.decode(bytes);
     } on FormatException {
-      throw const SourceImportFailure(SourceImportFailureKind.emptyResponse);
+      text = _decodeByLine(bytes);
     }
 
     final categories = <String, ImportedCategory>{};
@@ -250,6 +250,26 @@ class M3uConnector {
   }
 }
 
+/// Decodes each line as UTF-8, falling back to Latin-1 (older playlists are
+/// often Latin-1/Windows-1252) for that line only, so one legacy line can't
+/// garble the rest. 0x0A never occurs inside a UTF-8 multibyte sequence, and
+/// Latin-1 accepts every byte, so binary junk still ends as an empty import.
+String _decodeByLine(List<int> bytes) {
+  final lines = <String>[];
+  var start = 0;
+  while (true) {
+    final end = bytes.indexOf(0x0A, start);
+    final line = bytes.sublist(start, end < 0 ? bytes.length : end);
+    try {
+      lines.add(utf8.decode(line));
+    } on FormatException {
+      lines.add(latin1.decode(line));
+    }
+    if (end < 0) return lines.join('\n');
+    start = end + 1;
+  }
+}
+
 Uri _finalResponseUri(Uri requested, List<RedirectInfo> redirects) {
   var current = requested;
   for (final redirect in redirects) {
@@ -307,9 +327,16 @@ class _Entry {
       if (separator <= 0) {
         continue;
       }
-      final name = Uri.decodeComponent(segment.substring(0, separator)).trim();
-      final headerValue = Uri.decodeComponent(segment.substring(separator + 1))
-          .trim();
+      final String name;
+      final String headerValue;
+      try {
+        name = Uri.decodeComponent(segment.substring(0, separator)).trim();
+        headerValue = Uri.decodeComponent(segment.substring(separator + 1))
+            .trim();
+      } catch (_) {
+        // A bad % escape drops this header, not the whole playlist.
+        continue;
+      }
       if (_isSafeHeaderName(name) && headerValue.isNotEmpty) {
         headers[name] = headerValue;
       }
