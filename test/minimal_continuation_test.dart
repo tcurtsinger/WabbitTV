@@ -4,12 +4,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wabbit_tv/src/features/browse/basic_browse_screen.dart';
+import 'package:wabbit_tv/src/features/browse/minimal_continuations.dart';
 import 'package:wabbit_tv/src/features/browse/playback_handoff.dart';
 import 'package:wabbit_tv/src/features/browse/series_info_loader.dart';
 import 'package:wabbit_tv/src/features/sources/source_catalog_database.dart';
 import 'package:wabbit_tv/src/features/sources/source_models.dart';
 
 void main() {
+  test('episode rows drop the repeated series title', () {
+    expect(
+      episodeLabel('Show (2020) - S01E01 - Pilot', 'Show (2020)'),
+      'S01E01 - Pilot',
+    );
+    expect(episodeLabel('S01E01 - Pilot', 'Show'), 'S01E01 - Pilot');
+    expect(episodeLabel('Showtime Tonight', 'Show'), 'Showtime Tonight');
+    expect(episodeLabel('Show', 'Show'), 'Show');
+  });
+
   testWidgets(
     'live, movie, series, retry, and Back use the continuation seam',
     (tester) async {

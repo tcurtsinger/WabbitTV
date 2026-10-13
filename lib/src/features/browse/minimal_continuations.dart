@@ -284,6 +284,7 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
                 return _EpisodeRow(
                   key: ValueKey('series-episode-$index'),
                   episode: episode,
+                  label: episodeLabel(episode.title, widget.title),
                   index: index,
                   onNodeMounted: _mountEpisodeNode,
                   onNodeUnmounted: _unmountEpisodeNode,
@@ -531,10 +532,22 @@ class _ContinuationFrame extends StatelessWidget {
   );
 }
 
+/// Providers often repeat the series title in every episode title; the row
+/// drops that prefix so "Show - S01E01 - Pilot" reads "S01E01 - Pilot".
+@visibleForTesting
+String episodeLabel(String episode, String series) {
+  if (series.isEmpty || !episode.startsWith(series)) return episode;
+  final rest = episode.substring(series.length);
+  final separator = RegExp(r'^[\s\-–—:|·]+').firstMatch(rest);
+  if (separator == null || separator.end == rest.length) return episode;
+  return rest.substring(separator.end);
+}
+
 class _EpisodeRow extends StatefulWidget {
   const _EpisodeRow({
     super.key,
     required this.episode,
+    required this.label,
     required this.index,
     required this.onNodeMounted,
     required this.onNodeUnmounted,
@@ -543,6 +556,7 @@ class _EpisodeRow extends StatefulWidget {
     this.onDown,
   });
   final SeriesEpisode episode;
+  final String label;
   final int index;
   final void Function(int index, FocusNode node) onNodeMounted;
   final void Function(int index, FocusNode node) onNodeUnmounted;
@@ -646,7 +660,7 @@ class _EpisodeRowState extends State<_EpisodeRow> {
                 ),
                 Expanded(
                   child: Text(
-                    widget.episode.title,
+                    widget.label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
