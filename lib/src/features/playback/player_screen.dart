@@ -10,8 +10,10 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../cinema.dart';
 import '../browse/playback_handoff.dart';
+import '../library/library_organization_service.dart';
 import '../sources/credential_store.dart';
 import '../sources/source_catalog_database.dart';
+import '../sources/source_models.dart';
 import 'playback_manager.dart';
 import 'playback_runtime_adapters.dart';
 import 'playback_transport.dart';
@@ -84,6 +86,8 @@ class PlayerScreen extends StatefulWidget {
     this.variantPort,
     this.fullscreenPort,
     this.windowControls,
+    this.organization,
+    this.onOrganizationChanged,
     this.onUsableVideo,
     this.source,
     this.credentialStore,
@@ -106,6 +110,10 @@ class PlayerScreen extends StatefulWidget {
   /// Mute, volume and fullscreen; off on Android, where the TV remote owns
   /// volume and the app is always fullscreen.
   final bool? windowControls;
+
+  /// Reads and saves the playing item's Favorite flag; null hides the star.
+  final LibraryOrganizationPort? organization;
+  final VoidCallback? onOrganizationChanged;
   final UsableVideoCallback? onUsableVideo;
 
   // Legacy fixture seam. Production passes manager + sessionId.
@@ -138,6 +146,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final _startOverNode = FocusNode(debugLabel: 'start over');
   final _pip = FocusNode(debugLabel: 'picture in picture');
   final _add = FocusNode(debugLabel: 'add channel');
+  final _favoriteNode = FocusNode(debugLabel: 'player favorite');
   final _fullscreenNode = FocusNode(debugLabel: 'player fullscreen');
   final _trackDone = FocusNode(debugLabel: 'tracks done');
   final _firstTrack = FocusNode(debugLabel: 'first track');
@@ -166,6 +175,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String? _message;
   List<PlaybackVariantCandidate> _variants = const [];
   int _variantGeneration = 0;
+  PersonalLibraryOrganization? _organization;
+  int _organizationGeneration = 0;
+  bool _favoriteBusy = false;
 
   PlaybackSessionSnapshot? get _snapshot =>
       _sessionId == null ? null : _manager.session(_sessionId!);
@@ -191,6 +203,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (!mounted) return;
       _stage.requestFocus();
       _showChrome();
+      unawaited(_loadOrganization());
       if (_sessionId == null) unawaited(_startLegacy());
       _changed();
     });
@@ -232,6 +245,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (widget.handoff != oldWidget.handoff) {
       _handoff = widget.handoff;
       _resetVariants();
+      unawaited(_loadOrganization());
     } else if (widget.variantPort != oldWidget.variantPort) {
       _resetVariants();
     }
@@ -258,6 +272,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _startOverNode,
       _pip,
       _add,
+      _favoriteNode,
       _fullscreenNode,
       _trackDone,
       _firstTrack,
@@ -346,6 +361,57 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _variants = const [];
   }
 
+  Future<void> _loadOrganization() async {
+    final port = widget.organization;
+    final id = _handoff.libraryItemId;
+    final generation = ++_organizationGeneration;
+    setState(() => _organization = null);
+    if (port == null || id == null) return;
+    PersonalLibraryOrganization? value;
+    try {
+      value = await port.loadItem(id);
+    } catch (_) {}
+    if (mounted && generation == _organizationGeneration) {
+      setState(() => _organization = value);
+    }
+  }
+
+  Future<void> _toggleFavorite() async {
+    final port = widget.organization;
+    final current = _organization;
+    if (port == null || current == null || _favoriteBusy) return;
+    final generation = _organizationGeneration;
+    setState(() {
+      _favoriteBusy = true;
+      _organization = PersonalLibraryOrganization(
+        libraryItemId: current.libraryItemId,
+        isFavorite: !current.isFavorite,
+        groups: current.groups,
+      );
+    });
+    var saved = false;
+    try {
+      saved = (await port.saveItem(
+        libraryItemId: current.libraryItemId,
+        favorite: !current.isFavorite,
+        // Saving replaces the whole organization, so keep the groups.
+        customGroupIds: {
+          for (final group in current.groups)
+            if (group.selected) group.groupId,
+        },
+      )).succeeded;
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _favoriteBusy = false;
+      if (!saved && generation == _organizationGeneration) {
+        _organization = current;
+        _message = "Couldn't update Favorites.";
+      }
+    });
+    if (saved) widget.onOrganizationChanged?.call();
+  }
+
   void _showChrome() {
     if (!mounted) return;
     setState(() => _chromeVisible = true);
@@ -416,6 +482,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _usableReported = false;
           _resetVariants();
         });
+        unawaited(_loadOrganization());
       case PlaybackBlocked():
         setState(() => _message = 'That source variant is unavailable.');
     }
@@ -673,8 +740,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                       startOver: _startOverNode,
                                       pip: _pip,
                                       add: _add,
+                                      favorite: _favoriteNode,
                                       fullscreen: _fullscreenNode,
                                     ),
+                                    favorite:
+                                        widget.organization == null ||
+                                            _handoff.libraryItemId == null
+                                        ? null
+                                        : _organization?.isFavorite ?? false,
+                                    onFavorite: () =>
+                                        unawaited(_toggleFavorite()),
                                     onPlay: () => unawaited(_togglePlay()),
                                     onSeek: (value) => unawaited(_seek(value)),
                                     onMute: () => unawaited(_toggleMute()),
@@ -754,6 +829,7 @@ class _DeckNodes {
     required this.startOver,
     required this.pip,
     required this.add,
+    required this.favorite,
     required this.fullscreen,
   });
   final FocusNode back10,
@@ -766,6 +842,7 @@ class _DeckNodes {
       startOver,
       pip,
       add,
+      favorite,
       fullscreen;
 }
 
@@ -934,6 +1011,8 @@ class _BroadcastDeck extends StatelessWidget {
     required this.audible,
     required this.windowControls,
     required this.nodes,
+    required this.favorite,
+    required this.onFavorite,
     required this.onPlay,
     required this.onSeek,
     required this.onMute,
@@ -949,6 +1028,10 @@ class _BroadcastDeck extends StatelessWidget {
   final bool live, audible, windowControls;
   final PlaybackTransportState state;
   final _DeckNodes nodes;
+
+  /// Whether the item is a Favorite; null hides the star.
+  final bool? favorite;
+  final VoidCallback onFavorite;
   final VoidCallback onPlay,
       onMute,
       onTracks,
@@ -979,21 +1062,23 @@ class _BroadcastDeck extends StatelessWidget {
             onPressed: onPip!,
             onDown: onDown,
           );
-    final fullscreen = !windowControls
+    final star = favorite == null
         ? null
         : _DeckAction(
-            key: const ValueKey('player-fullscreen'),
-            focusNode: nodes.fullscreen,
-            icon: Icons.fullscreen_rounded,
-            label: 'Fullscreen',
-            onPressed: onFullscreen,
-            onBack: onBack,
+            focusNode: nodes.favorite,
+            icon: favorite! ? Icons.star_rounded : Icons.star_outline_rounded,
+            label: favorite! ? 'Remove from Favorites' : 'Add to Favorites',
+            onPressed: onFavorite,
             onDown: onDown,
           );
+    final fullscreen = windowControls && _fullscreenInRow
+        ? _fullscreenAction()
+        : null;
     final List<Widget> left, right;
     if (live) {
       final small = [
         tracks,
+        ?star,
         ?pip,
         if (onAdd != null)
           _DeckAction(
@@ -1004,8 +1089,8 @@ class _BroadcastDeck extends StatelessWidget {
             onPressed: onAdd!,
             onDown: onDown,
           ),
-        ?fullscreen,
       ];
+      if (fullscreen != null) small.add(fullscreen);
       final split = small.length ~/ 2;
       left = small.sublist(0, split);
       right = small.sublist(split);
@@ -1036,8 +1121,9 @@ class _BroadcastDeck extends StatelessWidget {
           onDown: onDown,
         ),
         ?pip,
-        ?fullscreen,
+        ?star,
       ];
+      if (fullscreen != null) right.add(fullscreen);
     }
     return Row(
       children: [
@@ -1075,6 +1161,23 @@ class _BroadcastDeck extends StatelessWidget {
     );
   }
 
+  // Fullscreen joins the centered row only when it evens the sides;
+  // otherwise it sits with mute and volume.
+  bool get _fullscreenInRow {
+    final extras = (onPip == null ? 0 : 1) + (favorite == null ? 0 : 1);
+    return live ? (1 + extras + (onAdd == null ? 0 : 1)).isOdd : extras < 2;
+  }
+
+  _DeckAction _fullscreenAction() => _DeckAction(
+    key: const ValueKey('player-fullscreen'),
+    focusNode: nodes.fullscreen,
+    icon: Icons.fullscreen_rounded,
+    label: 'Fullscreen',
+    onPressed: onFullscreen,
+    onBack: onBack,
+    onDown: onDown,
+  );
+
   Widget _utilities() => Row(
     key: const ValueKey('player-utility-controls'),
     mainAxisSize: MainAxisSize.min,
@@ -1096,6 +1199,10 @@ class _BroadcastDeck extends StatelessWidget {
           onDown: onDown,
         ),
       ),
+      if (!_fullscreenInRow) ...[
+        const SizedBox(width: 10),
+        _fullscreenAction(),
+      ],
     ],
   );
 

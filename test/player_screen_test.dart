@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wabbit_tv/src/cinema.dart';
 import 'package:wabbit_tv/src/features/browse/playback_handoff.dart';
+import 'package:wabbit_tv/src/features/library/library_organization_service.dart';
 import 'package:wabbit_tv/src/features/playback/playback_manager.dart';
 import 'package:wabbit_tv/src/features/playback/playback_runtime_adapters.dart';
 import 'package:wabbit_tv/src/features/playback/playback_transport.dart';
@@ -778,6 +779,64 @@ void main() {
     );
     expect(find.text('LIVE'), findsNothing);
   });
+  testWidgets('the star flips Favorite and keeps the item in its groups', (
+    tester,
+  ) async {
+    final organization = _Organization();
+    var changes = 0;
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'source',
+          title: 'Live',
+          providerItemId: '1',
+          extension: 'ts',
+          libraryItemId: 'item-1',
+        ),
+        transportFactory: _FakeTransport.ready,
+        organization: organization,
+        onOrganizationChanged: () => changes++,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Add to Favorites'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(organization.saved.single.$1, isTrue);
+    expect(organization.saved.single.$2, {'kids'});
+    expect(find.byTooltip('Remove from Favorites'), findsOneWidget);
+    expect(changes, 1);
+
+    // A failed save puts the star back and says so.
+    organization.fail = true;
+    await tester.tap(find.byTooltip('Remove from Favorites'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byTooltip('Remove from Favorites'), findsOneWidget);
+    expect(find.text("Couldn't update Favorites."), findsOneWidget);
+    expect(changes, 1);
+  });
+  testWidgets('no star without a library item or organization port', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'source',
+          title: 'Live',
+          providerItemId: '1',
+          extension: 'ts',
+        ),
+        transportFactory: _FakeTransport.ready,
+        organization: _Organization(),
+      ),
+    );
+    await tester.pump();
+    expect(find.byTooltip('Add to Favorites'), findsNothing);
+  });
   testWidgets(
     'compact VOD deck stays within a constrained 480 by 713 viewport',
     (tester) async {
@@ -1202,6 +1261,8 @@ Widget _host({
   Duration startupDeadline = productionPlayerStartupDeadline,
   UsableVideoCallback? onUsableVideo,
   bool? windowControls,
+  LibraryOrganizationPort? organization,
+  VoidCallback? onOrganizationChanged,
 }) => MaterialApp(
   home: PlayerScreen(
     handoff: handoff,
@@ -1228,6 +1289,8 @@ Widget _host({
     startupDeadline: startupDeadline,
     onUsableVideo: onUsableVideo,
     windowControls: windowControls,
+    organization: organization,
+    onOrganizationChanged: onOrganizationChanged,
     onExit: onExit ?? () {},
   ),
 );
@@ -1495,4 +1558,48 @@ class _FakeFullscreen implements FullscreenPort {
   Future<bool> get isFullscreen async => fullscreen;
   @override
   Future<void> setFullscreen(bool value) async => fullscreen = value;
+}
+
+class _Organization implements LibraryOrganizationPort {
+  final saved = <(bool, Set<String>)>[];
+  bool fail = false;
+
+  @override
+  Future<PersonalLibraryOrganization?> loadItem(String libraryItemId) async =>
+      PersonalLibraryOrganization(
+        libraryItemId: libraryItemId,
+        isFavorite: false,
+        groups: const [
+          PersonalLibraryGroupChoice(
+            groupId: 'kids',
+            name: 'Kids',
+            selected: true,
+          ),
+          PersonalLibraryGroupChoice(
+            groupId: 'news',
+            name: 'News',
+            selected: false,
+          ),
+        ],
+      );
+
+  @override
+  Future<PersonalLibraryMutationResult> saveItem({
+    required String libraryItemId,
+    required bool favorite,
+    required Set<String> customGroupIds,
+  }) async {
+    if (fail) {
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.missingItem,
+      );
+    }
+    saved.add((favorite, customGroupIds));
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.changed,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

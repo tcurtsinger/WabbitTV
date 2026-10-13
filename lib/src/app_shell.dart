@@ -1605,6 +1605,11 @@ class _WabbitShellState extends State<WabbitShell> {
         onAddChannel: selectedHandoff.mediaKind == PlaybackMediaKind.live
             ? _beginSecondChannelSelection
             : null,
+        organization: _libraryOrganizationPort,
+        onOrganizationChanged: () {
+          setState(() => _organizationRevision += 1);
+          unawaited(_homeController.refresh());
+        },
       );
     }
     return const SizedBox.expand();
