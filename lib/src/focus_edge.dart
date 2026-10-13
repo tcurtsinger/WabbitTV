@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// The DESIGN.md focus edge for Material buttons: a 2 px amber border while
+/// The app-wide focus edge for Material buttons: a 2 px amber border while
 /// keyboard-focused (warm white when the button is filled amber), otherwise
 /// [rest]. Material's default focus overlay alone is too faint to see.
 WidgetStateProperty<BorderSide> focusEdge({

@@ -46,3 +46,21 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Private planning, design and evidence notes: kept locally and no longer
+# tracked (commits before the README cleanup still contain them)
+/PLAN.md
+/PRODUCT.md
+/DESIGN.md
+/ORCHESTRATION.md
+/docs/
+/.impeccable/
+
+# Never commit local data: catalogs, playlists (they often embed logins), secrets
+*.sqlite
+*.sqlite-*
+*.db
+*.m3u
+*.m3u8
+.env
+.env.*

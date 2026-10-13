@@ -3,7 +3,6 @@
 // STORY: Four credentials lead into a foreground import, then a ready handoff—not a provider dashboard.
 // FIRST VIEWPORT: A centered form owns attention while three equal media stages hold operational truth below.
 // FORM: Crisp 6–8 px edges, semantic controls, visible focus, and short state changes preserve desk-and-couch clarity.
-// FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

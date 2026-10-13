@@ -18,7 +18,6 @@ import '../sources/source_models.dart';
 // FIRST VIEWPORT: 270 px directory, one divider, dominant 64 px-row ledger.
 // FORM: matte graphite, Segoe UI hierarchy, 6 px forms, 1 px lines, and one
 // precise 2 px amber focus edge; no mutation controls or storefront furniture.
-// FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
 
 const _graphite = Color(0xFF111212);
 const _surface = Color(0xFF191A1A);

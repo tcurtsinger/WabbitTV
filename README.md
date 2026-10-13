@@ -1,131 +1,161 @@
+<div align="center">
+
+<img src="assets/branding/wabbit-tv-icon.png" alt="Wabbit TV icon" width="112">
+
 # Wabbit TV
 
-Wabbit TV is a Windows-first, local-first IPTV player for content users provide themselves. It supplies no playlists, channels, movies, or series. Xtream source setup, local catalog import, and basic Live/Movies/Series browsing are implemented; M3U URLs and local M3U files remain later work.
+**A calm, fast IPTV player for Windows that brings your own sources together in one library.**
 
-## Current status
+[![CI](https://github.com/tcurtsinger/WabbitTV/actions/workflows/ci.yml/badge.svg)](https://github.com/tcurtsinger/WabbitTV/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4)
+![Flutter 3.47](https://img.shields.io/badge/Flutter-3.47-02569B?logo=flutter)
 
-Phase 0 feasibility and Phase 1 are complete. Phase 1 includes the **Quiet Broadcast** shell and Home, Xtream Source Setup, OS-backed credentials, background catalog import, bounded SQLite browsing, minimal Movie/Series continuations, and the single-session production player. A maintainer-local Strong production run imported the source, browsed all three catalogs/categories, played one Live item, Movie, and Episode, verified restart persistence without credential re-entry, and recorded no provider-identifying data or credentials.
+</div>
 
-## Run on Windows
+Wabbit TV turns large Xtream and M3U catalogs into one quiet, keyboard-first library. Live TV, movies and series from all your sources sit side by side, search is instant, and everything stays on your PC.
 
-Install Flutter 3.47.0 stable or a compatible Flutter SDK, then:
+> [!NOTE]
+> Wabbit TV supplies **no content**: no channels, playlists, movies or series. Use it only with sources you are entitled to access.
+
+<table>
+  <tr>
+    <td><img src=".github/readme/home.png" alt="Home with pinned shelves and recently watched"></td>
+    <td><img src=".github/readme/browse.png" alt="Live channels from two sources in one list"></td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme/guide.png" alt="TV guide grid with now and next programs"></td>
+    <td><img src=".github/readme/multiview.png" alt="Two live channels side by side in multiview"></td>
+  </tr>
+</table>
+<p align="center"><sub>Screenshots use the built-in synthetic sample catalog.</sub></p>
+
+## Features
+
+**Sources**
+- Xtream Codes accounts, M3U playlist URLs, and local M3U files
+- Up to 100 sources, each refreshable, renamable and switchable on or off
+- Background import that copes with catalogs of 250,000+ items
+
+**Library**
+- One unified Live / Movies / Series library across every source, or narrow it to a single source
+- Search as you type, backed by a local full-text index
+- Favorites and your own custom groups (mixing live, movies and series), pinned to Home in the order you choose
+- Hide whole categories or single items you never want to see
+
+**Watching**
+- Full-screen player with audio and subtitle tracks, resume, and watch history
+- Corner picture-in-picture while you keep browsing, and two-channel side-by-side multiview
+- Automatic recovery from network drops, and a fallback to the same channel on another source
+- Respects your provider's connection limit
+- TV guide with now/next for Xtream live channels
+- Start up on Home, any section, or straight into your last channel
+
+**Built for the couch and the desk**
+- Every screen works with arrow keys and Enter, with a clear amber focus ring
+- On-screen TV keyboard for remote-style text entry
+
+## Privacy and security
+
+- **Local-first.** Your catalog, favorites, groups and history live in a SQLite database on your PC. No accounts, no telemetry, no Wabbit servers.
+- **Network use.** Wabbit TV only connects to the sources you add, and to the stream, artwork and guide addresses those sources hand it.
+- **Logins.** Xtream passwords are encrypted with your Windows account (DPAPI) and never stored in the catalog database.
+- **Secure streams.** HTTPS streams are verified against a bundled Mozilla root certificate list.
+
+## Getting started
+
+There are no prebuilt releases yet, so you build it from source.
+
+### Requirements
+
+- Windows 10 or 11 (64-bit)
+- [Flutter](https://docs.flutter.dev/get-started/install/windows/desktop) 3.47 (stable)
+- Visual Studio 2022 (Build Tools are enough) with the **Desktop development with C++** workload and the **C++ ATL** component
+
+### Build and run
 
 ```powershell
+git clone https://github.com/tcurtsinger/WabbitTV.git
+cd WabbitTV
 flutter pub get
 flutter run -d windows
 ```
 
-### SQLite / FTS5 packaged probe
-
-The default application path does not run a database probe. To run the
-Phase 0 packaged SQLite + FTS5 proof without changing the visible Home:
+For an optimized build:
 
 ```powershell
-flutter run -d windows --dart-define=WABBIT_SQLITE_PROBE=true
-```
-
-Debug stdout reports one line beginning with `WABBIT_SQLITE_PROBE:`. A
-successful result has `"status":"ok"`, a SQLite version, and the deterministic
-FTS5 matches `Night Signal` and `Signal Path`.
-
-### Synthetic 50k catalog scale packaged probe
-
-The default application path does not run this baseline. It creates one
-file-backed temporary SQLite/FTS5 database in a background isolate, generates
-50,000 clearly synthetic Live/Movie/Series records, searches its deterministic
-anchor token, then closes and deletes only its own temporary directory. It does
-not use real provider data, credentials, playlists, or catalog dumps, and its
-timings are recorded baselines rather than optimization targets.
-
-```powershell
-$env:TrackFileAccess = 'false'
-flutter run -d windows --dart-define=WABBIT_CATALOG_SCALE_PROBE=true
-flutter build windows --debug --dart-define=WABBIT_CATALOG_SCALE_PROBE=true
-flutter build windows --release --dart-define=WABBIT_CATALOG_SCALE_PROBE=true
-```
-
-The packaged diagnostic writes exactly one sanitized line beginning with
-`WABBIT_CATALOG_SCALE_PROBE:` containing record counts, import/search timings,
-a tiny synthetic anchor sample, database bytes, and main-isolate heartbeat ticks.
-
-### Strong playback packaged probe
-
-The Phase 0 Strong playback probe is a separate diagnostic target; it never
-adds a route or control to the ordinary Wabbit application. It asks for the
-provider endpoint, username, and password in its local window, keeps them in
-memory only, and does not save or log them. Do not pass real credentials through
-shell arguments, `--dart-define`, or environment variables.
-
-```powershell
-$env:TrackFileAccess = 'false'
-flutter pub get
-flutter build windows --debug -t lib/src/spikes/phase0/playback_probe_main.dart
-flutter build windows --release -t lib/src/spikes/phase0/playback_probe_main.dart
-```
-
-Launch the desired packaged executable manually from the matching Debug or
-Release runner directory. The probe makes no provider call until **Check
-account** is pressed. Its optional two-stream test remains unavailable unless
-the provider reports both a known maximum and enough currently available
-connections, and the maintainer explicitly starts it.
-
-Normal startup resolves locally persisted runtime state. The Phase 0 Home proof also retains three explicit compile-time previews:
-
-```powershell
-# Populated personal shelves.
-flutter run -d windows --dart-define=WABBIT_HOME_FIXTURE=populated
-
-# No source is configured.
-flutter run -d windows --dart-define=WABBIT_HOME_FIXTURE=no-sources
-
-# Sources exist, but Favorites, groups, and history are empty.
-flutter run -d windows --dart-define=WABBIT_HOME_FIXTURE=no-personalization
-```
-
-## Basic Browse review fixture
-
-Phase 1 includes an explicit, synthetic, network-free catalog for packaged
-visual review. It is not used by normal startup and contains no provider data.
-Choose the destination with `live`, `movies`, or `series`:
-
-```powershell
-flutter run -d windows --dart-define=WABBIT_BROWSE_FIXTURE=live
-flutter build windows --release --dart-define=WABBIT_BROWSE_FIXTURE=live
-```
-
-## Production Player review fixture
-
-The Phase 1 player has a separate, synthetic, network-free fixture. It uses the
-real player controls and Windows fullscreen port with an in-memory transport
-that ignores the stream URI. It is not part of normal startup and does not use
-provider data or credentials.
-
-```powershell
-flutter run -d windows -t lib/src/spikes/phase1/production_player_fixture_main.dart
-flutter build windows --debug -t lib/src/spikes/phase1/production_player_fixture_main.dart
-```
-
-## Quality checks
-
-```powershell
-dart format lib test
-flutter analyze
-flutter test
-flutter build windows --debug
 flutter build windows --release
 ```
 
-On this workstation, Visual Studio's file tracker stalls during CMake compiler detection. Use the process-scoped workaround below; it does not change the project or persist after the shell closes:
+The app ends up at `build\windows\x64\runner\Release\wabbit_tv.exe`. Open it, choose **Add source**, and enter your Xtream account or M3U playlist.
+
+> [!TIP]
+> If the build hangs while CMake detects the compiler, run `$env:TrackFileAccess = 'false'` in that PowerShell window and build again.
+
+## Keyboard shortcuts
+
+| Where | Keys | Action |
+|---|---|---|
+| Everywhere | Arrow keys, Enter | Move focus, select |
+| Everywhere | Esc | Back / open the navigation rail |
+| Player | Space, K, media Play/Pause | Play / pause |
+| Player | ← / → | Seek back / forward 10 s (movies and episodes; hold to keep seeking) |
+| Player | F, or double-click the video | Fullscreen on / off |
+| Player | M | Mute on / off |
+
+## Development
 
 ```powershell
-$env:TrackFileAccess = 'false'
-flutter build windows --debug
+dart format lib test   # formatting
+flutter analyze        # static analysis
+flutter test           # 600+ unit and widget tests
 ```
 
-## Privacy
+GitHub Actions runs all of these, plus a release build, on every pull request.
 
-Wabbit TV has no telemetry or app-controlled network destination. Runtime network activity only contacts a source explicitly configured by the user.
+<details>
+<summary><b>Synthetic preview fixtures and probes</b></summary>
+
+These run the real UI against built-in synthetic data. They never touch a real provider.
+
+| Command | Shows |
+|---|---|
+| `flutter run -d windows --dart-define=WABBIT_HOME_FIXTURE=populated` | Home with shelves (also `no-sources`, `no-personalization`) |
+| `flutter run -d windows --dart-define=WABBIT_BROWSE_FIXTURE=live` | Browse with a sample catalog (also `movies`, `series`) |
+| `flutter run -d windows -t lib/src/spikes/phase1/production_player_fixture_main.dart` | The player with an in-memory transport |
+| `flutter run -d windows --dart-define=WABBIT_SQLITE_PROBE=true` | SQLite + FTS5 self-check, printed to stdout |
+| `flutter run -d windows --dart-define=WABBIT_CATALOG_SCALE_PROBE=true` | 50k-item import and search timings |
+
+</details>
+
+### Project layout
+
+```text
+lib/
+├── main.dart
+└── src/
+    ├── app_shell.dart        # navigation rail, routing, playback surfaces
+    └── features/
+        ├── sources/          # Xtream + M3U import, SQLite catalog, credentials
+        ├── browse/           # Live / Movies / Series lists
+        ├── search/           # full-text search
+        ├── library/          # favorites and custom groups
+        ├── guide/            # TV guide
+        ├── playback/         # player, picture-in-picture, multiview (media_kit)
+        ├── home/             # Home shelves
+        ├── artwork/          # artwork loading and cache
+        └── settings/         # general settings
+```
+
+## Roadmap
+
+- **Android TV, Google TV and Fire TV.** The interface is already remote-first. Next comes the Android build.
+- Prebuilt Windows releases
+
+## Built with
+
+[Flutter](https://flutter.dev) · [media_kit](https://github.com/media-kit/media-kit) (libmpv) · [SQLite](https://sqlite.org) with FTS5 via [sqlite3](https://pub.dev/packages/sqlite3) · [flutter_secure_storage](https://pub.dev/packages/flutter_secure_storage)
 
 ## License
 
-[GNU Affero General Public License v3.0](./LICENSE).
+[GNU Affero General Public License v3.0](LICENSE)
