@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wabbit_tv/src/cinema.dart';
 import 'package:wabbit_tv/src/features/artwork/source_artwork.dart';
 import 'package:wabbit_tv/src/features/browse/basic_browse_screen.dart';
 import 'package:wabbit_tv/src/features/browse/catalog_scope_controller.dart';
@@ -21,7 +22,7 @@ void main() {
 
       expect(find.text(kind.label), findsAtLeastNWidgets(1));
       expect(find.text('All ${kind.label}'), findsAtLeastNWidgets(1));
-      expect(find.text('${kind.label} first'), findsOneWidget);
+      expect(find.text('${kind.label} first'), findsAtLeastNWidgets(1));
       expect(find.byKey(ValueKey('browse-items-${kind.name}')), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     }
@@ -94,7 +95,7 @@ void main() {
     final addSource = find.byKey(const ValueKey('browse-action-Add source'));
     final addSourceDecoration =
         tester.widget<Container>(addSource).decoration! as BoxDecoration;
-    expect(addSourceDecoration.color, const Color(0xFFFFB347));
+    expect(addSourceDecoration.color, Cinema.amber);
     await tester.pumpWidget(const SizedBox.shrink());
 
     await tester.pumpWidget(
@@ -106,7 +107,7 @@ void main() {
     final retry = find.byKey(const ValueKey('browse-action-Try again'));
     final retryDecoration =
         tester.widget<Container>(retry).decoration! as BoxDecoration;
-    expect(retryDecoration.color, const Color(0xFF191A1A));
+    expect(retryDecoration.color, const Color(0xFF141419));
   });
 
   testWidgets('launcher and no-source actions activate through remote keys', (
@@ -156,10 +157,7 @@ void main() {
     await tester.pump();
     final focusedAddSource =
         tester.widget<Container>(action).decoration! as BoxDecoration;
-    expect(
-      (focusedAddSource.border! as Border).top.color,
-      const Color(0xFFF4F0E7),
-    );
+    expect((focusedAddSource.border! as Border).top.color, Cinema.text);
     expect((focusedAddSource.border! as Border).top.width, 2);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     expect(opened, 1);
@@ -193,12 +191,17 @@ void main() {
       find.byKey(const ValueKey('browse-item-series-2')),
     );
     expect(row.right, lessThanOrEqualTo(1265));
-    expect(find.byIcon(Icons.tv_outlined), findsAtLeastNWidgets(1));
+    // A poster without art shows its title in the tile.
+    expect(
+      find.descendant(
+        of: find.byType(SourceArtwork),
+        matching: find.byType(Text),
+      ),
+      findsAtLeastNWidgets(1),
+    );
   });
 
-  testWidgets('thumbnails stay fixed, neutral, and code-native', (
-    tester,
-  ) async {
+  testWidgets('posters keep one 2:3 size with or without art', (tester) async {
     await tester.pumpWidget(_screen(kind: SourceMediaKind.movies));
     await tester.pumpAndSettle();
 
@@ -208,8 +211,9 @@ void main() {
     );
     expect(artwork, findsOneWidget);
     expect(missingArtwork, findsOneWidget);
-    expect(tester.getSize(artwork), const Size(50, 36));
-    expect(tester.getSize(missingArtwork), const Size(50, 36));
+    final poster = tester.getSize(artwork);
+    expect(poster.height / poster.width, closeTo(1.5, 0.05));
+    expect(tester.getSize(missingArtwork), poster);
     expect(tester.widget<SourceArtwork>(artwork).loader, isNull);
     expect(tester.widget<SourceArtwork>(missingArtwork).loader, isNull);
     expect(tester.widget<SourceArtwork>(artwork).loadWhenVisible, isTrue);
@@ -218,7 +222,53 @@ void main() {
       isTrue,
     );
     expect(find.byType(Image), findsNothing);
-    expect(find.byIcon(Icons.movie_outlined), findsAtLeastNWidgets(1));
+    expect(
+      find.descendant(of: missingArtwork, matching: find.byType(Text)),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('poster grid moves by row and column, then back to categories', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      _screen(
+        kind: SourceMediaKind.movies,
+        data: _FakeData.withItems(SourceMediaKind.movies, 12),
+      ),
+    );
+    await tester.pumpAndSettle();
+    String? focused() => FocusManager.instance.primaryFocus?.debugLabel;
+    Future<void> press(LogicalKeyboardKey key) async {
+      await tester.sendKeyEvent(key);
+      await tester.pump();
+    }
+
+    expect(focused(), 'browse initial');
+    final top = tester
+        .getRect(find.byKey(const ValueKey('browse-item-movies-0')))
+        .top;
+    var columns = 1;
+    while (tester
+            .getRect(find.byKey(ValueKey('browse-item-movies-$columns')))
+            .top ==
+        top) {
+      columns++;
+    }
+    expect(columns, greaterThan(2));
+
+    await press(LogicalKeyboardKey.arrowRight);
+    expect(focused(), 'browse movies movies-1');
+    await press(LogicalKeyboardKey.arrowDown);
+    expect(focused(), 'browse movies movies-${1 + columns}');
+    await press(LogicalKeyboardKey.arrowUp);
+    expect(focused(), 'browse movies movies-1');
+    await press(LogicalKeyboardKey.arrowLeft);
+    expect(focused(), 'browse initial');
+    await press(LogicalKeyboardKey.arrowLeft);
+    expect(focused(), 'browse category 0');
   });
 
   testWidgets(
@@ -428,7 +478,7 @@ void main() {
 
     expect(find.byKey(const ValueKey('browse-item-harbor-0')), findsOneWidget);
     expect(
-      find.text('Refreshing · showing saved catalog · 3 items · Harbor North'),
+      find.text('Refreshing · showing saved catalog · 3 channels'),
       findsOneWidget,
     );
     expect(find.text('Catalog unavailable'), findsNothing);
@@ -619,7 +669,7 @@ void main() {
       expect(find.text('Categories'), findsOneWidget);
       expect(find.text('News'), findsOneWidget);
       expect(find.text('SOURCE'), findsNothing);
-      expect(find.text('3 items · Harbor North'), findsOneWidget);
+      expect(find.text('3 channels'), findsOneWidget);
       expect(find.text('Harbor North'), findsOneWidget);
     },
   );
@@ -635,8 +685,8 @@ void main() {
     await fixture.controller.select(const LibraryScope.source('harbor'));
     await tester.pumpAndSettle();
 
-    expect(find.text('1 items · Harbor North'), findsOneWidget);
-    expect(find.text('3 items · Harbor North'), findsNothing);
+    expect(find.text('1 channel'), findsOneWidget);
+    expect(find.text('3 channels'), findsNothing);
   });
 
   testWidgets('late named-source resolution cannot overwrite a newer scope', (
@@ -664,7 +714,7 @@ void main() {
     expect(fixture.controller.scope.isAll, isTrue);
     expect(find.text('150 available across 2 sources'), findsOneWidget);
     expect(find.text('Unified title 0'), findsOneWidget);
-    expect(find.text('3 items · Harbor North'), findsNothing);
+    expect(find.text('3 channels'), findsNothing);
     expect(find.text('Categories'), findsNothing);
   });
 
@@ -825,9 +875,7 @@ void main() {
     expect(find.text('Categories'), findsOneWidget);
     expect(find.byKey(const ValueKey('browse-item-harbor-0')), findsOneWidget);
     expect(
-      find.text(
-        'Refresh failed · showing saved catalog · 3 items · Harbor North',
-      ),
+      find.text('Refresh failed · showing saved catalog · 3 channels'),
       findsOneWidget,
     );
     expect(find.text('Catalog unavailable'), findsNothing);

@@ -1104,8 +1104,18 @@ void main() {
       find.byKey(const ValueKey('browse-now-next-channel-1')),
       findsOneWidget,
     );
-    expect(find.textContaining('Now · Morning News'), findsOneWidget);
-    expect(find.textContaining('Next ·'), findsNWidgets(2));
+    // A channel airing something shows that program with its progress;
+    // the row leaves Next to the guide.
+    expect(find.text('Morning News'), findsOneWidget);
+    expect(find.text('Local Weather'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('browse-now-next-channel-1')),
+        matching: find.byType(LinearProgressIndicator),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Next ·'), findsNothing);
     expect(data.loadedWindowIds.length, lessThanOrEqualTo(20));
     expect(data.refreshedIds.length, lessThanOrEqualTo(20));
   });

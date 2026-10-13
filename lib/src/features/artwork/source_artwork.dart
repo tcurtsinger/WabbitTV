@@ -22,6 +22,7 @@ class SourceArtwork extends StatefulWidget {
     this.explicitlyActivated = false,
     this.width = 50,
     this.height = 36,
+    this.placeholder,
   });
 
   final String? locator;
@@ -37,6 +38,10 @@ class SourceArtwork extends StatefulWidget {
   final bool explicitlyActivated;
   final double width;
   final double height;
+
+  /// Shown instead of the kind icon while there is no image, such as a
+  /// poster's title.
+  final Widget? placeholder;
 
   @override
   State<SourceArtwork> createState() => _SourceArtworkState();
@@ -184,7 +189,8 @@ class _SourceArtworkState extends State<SourceArtwork> {
         // A lighter tile keeps dark channel logos readable.
         color: widget.kind == SourceMediaKind.live ? _logoTile : _raised,
         child: _bytes == null
-            ? _ArtworkFallback(kind: widget.kind, loading: _loading)
+            ? widget.placeholder ??
+                  _ArtworkFallback(kind: widget.kind, loading: _loading)
             : Padding(
                 // Channel logos show whole with room around them; posters
                 // and stills fill the box.
@@ -208,7 +214,8 @@ class _SourceArtworkState extends State<SourceArtwork> {
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       if (mounted) _decodeFailed();
                     });
-                    return _ArtworkFallback(kind: widget.kind, loading: false);
+                    return widget.placeholder ??
+                        _ArtworkFallback(kind: widget.kind, loading: false);
                   },
                 ),
               ),

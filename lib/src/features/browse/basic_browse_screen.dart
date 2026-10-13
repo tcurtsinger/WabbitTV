@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import '../../cinema.dart';
 import '../../focus_edge.dart';
 import '../artwork/artwork_loader.dart';
 import '../artwork/source_artwork.dart';
@@ -17,13 +18,16 @@ import 'minimal_continuations.dart';
 import 'playback_handoff.dart';
 import 'series_info_loader.dart';
 
-const _graphite = Color(0xFF111212);
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
+const _graphite = Cinema.ink;
+const _surface = Color(0xFF141419);
+const _raised = Color(0xFF1E1E23);
+const _line = Color(0x1AF5F1E8);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.faint;
+const _amber = Cinema.amber;
+
+/// Space under each poster row, inside the grid's row extent.
+const _posterRowGap = 16.0;
 
 String? _catalogScopeState(CatalogScopeController controller) {
   final selected = controller.selectedSource;
@@ -233,6 +237,11 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
   );
   final FocusNode _scopeFocus = FocusNode(debugLabel: 'catalog scope');
   final ScrollController _itemsScroll = ScrollController();
+
+  /// Movies and series show as a poster grid; its shape comes from layout.
+  bool get _posterGrid => widget.kind != SourceMediaKind.live;
+  int _gridColumns = 1;
+  double _gridRowExtent = 220;
   final ScrollController _categoriesScroll = ScrollController();
   final Map<int, FocusNode> _mountedCategoryNodes = {};
   final Map<String, FocusNode> _mountedItemNodes = {};
@@ -1034,10 +1043,11 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
 
   void _focusItemAt(int index) {
     if (index < 0 || index >= _items.length) return;
+    final columns = _posterGrid ? _gridColumns : 1;
     _focusVirtualRow(
       controller: _itemsScroll,
-      index: index,
-      rowExtent: _itemRowExtent,
+      index: index ~/ columns,
+      rowExtent: _posterGrid ? _gridRowExtent : _itemRowExtent,
       node: () => index == 0
           ? widget.initialFocus
           : _mountedItemNodes[_items[index].id],
@@ -1309,16 +1319,12 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
 
   double get _itemRowExtent {
     final scaled = MediaQuery.textScalerOf(context).scale(16);
-    final base =
-        widget.kind == SourceMediaKind.live && widget.epgWindowPort != null
-        ? 74
-        : 60;
-    return base + ((scaled - 16).clamp(0, 16) * 1.25);
+    return 68 + ((scaled - 16).clamp(0, 16) * 1.25);
   }
 
   double get _categoryRowExtent {
     final scaled = MediaQuery.textScalerOf(context).scale(15);
-    return 48 + ((scaled - 15).clamp(0, 15) * 1.2);
+    return 40 + ((scaled - 15).clamp(0, 15) * 1.2);
   }
 
   void _openScopeMenu() {
@@ -1452,7 +1458,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
               child: Stack(
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(32, 22, 32, 32),
+                    padding: const EdgeInsets.fromLTRB(24, 22, 32, 0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -1487,7 +1493,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                           onOpenScope: _openScopeMenu,
                           onScopeDown: () => _focusFromScope(narrow: narrow),
                         ),
-                        const SizedBox(height: 22),
+                        const SizedBox(height: 18),
                         Expanded(
                           child:
                               _categories == null || _loading && _items.isEmpty
@@ -1501,7 +1507,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                                   children: [
                                     if (!allSources && !narrow) ...[
                                       SizedBox(
-                                        width: 228,
+                                        width: 200,
                                         child: _CategoryPane(
                                           categories: _categories!,
                                           selected: _bookmark.selection,
@@ -1523,7 +1529,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
                                                     _scopeFocus.requestFocus(),
                                         ),
                                       ),
-                                      const SizedBox(width: 20),
+                                      const SizedBox(width: 24),
                                     ],
                                     Expanded(child: _buildItems()),
                                   ],
@@ -1609,8 +1615,15 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
           ? totalSummary
           : '$sourceState · $totalSummary';
     }
-    final totalSummary =
-        '$count items · ${source?.name ?? controller?.scopeLabel ?? 'Source'}';
+    final noun = switch (widget.kind) {
+      SourceMediaKind.live => _total == 1 ? 'channel' : 'channels',
+      SourceMediaKind.movies => _total == 1 ? 'movie' : 'movies',
+      SourceMediaKind.series => 'series',
+    };
+    // With a scope pill the source name is already on screen.
+    final totalSummary = controller == null
+        ? '$count $noun · ${source?.name ?? 'Source'}'
+        : '$count $noun';
     return sourceState == null ? totalSummary : '$sourceState · $totalSummary';
   }
 
@@ -1641,123 +1654,243 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         onChangeScope: _openScopeMenu,
       );
     }
-    final itemExtent = _itemRowExtent;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 15, 18, 13),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    selected?.name ?? 'All ${widget.kind.label}',
-                    key: const ValueKey('browse-selected-category'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: _warmWhite,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+    final nowUtc = (widget.now?.call() ?? DateTime.now()).toUtc();
+    const overline = TextStyle(
+      color: _quietText,
+      fontSize: 12,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.3,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  selected?.name ?? 'All ${widget.kind.label}',
+                  key: const ValueKey('browse-selected-category'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: overline,
                 ),
-                if (allSources) ...[
-                  const SizedBox(width: 12),
-                  const SizedBox(
-                    width: 170,
-                    child: Text(
-                      'SOURCE',
-                      style: TextStyle(
-                        color: _quietText,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
+              ),
+              if (allSources && !_posterGrid) ...[
+                const SizedBox(width: 12),
+                const SizedBox(
+                  width: 170,
+                  child: Text('SOURCE', style: overline),
+                ),
+                const SizedBox(width: 52),
               ],
-            ),
+            ],
           ),
-          const Divider(height: 1, color: _line),
-          Expanded(
-            child: ListView.builder(
-              key: ValueKey('browse-items-${widget.kind.name}'),
-              controller: _itemsScroll,
-              itemExtent: itemExtent,
-              scrollCacheExtent: const ScrollCacheExtent.pixels(360),
-              itemCount: _items.length + (_loadingMore ? 3 : 0),
-              itemBuilder: (context, index) {
-                if (index >= _items.length) return const _ItemSkeleton();
-                final item = _items[index];
-                final epgCatalogId = allSources
-                    ? _bookmark.epgCatalogIds[item.id]
-                    : item.id;
-                return _CatalogRow(
-                  key: ValueKey('browse-row-${item.id}'),
-                  item: item,
-                  kind: widget.kind,
-                  initialFocusNode: index == 0 ? widget.initialFocus : null,
-                  autofocus: index == 0 && !_restoringCachedFocus,
-                  artworkLoader: widget.artworkLoader,
-                  onNodeMounted: _mountItemNode,
-                  onNodeUnmounted: _unmountItemNode,
-                  onFocused: (node) {
-                    if (!_restoringCachedFocus) {
-                      _bookmark.focusedItemId = item.id;
-                    }
-                    widget.onContentFocus(node);
-                  },
-                  onLeft: () {
-                    if (allSources) {
-                      widget.onOpenRail();
-                    } else {
-                      _focusSelectedCategory(rowExtent: _categoryRowExtent);
-                    }
-                  },
-                  onUp: index == 0
-                      ? (widget.scopeController == null
-                            ? null
-                            : () => _scopeFocus.requestFocus())
-                      : () => _focusItemAt(index - 1),
-                  onDown: () {
-                    if (index + 1 < _items.length) {
-                      _focusItemAt(index + 1);
-                    } else if (_nextCursor != null) {
-                      unawaited(_loadMore());
-                    }
-                  },
-                  onActivate: () => _activateItem(item),
-                  onOrganize: widget.onOrganizeItem == null
-                      ? null
-                      : () => widget.onOrganizeItem!(item),
-                  sourceName: allSources
-                      ? _bookmark.sourceNames[item.id]
-                      : null,
-                  nowNext: epgCatalogId == null
-                      ? null
-                      : _epgWindows[epgCatalogId]?.nowNext,
-                );
-              },
-            ),
+        ),
+        Expanded(
+          child: _BottomFade(
+            child: _posterGrid
+                ? LayoutBuilder(
+                    builder: (context, constraints) {
+                      final textScaler = MediaQuery.textScalerOf(context);
+                      const gap = 18.0;
+                      final width = constraints.maxWidth - 16;
+                      final columns = ((width + gap) / (112 + gap))
+                          .floor()
+                          .clamp(2, 10);
+                      final tileWidth = (width - gap * (columns - 1)) / columns;
+                      _gridColumns = columns;
+                      _gridRowExtent =
+                          tileWidth * 1.5 +
+                          8 +
+                          textScaler.scale(12.5) * 1.4 +
+                          (allSources ? textScaler.scale(11.5) * 1.4 : 0) +
+                          _posterRowGap;
+                      return GridView.builder(
+                        key: ValueKey('browse-items-${widget.kind.name}'),
+                        controller: _itemsScroll,
+                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 48),
+                        scrollCacheExtent: const ScrollCacheExtent.pixels(360),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: gap,
+                          mainAxisExtent: _gridRowExtent,
+                        ),
+                        itemCount: _items.length + (_loadingMore ? columns : 0),
+                        itemBuilder: (context, index) => index >= _items.length
+                            ? const Padding(
+                                padding: EdgeInsets.only(bottom: 44),
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: _surface,
+                                    borderRadius: BorderRadius.all(
+                                      Radius.circular(12),
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : _itemTile(
+                                index,
+                                columns: columns,
+                                allSources: allSources,
+                                nowUtc: nowUtc,
+                              ),
+                      );
+                    },
+                  )
+                : ListView.builder(
+                    key: ValueKey('browse-items-${widget.kind.name}'),
+                    controller: _itemsScroll,
+                    itemExtent: _itemRowExtent,
+                    padding: const EdgeInsets.only(bottom: 48),
+                    scrollCacheExtent: const ScrollCacheExtent.pixels(360),
+                    itemCount: _items.length + (_loadingMore ? 3 : 0),
+                    itemBuilder: (context, index) => index >= _items.length
+                        ? const _ItemSkeleton()
+                        : _itemTile(
+                            index,
+                            columns: 1,
+                            allSources: allSources,
+                            nowUtc: nowUtc,
+                          ),
+                  ),
           ),
-          if (_pageError)
-            _PageErrorFooter(onRetry: () => unawaited(_loadMore())),
-          if (_error != null && _items.isNotEmpty)
-            _PageErrorFooter(
-              label: 'Catalog update failed. Showing the last usable list.',
-              onRetry: () => unawaited(_loadCatalog(resetSelection: false)),
-            ),
-        ],
-      ),
+        ),
+        if (_pageError) _PageErrorFooter(onRetry: () => unawaited(_loadMore())),
+        if (_error != null && _items.isNotEmpty)
+          _PageErrorFooter(
+            label: 'Catalog update failed. Showing the last usable list.',
+            onRetry: () => unawaited(_loadCatalog(resetSelection: false)),
+          ),
+      ],
     );
   }
+
+  /// One list row or grid tile. Arrow keys move by [columns] vertically;
+  /// Left from the first column returns to the categories (or the rail).
+  Widget _itemTile(
+    int index, {
+    required int columns,
+    required bool allSources,
+    required DateTime nowUtc,
+  }) {
+    final item = _items[index];
+    final column = index % columns;
+    final epgCatalogId = allSources
+        ? _bookmark.epgCatalogIds[item.id]
+        : item.id;
+    return _CatalogRow(
+      key: ValueKey('browse-row-${item.id}'),
+      item: item,
+      kind: widget.kind,
+      poster: _posterGrid,
+      initialFocusNode: index == 0 ? widget.initialFocus : null,
+      autofocus: index == 0 && !_restoringCachedFocus,
+      artworkLoader: widget.artworkLoader,
+      onNodeMounted: _mountItemNode,
+      onNodeUnmounted: _unmountItemNode,
+      onFocused: (node) {
+        if (!_restoringCachedFocus) {
+          _bookmark.focusedItemId = item.id;
+        }
+        widget.onContentFocus(node);
+      },
+      onLeft: column > 0
+          ? () => _focusItemAt(index - 1)
+          : allSources
+          ? widget.onOpenRail
+          : () => _focusSelectedCategory(rowExtent: _categoryRowExtent),
+      onRight: _posterGrid
+          ? () {
+              if (column + 1 < columns) _focusItemAt(index + 1);
+            }
+          : null,
+      onUp: index < columns
+          ? (widget.scopeController == null
+                ? null
+                : () => _scopeFocus.requestFocus())
+          : () => _focusItemAt(index - columns),
+      onDown: () {
+        if (index + columns < _items.length) {
+          _focusItemAt(index + columns);
+        } else if (_nextCursor != null) {
+          unawaited(_loadMore());
+        } else if (index ~/ columns < (_items.length - 1) ~/ columns) {
+          _focusItemAt(_items.length - 1);
+        }
+      },
+      onActivate: () => _activateItem(item),
+      onOrganize: widget.onOrganizeItem == null
+          ? null
+          : () => widget.onOrganizeItem!(item),
+      sourceName: allSources ? _bookmark.sourceNames[item.id] : null,
+      nowNext: epgCatalogId == null ? null : _epgWindows[epgCatalogId]?.nowNext,
+      nowUtc: nowUtc,
+    );
+  }
+}
+
+/// Fades a scrolling list into the ink at the bottom edge. Lists pad their
+/// end by the fade's height so the last item can scroll clear of it.
+class _BottomFade extends StatelessWidget {
+  const _BottomFade({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      Positioned.fill(child: child),
+      const Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: 48,
+        child: IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [Cinema.ink, Color(0x000B0B0E)],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+/// The round Organize button a row or poster shows while focused or hovered.
+class _OrganizeButton extends StatelessWidget {
+  const _OrganizeButton({required this.onPressed, this.size = 34});
+
+  final VoidCallback onPressed;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Organize',
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onPressed,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: const BoxDecoration(
+          color: Color(0xB80B0B0E),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(
+          Icons.bookmark_add_outlined,
+          size: size * 0.5,
+          color: _warmWhite,
+        ),
+      ),
+    ),
+  );
 }
 
 sealed class _BrowseContinuation {
@@ -1946,34 +2079,40 @@ class _DirectoryHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
             children: [
-              Text(
-                kind.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: _warmWhite,
-                  fontSize: 31,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.7,
+              Flexible(
+                child: Text(
+                  kind.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _warmWhite,
+                    fontFamily: Cinema.display,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.6,
+                  ),
                 ),
               ),
-              const SizedBox(height: 5),
-              Text(
-                summary,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: _quietText, fontSize: 14),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Text(
+                  summary,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: _quietText, fontSize: 13),
+                ),
               ),
             ],
           ),
         ),
         if (scopeLabel != null) ...[
           SizedBox(width: narrow ? 12 : 16),
-          SizedBox(
-            width: narrow ? 160 : 184,
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: narrow ? 160 : 240),
             child: _ScopeButton(
               label: scopeLabel!,
               focusNode: scopeFocusNode,
@@ -2044,34 +2183,42 @@ class _ScopeButtonState extends State<_ScopeButton> {
           widget.focusNode.requestFocus();
           widget.onPressed();
         },
-        child: Container(
+        child: AnimatedContainer(
           key: const ValueKey('catalog-scope-control'),
-          height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          duration: const Duration(milliseconds: 120),
+          height: 40,
+          padding: const EdgeInsets.fromLTRB(14, 0, 12, 0),
           decoration: BoxDecoration(
-            color: _surface,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: _focused ? _amber : _line, width: 2),
+            color: _focused ? Cinema.amber : Cinema.glass,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: _focused ? [Cinema.focusGlow.last] : const [],
           ),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
+              Icon(
+                Icons.layers_outlined,
+                size: 16,
+                color: _focused ? Cinema.amberInk : Cinema.quiet,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
                 child: Text(
                   widget.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _warmWhite,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
+                  style: TextStyle(
+                    color: _focused ? Cinema.amberInk : Cinema.quiet,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              const Icon(
+              const SizedBox(width: 6),
+              Icon(
                 Icons.keyboard_arrow_down,
                 size: 18,
-                color: _quietText,
+                color: _focused ? Cinema.amberInk : Cinema.quiet,
               ),
             ],
           ),
@@ -2354,26 +2501,26 @@ class _CategoryPane extends StatelessWidget {
   final VoidCallback? onUpFromFirst;
 
   @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      color: _surface,
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(8),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(18, 15, 18, 13),
-          child: Text(
-            'Categories',
-            style: TextStyle(color: _warmWhite, fontWeight: FontWeight.w700),
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Padding(
+        padding: EdgeInsets.fromLTRB(12, 0, 12, 8),
+        child: Text(
+          'Categories',
+          style: TextStyle(
+            color: _quietText,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.3,
           ),
         ),
-        const Divider(height: 1, color: _line),
-        Expanded(
+      ),
+      Expanded(
+        child: _BottomFade(
           child: ListView.builder(
             controller: controller,
+            padding: const EdgeInsets.only(bottom: 48),
             itemCount: categories.length,
             itemExtent: rowExtent,
             itemBuilder: (context, index) => _CategoryRow(
@@ -2395,8 +2542,8 @@ class _CategoryPane extends StatelessWidget {
             ),
           ),
         ),
-      ],
-    ),
+      ),
+    ],
   );
 }
 
@@ -2603,16 +2750,20 @@ class _CategoryRowState extends State<_CategoryRow> {
           _focusNode.requestFocus();
           widget.onChoose();
         },
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          margin: const EdgeInsets.symmetric(vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: widget.selected ? _raised : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: _focused ? _amber : Colors.transparent,
-              width: 2,
-            ),
+            // Focus fills the pill solid amber: the glow ring would show
+            // through the selected pill's translucent fill.
+            color: _focused
+                ? Cinema.amber
+                : widget.selected
+                ? Cinema.glass
+                : const Color(0x00000000),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: _focused ? [Cinema.focusGlow.last] : const [],
           ),
           child: Row(
             children: [
@@ -2622,18 +2773,29 @@ class _CategoryRowState extends State<_CategoryRow> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: widget.selected ? _warmWhite : _quietText,
-                    fontSize: 15,
+                    color: _focused
+                        ? Cinema.amberInk
+                        : widget.selected
+                        ? Cinema.amber
+                        : Cinema.quiet,
+                    fontSize: 14,
                     fontWeight: widget.selected
                         ? FontWeight.w700
-                        : FontWeight.w500,
+                        : FontWeight.w600,
                   ),
                 ),
               ),
               const SizedBox(width: 8),
               Text(
                 _formatCount(widget.category.itemCount),
-                style: const TextStyle(color: _quietText, fontSize: 13),
+                style: TextStyle(
+                  color: _focused
+                      ? Cinema.amberInk
+                      : widget.selected
+                      ? Cinema.amber
+                      : _quietText,
+                  fontSize: 12.5,
+                ),
               ),
             ],
           ),
@@ -2658,9 +2820,12 @@ class _CatalogRow extends StatefulWidget {
     required this.onUp,
     required this.onDown,
     required this.onActivate,
+    this.onRight,
+    this.poster = false,
     this.onOrganize,
     this.sourceName,
     this.nowNext,
+    this.nowUtc,
   });
   final BrowseCatalogItem item;
   final SourceMediaKind kind;
@@ -2674,15 +2839,23 @@ class _CatalogRow extends StatefulWidget {
   final VoidCallback? onUp;
   final VoidCallback onDown;
   final VoidCallback onActivate;
+
+  /// Grid tiles move right. Without it, Right opens Organize on a list row.
+  final VoidCallback? onRight;
+
+  /// Movies and series show as a poster tile instead of a list row.
+  final bool poster;
   final VoidCallback? onOrganize;
   final String? sourceName;
   final EpgNowNext? nowNext;
+  final DateTime? nowUtc;
   @override
   State<_CatalogRow> createState() => _CatalogRowState();
 }
 
 class _CatalogRowState extends State<_CatalogRow> {
   bool _focused = false;
+  bool _hovered = false;
   late final FocusNode _ownedFocus;
 
   FocusNode get _focusNode => widget.initialFocusNode ?? _ownedFocus;
@@ -2736,6 +2909,9 @@ class _CatalogRowState extends State<_CatalogRow> {
         case LogicalKeyboardKey.arrowDown:
           widget.onDown();
           return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowRight when widget.onRight != null:
+          widget.onRight!();
+          return KeyEventResult.handled;
         case LogicalKeyboardKey.arrowRight:
         case LogicalKeyboardKey.contextMenu:
           widget.onOrganize?.call();
@@ -2766,107 +2942,257 @@ class _CatalogRowState extends State<_CatalogRow> {
               const CustomSemanticsAction(label: 'Organize item'):
                   widget.onOrganize!,
             },
-      child: GestureDetector(
-        onTap: () {
-          _focusNode.requestFocus();
-          widget.onActivate();
-        },
-        child: Container(
-          key: ValueKey('browse-item-${widget.item.id}'),
-          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: _focused ? _raised : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: _focused ? _amber : Colors.transparent,
-              width: 2,
-            ),
-          ),
-          child: Row(
-            children: [
-              SourceArtwork(
-                key: ValueKey('browse-artwork-${widget.item.id}'),
-                locator: widget.item.artworkLocator,
-                kind: widget.item.kind,
-                loader: widget.artworkLoader,
-                focused: _focused,
-                loadWhenVisible: true,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.item.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: _warmWhite,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (widget.nowNext != null &&
-                        (widget.nowNext!.current != null ||
-                            widget.nowNext!.next != null)) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        _nowNextLabel(context, widget.nowNext!),
-                        key: ValueKey('browse-now-next-${widget.item.id}'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: _quietText, fontSize: 12),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              if (widget.sourceName != null) ...[
-                const SizedBox(width: 12),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 170),
-                  child: Text(
-                    widget.sourceName!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: _quietText, fontSize: 13),
-                  ),
-                ),
-              ],
-              if (widget.onOrganize != null) ...[
-                const SizedBox(width: 8),
-                Tooltip(
-                  message: 'Organize',
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () {
-                      _focusNode.requestFocus();
-                      widget.onOrganize!();
-                    },
-                    child: const Padding(
-                      padding: EdgeInsets.all(7),
-                      child: Icon(
-                        Icons.bookmark_add_outlined,
-                        size: 18,
-                        color: _quietText,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-              if (widget.kind != SourceMediaKind.live) ...[
-                const SizedBox(width: 12),
-                const Icon(Icons.chevron_right, size: 19, color: _quietText),
-              ],
-            ],
-          ),
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: () {
+            _focusNode.requestFocus();
+            widget.onActivate();
+          },
+          child: widget.poster ? _poster(context) : _row(context),
         ),
       ),
     ),
   );
+
+  void _organize() {
+    _focusNode.requestFocus();
+    widget.onOrganize!();
+  }
+
+  Widget _row(BuildContext context) {
+    final guide = _guideLine(context);
+    return AnimatedContainer(
+      key: ValueKey('browse-item-${widget.item.id}'),
+      duration: const Duration(milliseconds: 120),
+      margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      padding: const EdgeInsets.fromLTRB(6, 0, 10, 0),
+      decoration: BoxDecoration(
+        // Opaque when focused so the ring stays a ring.
+        color: _focused
+            ? _raised
+            : _hovered
+            ? Cinema.glass
+            : const Color(0x00000000),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: _focused ? Cinema.focusGlow : const [],
+      ),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: SourceArtwork(
+              key: ValueKey('browse-artwork-${widget.item.id}'),
+              locator: widget.item.artworkLocator,
+              kind: widget.item.kind,
+              loader: widget.artworkLoader,
+              focused: _focused,
+              loadWhenVisible: true,
+              width: 88,
+              height: 50,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _warmWhite,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (guide != null) ...[const SizedBox(height: 4), guide],
+              ],
+            ),
+          ),
+          if (widget.sourceName != null) ...[
+            const SizedBox(width: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 170),
+              child: Text(
+                widget.sourceName!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: _quietText, fontSize: 13),
+              ),
+            ),
+          ],
+          if (widget.onOrganize != null) ...[
+            const SizedBox(width: 8),
+            Visibility(
+              visible: _focused || _hovered,
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: _OrganizeButton(onPressed: _organize),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// The current program with its progress and times, or the next one.
+  /// Channels without guide data show no line at all.
+  Widget? _guideLine(BuildContext context) {
+    final nowNext = widget.nowNext;
+    if (nowNext == null) return null;
+    final localizations = MaterialLocalizations.of(context);
+    String time(DateTime value) =>
+        localizations.formatTimeOfDay(TimeOfDay.fromDateTime(value.toLocal()));
+    const quiet = TextStyle(color: Cinema.quiet, fontSize: 12.5);
+    final current = nowNext.current;
+    if (current != null) {
+      final span = current.endUtc.difference(current.startUtc).inSeconds;
+      final now = widget.nowUtc;
+      final progress = now == null || span <= 0
+          ? null
+          : (now.difference(current.startUtc).inSeconds / span).clamp(0.0, 1.0);
+      return Row(
+        key: ValueKey('browse-now-next-${widget.item.id}'),
+        children: [
+          Flexible(
+            child: Text(
+              current.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: quiet,
+            ),
+          ),
+          if (progress != null) ...[
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 56,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 3,
+                  backgroundColor: const Color(0x2EF5F1E8),
+                  color: Cinema.amber,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(width: 10),
+          Text(
+            '${time(current.startUtc)} – ${time(current.endUtc)}',
+            maxLines: 1,
+            style: const TextStyle(color: _quietText, fontSize: 12.5),
+          ),
+        ],
+      );
+    }
+    final next = nowNext.next;
+    if (next == null) return null;
+    return Text(
+      'Next · ${time(next.startUtc)} · ${next.title}',
+      key: ValueKey('browse-now-next-${widget.item.id}'),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: quiet,
+    );
+  }
+
+  Widget _poster(BuildContext context) {
+    final motion = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 140);
+    return Padding(
+      key: ValueKey('browse-item-${widget.item.id}'),
+      padding: const EdgeInsets.only(bottom: _posterRowGap),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: AnimatedScale(
+              scale: _focused ? 1.04 : 1,
+              duration: motion,
+              curve: Curves.easeOutCubic,
+              child: AnimatedContainer(
+                duration: motion,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: _focused ? Cinema.focusGlow : const [],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      SourceArtwork(
+                        key: ValueKey('browse-artwork-${widget.item.id}'),
+                        locator: widget.item.artworkLocator,
+                        kind: widget.item.kind,
+                        loader: widget.artworkLoader,
+                        focused: _focused,
+                        loadWhenVisible: true,
+                        width: double.infinity,
+                        height: double.infinity,
+                        placeholder: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Align(
+                            alignment: Alignment.bottomLeft,
+                            child: Text(
+                              widget.item.title,
+                              maxLines: 4,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Cinema.quiet,
+                                fontFamily: Cinema.display,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                height: 1.05,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (widget.onOrganize != null && (_focused || _hovered))
+                        Positioned(
+                          top: 7,
+                          right: 7,
+                          child: _OrganizeButton(
+                            size: 30,
+                            onPressed: _organize,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            widget.item.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: _focused ? _warmWhite : Cinema.quiet,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (widget.sourceName != null)
+            Text(
+              widget.sourceName!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: _quietText, fontSize: 11.5),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class _DirectorySkeleton extends StatelessWidget {
@@ -3285,24 +3611,6 @@ class _DirectoryButtonState extends State<_DirectoryButton> {
 
 bool _sameCategory(BrowseCategorySelection a, BrowseCategorySelection b) =>
     a.kind == b.kind && a.sourceGroupId == b.sourceGroupId;
-
-String _nowNextLabel(BuildContext context, EpgNowNext nowNext) {
-  final localizations = MaterialLocalizations.of(context);
-  String time(DateTime value) =>
-      localizations.formatTimeOfDay(TimeOfDay.fromDateTime(value.toLocal()));
-  final current = nowNext.current;
-  final next = nowNext.next;
-  if (current != null && next != null) {
-    return 'Now · ${current.title} · until ${time(current.endUtc)}   Next · ${time(next.startUtc)} · ${next.title}';
-  }
-  if (current != null) {
-    return 'Now · ${current.title} · until ${time(current.endUtc)}';
-  }
-  if (next != null) {
-    return 'Next · ${time(next.startUtc)} · ${next.title}';
-  }
-  return '';
-}
 
 String _formatCount(int value) => value.toString().replaceAllMapped(
   RegExp(r'(?<!^)(?=(?:\d{3})+$)'),
