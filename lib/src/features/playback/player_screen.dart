@@ -1372,7 +1372,10 @@ class _Timeline extends StatefulWidget {
 class _TimelineState extends State<_Timeline> {
   bool focused = false;
   // A drag previews here and seeks once on release, not once per frame.
+  // Changes outside a drag (screen-reader increase/decrease) seek at once,
+  // because they never get an onChangeEnd.
   Duration? dragging;
+  bool dragActive = false;
   @override
   Widget build(BuildContext context) {
     final maximum = widget.duration.inMilliseconds.toDouble();
@@ -1427,13 +1430,16 @@ class _TimelineState extends State<_Timeline> {
                 child: Slider(
                   value: value,
                   max: maximum <= 0 ? 1 : maximum,
+                  onChangeStart: (_) => dragActive = true,
                   onChanged: maximum <= 0
                       ? null
-                      : (value) => setState(
-                          () =>
-                              dragging = Duration(milliseconds: value.round()),
-                        ),
+                      : (value) {
+                          final target = Duration(milliseconds: value.round());
+                          if (!dragActive) return widget.onChanged(target);
+                          setState(() => dragging = target);
+                        },
                   onChangeEnd: (value) {
+                    dragActive = false;
                     setState(() => dragging = null);
                     widget.onChanged(Duration(milliseconds: value.round()));
                   },

@@ -361,6 +361,19 @@ void main() {
       transport.commands.where((command) => command.startsWith('seek:')),
       hasLength(1),
     );
+
+    // A screen reader's increase/decrease changes the value with no drag
+    // start or end, so it must seek straight away.
+    transport.commands.clear();
+    final slider = tester.widget<Slider>(
+      find.descendant(
+        of: find.byKey(const ValueKey('player-timeline')),
+        matching: find.byType(Slider),
+      ),
+    );
+    slider.onChanged!(40000);
+    await tester.pump();
+    expect(transport.commands, contains('seek:40'));
   });
 
   testWidgets('desktop player shortcuts drive playback from the stage', (
