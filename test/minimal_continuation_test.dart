@@ -292,6 +292,40 @@ void main() {
     },
   );
 
+  testWidgets('focus moves from Back to the first season once episodes load', (
+    tester,
+  ) async {
+    final loader = _CompletingSeriesLoader();
+    await tester.pumpWidget(
+      _screen(kind: SourceMediaKind.series, loader: loader),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('browse-item-series-row')));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Loading episodes…'), findsOneWidget);
+
+    loader.completeWith(
+      const SeriesInfo(
+        seasons: [
+          SeriesSeason(
+            name: '1',
+            episodes: [
+              SeriesEpisode(
+                providerItemId: 'episode-1',
+                title: 'Episode one',
+                extension: 'mp4',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'series season 0');
+  });
+
   testWidgets('late series result is ignored after Back', (tester) async {
     final loader = _CompletingSeriesLoader();
     await tester.pumpWidget(
@@ -499,6 +533,8 @@ class _CompletingSeriesLoader implements SeriesInfoLoader {
   }
 
   void complete() => _completer.complete(const SeriesInfo(seasons: []));
+
+  void completeWith(SeriesInfo info) => _completer.complete(info);
 }
 
 class _ManySeasonLoader implements SeriesInfoLoader {

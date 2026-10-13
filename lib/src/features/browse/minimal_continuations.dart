@@ -138,6 +138,18 @@ class _SeriesContinuationState extends State<SeriesContinuation> {
   void didUpdateWidget(covariant SeriesContinuation oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.info != oldWidget.info) _season = 0;
+    if (oldWidget.info == null && (widget.info?.seasons.isNotEmpty ?? false)) {
+      // Loading parks focus on Back. Hand it to the first season so the
+      // remote's Select doesn't leave the screen.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final focused = FocusManager.instance.primaryFocus?.context;
+        if (focused?.findAncestorStateOfType<_SeriesContinuationState>() ==
+            this) {
+          _seasonFocus(0).requestFocus();
+        }
+      });
+    }
   }
 
   @override
