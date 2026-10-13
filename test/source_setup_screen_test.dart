@@ -505,6 +505,52 @@ void main() {
     );
   });
 
+  testWidgets('remote Up and Down move between fields, not the caret', (
+    tester,
+  ) async {
+    final initialFocus = FocusNode(debugLabel: 'source name');
+    addTearDown(initialFocus.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SourceSetupScreen(
+            initialFocus: initialFocus,
+            onContentFocus: (_) {},
+            onExit: () {},
+            onBrowse: (_) {},
+            controller: SourceSetupController(
+              service: _WidgetSourcePort(),
+              credentialStore: _WidgetCredentialStore(),
+            ),
+          ),
+        ),
+      ),
+    );
+    initialFocus.requestFocus();
+    await tester.pump();
+    String? focused() => FocusManager.instance.primaryFocus?.debugLabel;
+
+    // A TV remote has no Tab key: the D-pad is the only way between fields.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(focused(), 'source server URL');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(focused(), 'source username');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(focused(), 'source name');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    final button = FocusManager.instance.primaryFocus!.context!
+        .findAncestorWidgetOfExactType<OutlinedButton>();
+    expect(
+      '${(button?.key as ValueKey?)?.value}',
+      startsWith('source-connector-'),
+    );
+  });
+
   testWidgets('connector picker and password toggle show the focus edge', (
     tester,
   ) async {

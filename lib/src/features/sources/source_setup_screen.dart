@@ -563,7 +563,7 @@ class _SourceForm extends StatelessWidget {
                   ? 'This stays in the foreground until it finishes or you cancel.'
                   : editing
                   ? 'Save refreshes this source immediately. Its previous local catalog stays available if refresh fails.'
-                  : 'Your account credentials are stored by Windows after the import succeeds.',
+                  : 'Your account credentials are stored securely on this device after the import succeeds.',
               style: const TextStyle(
                 color: _quietText,
                 fontSize: 14,
@@ -779,41 +779,56 @@ class _Field extends StatelessWidget {
       onFocusChange: (focused) {
         if (focused) onFocused(focusNode);
       },
-      child: TextField(
-        key: ValueKey('source-field-$label'),
-        controller: controller,
-        focusNode: focusNode,
-        autofocus: autofocus,
-        enabled: enabled,
-        obscureText: obscureText,
-        keyboardType: keyboardType,
-        textInputAction: textInputAction,
-        style: const TextStyle(color: _warmWhite, fontSize: 16),
-        decoration: InputDecoration(
-          labelText: label,
-          hintText: hint,
-          errorText: errorText,
-          suffixIcon: suffix,
-          filled: true,
-          fillColor: _raised,
-          labelStyle: const TextStyle(color: _quietText),
-          hintStyle: const TextStyle(color: _quietText),
-          errorStyle: const TextStyle(color: Color(0xFFFFC1B3)),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(6),
-            borderSide: const BorderSide(color: _line),
+      // These fields are single-line, so Up/Down have no caret job: move
+      // between fields, since a TV remote has no Tab key. Left/Right still
+      // move the caret.
+      child: Shortcuts(
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.arrowUp): DirectionalFocusIntent(
+            TraversalDirection.up,
+            ignoreTextFields: false,
           ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(6),
-            borderSide: const BorderSide(color: _amber, width: 2),
+          SingleActivator(LogicalKeyboardKey.arrowDown): DirectionalFocusIntent(
+            TraversalDirection.down,
+            ignoreTextFields: false,
           ),
-          errorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(6),
-            borderSide: const BorderSide(color: Color(0xFFFFC1B3)),
-          ),
-          focusedErrorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(6),
-            borderSide: const BorderSide(color: _amber, width: 2),
+        },
+        child: TextField(
+          key: ValueKey('source-field-$label'),
+          controller: controller,
+          focusNode: focusNode,
+          autofocus: autofocus,
+          enabled: enabled,
+          obscureText: obscureText,
+          keyboardType: keyboardType,
+          textInputAction: textInputAction,
+          style: const TextStyle(color: _warmWhite, fontSize: 16),
+          decoration: InputDecoration(
+            labelText: label,
+            hintText: hint,
+            errorText: errorText,
+            suffixIcon: suffix,
+            filled: true,
+            fillColor: _raised,
+            labelStyle: const TextStyle(color: _quietText),
+            hintStyle: const TextStyle(color: _quietText),
+            errorStyle: const TextStyle(color: Color(0xFFFFC1B3)),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: _line),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: _amber, width: 2),
+            ),
+            errorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: Color(0xFFFFC1B3)),
+            ),
+            focusedErrorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: _amber, width: 2),
+            ),
           ),
         ),
       ),

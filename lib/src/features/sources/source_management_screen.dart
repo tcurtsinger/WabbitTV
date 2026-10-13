@@ -592,9 +592,7 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
     if (selected != null &&
         FocusManager.instance.primaryFocus != _row(selected.id)) {
       _connectionFocusTarget = null;
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => FocusScope.of(context).requestFocus(_row(selected.id)),
-      );
+      _row(selected.id).requestFocus();
     } else {
       widget.onOpenRail();
     }

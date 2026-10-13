@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// A deliberately small boundary around the native player.  It gives the UI a
 /// deterministic test seam without introducing a second playback architecture.
@@ -232,10 +234,7 @@ class MediaKitPlaybackTransport implements PlaybackTrackTransport {
     // manifest if installs under non-ASCII paths become common.
     final native = _player.platform;
     if (native is NativePlayer) {
-      await native.setProperty(
-        'tls-ca-file',
-        bundledCaFilePath(Platform.resolvedExecutable),
-      );
+      await native.setProperty('tls-ca-file', await _caFile());
       await native.setProperty('tls-verify', 'yes');
     }
     await _player.open(
@@ -329,6 +328,26 @@ String? _safeTrackText(String? value) {
 /// Asset key of the Mozilla CA bundle the player verifies HTTPS against.
 /// Refresh it from https://curl.se/ca/cacert.pem before each release.
 const bundledCaAsset = 'assets/tls/cacert.pem';
+
+/// A file path for mpv's `tls-ca-file`. Windows ships assets as plain files
+/// next to the exe; Android keeps them inside the APK, so the bundle is
+/// copied out once per launch (it is ~220 KB, and a fresh copy keeps app
+/// updates' roots current).
+Future<String> _caFile() => _caFilePath ??= Platform.isAndroid
+    ? _extractBundledCa()
+    : Future.value(bundledCaFilePath(Platform.resolvedExecutable));
+Future<String>? _caFilePath;
+
+Future<String> _extractBundledCa() async {
+  final data = await rootBundle.load(bundledCaAsset);
+  final directory = await getApplicationSupportDirectory();
+  final file = File('${directory.path}${Platform.pathSeparator}cacert.pem');
+  await file.writeAsBytes(
+    data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+    flush: true,
+  );
+  return file.path;
+}
 
 /// Where a Windows build places [bundledCaAsset] next to [executable].
 String bundledCaFilePath(String executable) => [

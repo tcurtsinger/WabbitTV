@@ -15,6 +15,82 @@ import 'package:wabbit_tv/src/home_fixture_mode.dart';
 
 void main() {
   testWidgets(
+    'Android system Back steps back like Escape, then leaves from the rail',
+    (tester) async {
+      final visibility = _VisibilityPort();
+      final scope = CatalogScopeController(port: _ScopePort());
+      final management = SourceManagementController(port: _ManagementPort());
+      addTearDown(scope.dispose);
+      await tester.binding.setSurfaceSize(const Size(1265, 713));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      var systemPops = 0;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'SystemNavigator.pop') systemPops++;
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WabbitShell(
+            fixtureMode: HomeFixtureMode.noPersonalization,
+            initialDestination: ShellDestination.settings,
+            sourceManagementController: management,
+            catalogScopeController: scope,
+            libraryVisibilityPort: visibility,
+            scopedBrowseData: _VisibleCatalog(visibility),
+            localSearchData: _VisibleCatalog(visibility),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('source-action-Manage visibility')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('visibility-item-news-one')));
+      await tester.pumpAndSettle();
+
+      // A TV remote's Back arrives as a system pop-route, not a key press.
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'library visibility category 7',
+      );
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('Sources'), findsOneWidget);
+      expect(systemPops, 0);
+
+      // Sources: the first Back leaves the action for its source row (this
+      // used to do nothing), the next opens the rail.
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'home first item');
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(systemPops, 0);
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'Settings navigation',
+      );
+
+      // Back on the open rail at the top level leaves the app.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(systemPops, 1);
+    },
+  );
+
+  testWidgets(
     'Settings visibility returns to its source and refreshes Browse and Search',
     (tester) async {
       final visibility = _VisibilityPort();
