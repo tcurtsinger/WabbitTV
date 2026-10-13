@@ -16,7 +16,6 @@ import 'library_organization_service.dart';
 // STORY: inspect the selected item, choose Favorite and several groups, Save.
 // FIRST VIEWPORT: ledger remains dominant; a 320 px right drawer owns changes.
 // FORM: A — Direct Organizer Drawer; phase4-library-organization-a.
-// FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
 
 const _graphite = Color(0xFF111212);
 const _raised = Color(0xFF222321);

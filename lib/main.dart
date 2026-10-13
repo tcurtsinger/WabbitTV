@@ -6,7 +6,6 @@
 // FIRST VIEWPORT: A quiet header, focused pinned shelf, then personal shelves—never a
 // provider storefront.
 // FORM: Near-square cards, 8 px rhythm, crisp 2 px amber focus, and short functional motion.
-// FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
 
 import 'dart:async';
 import 'dart:convert';
