@@ -260,7 +260,37 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('pinned shelves render before Recently Watched on Home', (
+  testWidgets('the hero follows the selected Recently Watched card', (
+    tester,
+  ) async {
+    final controller = HomeController(
+      data: _HomeData(
+        sourceCheck: () async => true,
+        loadHistory: (_) async => [
+          _recent(0),
+          _recent(1, kind: SourceMediaKind.live),
+        ],
+      ),
+    );
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    addTearDown(controller.dispose);
+    await tester.binding.setSurfaceSize(const Size(1265, 713));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(_host(controller: controller, focus: focus));
+    await tester.pumpAndSettle();
+
+    final hero = find.byKey(const ValueKey('home-hero'));
+    expect(find.descendant(of: hero, matching: find.text('Item 0')), findsOne);
+    expect(find.descendant(of: hero, matching: find.text('Open')), findsOne);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(find.descendant(of: hero, matching: find.text('Item 1')), findsOne);
+    expect(find.descendant(of: hero, matching: find.text('Watch')), findsOne);
+  });
+
+  testWidgets('the hero and Recently Watched lead Home, above pinned shelves', (
     tester,
   ) async {
     final controller = HomeController(
@@ -288,20 +318,25 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    final hero = tester.getRect(find.byKey(const ValueKey('home-hero')));
     expect(
-      tester.getTopLeft(find.text('Favorites')).dy,
-      lessThan(tester.getTopLeft(find.text('Recently Watched')).dy),
+      hero.bottom,
+      lessThanOrEqualTo(tester.getTopLeft(find.text('Recently Watched')).dy),
     );
-    expect(session.focusedShelfKey, 'group:favorites');
-    expect(session.focusedLibraryItemId, 'favorite-movie');
+    expect(
+      tester.getTopLeft(find.text('Recently Watched')).dy,
+      lessThan(tester.getTopLeft(find.text('Favorites')).dy),
+    );
+    expect(session.focusedShelfKey, 'recent');
+    expect(session.focusedLibraryItemId, 'library-0');
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pump();
-    expect(session.focusedShelfKey, 'recent');
-    expect(session.focusedLibraryItemId, 'library-0');
+    expect(session.focusedShelfKey, 'group:favorites');
+    expect(session.focusedLibraryItemId, 'favorite-movie');
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await tester.pump();
-    expect(session.focusedShelfKey, 'group:favorites');
+    expect(session.focusedShelfKey, 'recent');
   });
 
   testWidgets(

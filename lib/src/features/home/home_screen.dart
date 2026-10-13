@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import '../../cinema.dart';
 import '../../home_fixture_mode.dart';
 import '../artwork/artwork_loader.dart';
 import '../artwork/source_artwork.dart';
@@ -16,13 +17,13 @@ import '../sources/credential_store.dart';
 import '../sources/source_catalog_database.dart';
 import '../sources/source_models.dart';
 
-const _graphite = Color(0xFF111212);
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
+const _graphite = Cinema.ink;
+const _surface = Color(0xFF16161B);
+const _raised = Color(0xFF1E1E24);
+const _line = Color(0xFF2A2A31);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.quiet;
+const _amber = Cinema.amber;
 
 abstract interface class HomeData {
   Future<bool> hasSources();
@@ -725,6 +726,14 @@ class _ProductionHomeState extends State<_ProductionHome> {
     }
 
     final previousShelfIndex = previousShelfKeys.indexOf(selectedKey ?? '');
+    // Recently Watched leads Home, so it gets the first selection unless the
+    // selection was already in a pinned shelf that changed.
+    if (previousShelfIndex < 0 && recentIds.isNotEmpty) {
+      widget.session
+        ..focusedShelfKey = 'recent'
+        ..focusedLibraryItemId = recentIds.first;
+      return;
+    }
     final previousItemIndex =
         previousItems[selectedKey]?.indexOf(selectedId ?? '') ?? -1;
     if (selectedShelfIndex >= 0 &&
@@ -793,7 +802,7 @@ class _ProductionHomeState extends State<_ProductionHome> {
       _nodeItemIds = const [];
       return;
     }
-    final pinsOwnInitial = widget.controller.pinnedShelves.isNotEmpty;
+    const pinsOwnInitial = false;
     final selectedId =
         widget.session.focusedShelfKey == 'recent' &&
             ids.contains(widget.session.focusedLibraryItemId)
@@ -866,7 +875,12 @@ class _ProductionHomeState extends State<_ProductionHome> {
       final retained = <FocusNode>{};
       for (var index = 0; index < ids.length; index++) {
         final id = ids[index];
-        final shouldOwnInitial = firstPinnedShelf && id == preferredId;
+        // Pinned shelves own the shell's first-item node only when there is
+        // no Recently Watched row above them.
+        final shouldOwnInitial =
+            firstPinnedShelf &&
+            id == preferredId &&
+            widget.controller.recentlyWatched.isEmpty;
         final old = previous[id];
         final node = shouldOwnInitial
             ? widget.initialFocus
@@ -914,12 +928,13 @@ class _ProductionHomeState extends State<_ProductionHome> {
     } else if (key == LogicalKeyboardKey.arrowRight &&
         index < _nodes.length - 1) {
       _nodes[index + 1].requestFocus();
-    } else if (key == LogicalKeyboardKey.arrowUp &&
-        widget.controller.pinnedShelves.isNotEmpty) {
-      final last = widget.controller.pinnedShelves.last;
-      final nodes = _pinnedNodes[last.collection.reference.key] ?? const [];
-      if (nodes.isNotEmpty) {
-        nodes[math.min(index, nodes.length - 1)].requestFocus();
+    } else if (key == LogicalKeyboardKey.arrowDown) {
+      for (final shelf in widget.controller.pinnedShelves) {
+        final nodes = _pinnedNodes[shelf.collection.reference.key] ?? const [];
+        if (nodes.isNotEmpty) {
+          nodes[math.min(index, nodes.length - 1)].requestFocus();
+          return;
+        }
       }
     }
   }
@@ -948,19 +963,17 @@ class _ProductionHomeState extends State<_ProductionHome> {
         if (priorNodes.isNotEmpty) {
           priorNodes[math.min(itemIndex, priorNodes.length - 1)].requestFocus();
         }
+      } else if (_nodes.isNotEmpty) {
+        _nodes[math.min(itemIndex, _nodes.length - 1)].requestFocus();
       }
       return;
     }
-    if (key == LogicalKeyboardKey.arrowDown) {
-      if (shelfIndex + 1 < shelves.length) {
-        final next = shelves[shelfIndex + 1];
-        final nextNodes =
-            _pinnedNodes[next.collection.reference.key] ?? const [];
-        if (nextNodes.isNotEmpty) {
-          nextNodes[math.min(itemIndex, nextNodes.length - 1)].requestFocus();
-        }
-      } else if (_nodes.isNotEmpty) {
-        _nodes[math.min(itemIndex, _nodes.length - 1)].requestFocus();
+    if (key == LogicalKeyboardKey.arrowDown &&
+        shelfIndex + 1 < shelves.length) {
+      final next = shelves[shelfIndex + 1];
+      final nextNodes = _pinnedNodes[next.collection.reference.key] ?? const [];
+      if (nextNodes.isNotEmpty) {
+        nextNodes[math.min(itemIndex, nextNodes.length - 1)].requestFocus();
       }
     }
   }
@@ -1271,25 +1284,17 @@ class _ProductionHomeState extends State<_ProductionHome> {
 
   Widget _buildPinnedOnly(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final textScale = MediaQuery.textScalerOf(context).scale(1);
-      final narrow = constraints.maxWidth < 780 || textScale > 1.35;
+      final layout = _HomeLayout.of(context, constraints);
       return ColoredBox(
         color: _graphite,
         child: SafeArea(
           left: false,
           child: ListView(
-            padding: EdgeInsets.fromLTRB(narrow ? 24 : 48, 22, 32, 48),
+            padding: EdgeInsets.fromLTRB(layout.inset - _rowBleed, 24, 0, 40),
             children: [
-              _HomeHeader(narrow: narrow, showFixtureCopy: false),
-              if (widget.controller.showingSavedHistory) ...[
-                const SizedBox(height: 10),
-                const Text(
-                  'Could not refresh Home. Showing saved local shelves.',
-                  style: TextStyle(color: _quietText, fontSize: 13),
-                ),
-              ],
-              const SizedBox(height: 30),
-              ..._buildPinnedShelfWidgets(narrow),
+              if (widget.controller.showingSavedHistory)
+                _SavedHistoryNotice(layout: layout),
+              ..._buildPinnedShelfWidgets(layout),
             ],
           ),
         ),
@@ -1297,10 +1302,11 @@ class _ProductionHomeState extends State<_ProductionHome> {
     },
   );
 
-  List<Widget> _buildPinnedShelfWidgets(bool narrow) {
+  List<Widget> _buildPinnedShelfWidgets(_HomeLayout layout) {
     final shelves = widget.controller.pinnedShelves;
     return [
       for (var shelfIndex = 0; shelfIndex < shelves.length; shelfIndex++) ...[
+        if (shelfIndex > 0) const SizedBox(height: 18),
         _PinnedHomeShelf(
           shelf: shelves[shelfIndex],
           nodes:
@@ -1313,7 +1319,7 @@ class _ProductionHomeState extends State<_ProductionHome> {
                   shelves[shelfIndex].collection.reference.key
               ? widget.session.focusedLibraryItemId
               : null,
-          narrow: narrow,
+          layout: layout,
           artworkLoader: widget.artworkLoader,
           onFocused: (index, context) =>
               _focusPinnedItem(shelves[shelfIndex], index, context),
@@ -1329,7 +1335,6 @@ class _ProductionHomeState extends State<_ProductionHome> {
               ? widget.initialFocus
               : null,
         ),
-        const SizedBox(height: 32),
       ],
     ];
   }
@@ -1343,24 +1348,18 @@ class _ProductionHomeState extends State<_ProductionHome> {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
-        final textScale = MediaQuery.textScalerOf(context).scale(1);
-        final narrow = constraints.maxWidth < 780 || textScale > 1.35;
-        final carouselHeight = 220 + ((textScale - 1).clamp(0.0, 1.0) * 100);
-        final details = _RecentShelfDetails(
-          item: selected,
-          fillHeight: !narrow,
-        );
+        final layout = _HomeLayout.of(context, constraints);
         final carousel = ListView.separated(
           key: const PageStorageKey('home-recently-watched-carousel'),
           controller: _horizontalController,
           scrollDirection: Axis.horizontal,
           itemCount: items.length,
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          separatorBuilder: (_, _) => const SizedBox(width: 14),
+          padding: const EdgeInsets.fromLTRB(_rowBleed, 10, 40, 10),
+          separatorBuilder: (_, _) => const SizedBox(width: 16),
           itemBuilder: (context, index) {
             final item = items[index];
             return SizedBox(
-              width: narrow ? 144 : 172,
+              width: layout.tileWidth,
               child: _RecentCard(
                 item: item,
                 focusNode: _nodes[index],
@@ -1384,37 +1383,26 @@ class _ProductionHomeState extends State<_ProductionHome> {
           child: SafeArea(
             left: false,
             child: ListView(
-              padding: EdgeInsets.fromLTRB(narrow ? 24 : 48, 22, 32, 48),
+              padding: EdgeInsets.fromLTRB(layout.inset - _rowBleed, 24, 0, 40),
               children: [
-                _HomeHeader(narrow: narrow, showFixtureCopy: false),
-                if (widget.controller.showingSavedHistory) ...[
-                  const SizedBox(height: 10),
-                  const Text(
-                    'Could not refresh Home. Showing saved local shelves.',
-                    style: TextStyle(color: _quietText, fontSize: 13),
+                if (widget.controller.showingSavedHistory)
+                  _SavedHistoryNotice(layout: layout),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(_rowBleed, 0, layout.inset, 0),
+                  child: _HomeHero(
+                    item: selected,
+                    compact: layout.narrow,
+                    artworkBuilder: widget.artworkBuilder,
+                    onActivate: () => _activateItem(selected.item),
                   ),
-                ],
-                const SizedBox(height: 30),
+                ),
+                const SizedBox(height: 18),
+                const _ShelfTitle(title: 'Recently Watched'),
+                SizedBox(height: layout.rowHeight, child: carousel),
                 if (widget.controller.pinnedShelves.isNotEmpty) ...[
-                  ..._buildPinnedShelfWidgets(narrow),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 8),
+                  ..._buildPinnedShelfWidgets(layout),
                 ],
-                if (narrow) ...[
-                  details,
-                  const SizedBox(height: 18),
-                  SizedBox(height: carouselHeight, child: carousel),
-                ] else
-                  SizedBox(
-                    height: 264,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(width: 248, child: details),
-                        const SizedBox(width: 24),
-                        Expanded(child: carousel),
-                      ],
-                    ),
-                  ),
               ],
             ),
           ),
@@ -1424,13 +1412,329 @@ class _ProductionHomeState extends State<_ProductionHome> {
   }
 }
 
+/// How far a row's scroll area reaches past the content edge, so a focused
+/// card's glow and lift aren't clipped.
+const _rowBleed = 12.0;
+
+class _HomeLayout {
+  const _HomeLayout({
+    required this.narrow,
+    required this.inset,
+    required this.tileWidth,
+    required this.rowHeight,
+  });
+
+  factory _HomeLayout.of(BuildContext context, BoxConstraints constraints) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 3.0);
+    final narrow = constraints.maxWidth < 780 || textScale > 1.35;
+    final tileWidth = narrow ? 148.0 : 176.0;
+    return _HomeLayout(
+      narrow: narrow,
+      inset: narrow ? 24 : 32,
+      tileWidth: tileWidth,
+      // 16:9 artwork, two caption lines, and room for the focus lift.
+      rowHeight: tileWidth * 9 / 16 + 32 + 40 * textScale,
+    );
+  }
+
+  final bool narrow;
+  final double inset, tileWidth, rowHeight;
+}
+
+class _SavedHistoryNotice extends StatelessWidget {
+  const _SavedHistoryNotice({required this.layout});
+  final _HomeLayout layout;
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.fromLTRB(_rowBleed, 0, 32, 14),
+    child: Text(
+      'Could not refresh Home. Showing saved local shelves.',
+      style: TextStyle(color: _quietText, fontSize: 13),
+    ),
+  );
+}
+
+class _ShelfTitle extends StatelessWidget {
+  const _ShelfTitle({required this.title, this.detail});
+  final String title;
+  final String? detail;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(left: _rowBleed, right: 32),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        Flexible(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _warmWhite,
+              fontFamily: Cinema.display,
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        if (detail != null) ...[
+          const SizedBox(width: 10),
+          Text(
+            detail!,
+            style: const TextStyle(color: Cinema.faint, fontSize: 12),
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
+/// The big card at the top of Home: whichever Recently Watched item is
+/// selected, with what Select will do to it.
+class _HomeHero extends StatelessWidget {
+  const _HomeHero({
+    required this.item,
+    required this.compact,
+    required this.artworkBuilder,
+    required this.onActivate,
+  });
+
+  final RecentlyWatchedItem item;
+  final bool compact;
+  final HomeArtworkBuilder? artworkBuilder;
+  final VoidCallback onActivate;
+
+  @override
+  Widget build(BuildContext context) {
+    final entry = item.item;
+    final action = switch (entry.kind) {
+      SourceMediaKind.live => 'Watch',
+      SourceMediaKind.movies => 'Open',
+      SourceMediaKind.series => 'Episodes',
+    };
+    return ConstrainedBox(
+      key: const ValueKey('home-hero'),
+      constraints: BoxConstraints(minHeight: compact ? 176 : 206),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Stack(
+            children: [
+              Positioned(
+                top: 0,
+                right: 0,
+                bottom: 0,
+                width: compact ? 0 : null,
+                left: compact ? null : 0,
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: FractionallySizedBox(
+                    widthFactor: 0.62,
+                    heightFactor: 1,
+                    child: RepaintBoundary(
+                      child:
+                          artworkBuilder?.call(context, item, false) ??
+                          _HomeArtworkPlaceholder(kind: entry.kind),
+                    ),
+                  ),
+                ),
+              ),
+              const Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Color(0xF5090810),
+                        Color(0xC2090810),
+                        Color(0x00090810),
+                      ],
+                      stops: [0, 0.42, 0.78],
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(28, 24, 28, 24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 480),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'CONTINUE WATCHING',
+                        style: TextStyle(
+                          color: _amber,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        entry.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _warmWhite,
+                          fontFamily: Cinema.display,
+                          fontSize: compact ? 24 : 30,
+                          fontWeight: FontWeight.w800,
+                          height: 1.05,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${entry.kind.label} · ${entry.sourceDisplayName}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: _quietText, fontSize: 13),
+                      ),
+                      const SizedBox(height: 16),
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: onActivate,
+                          child: Container(
+                            height: 38,
+                            padding: const EdgeInsets.fromLTRB(14, 0, 18, 0),
+                            decoration: BoxDecoration(
+                              color: _amber,
+                              borderRadius: BorderRadius.circular(19),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.play_arrow_rounded,
+                                  color: Cinema.amberInk,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  action,
+                                  style: const TextStyle(
+                                    color: Cinema.amberInk,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A card's look: 16:9 artwork that lifts and glows amber when focused,
+/// with two caption lines under it.
+class _HomeTile extends StatelessWidget {
+  const _HomeTile({
+    required this.artwork,
+    required this.title,
+    required this.subtitle,
+    required this.focused,
+    required this.active,
+    this.dimmed = false,
+  });
+
+  final Widget artwork;
+  final String title, subtitle;
+  final bool focused, active, dimmed;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      AspectRatio(
+        aspectRatio: 16 / 9,
+        child: AnimatedScale(
+          scale: active ? 1.05 : 1,
+          duration: const Duration(milliseconds: 140),
+          curve: Curves.easeOutCubic,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOutCubic,
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: focused ? Cinema.focusGlow : null,
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Opacity(opacity: dimmed ? 0.45 : 1, child: artwork),
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(height: 9),
+      Text(
+        title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: _warmWhite,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text(
+        subtitle,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: Cinema.faint, fontSize: 11.5),
+      ),
+    ],
+  );
+}
+
+class _OrganizeBadge extends StatelessWidget {
+  const _OrganizeBadge({required this.message, required this.onTap});
+  final String message;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: message,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: const SizedBox.square(
+        dimension: 32,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Color(0xCC0B0B0E),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(Icons.bookmark_add_outlined, size: 16, color: _warmWhite),
+        ),
+      ),
+    ),
+  );
+}
+
 class _PinnedHomeShelf extends StatelessWidget {
   const _PinnedHomeShelf({
     required this.shelf,
     required this.nodes,
     required this.controller,
     required this.selectedLibraryItemId,
-    required this.narrow,
+    required this.layout,
     required this.artworkLoader,
     required this.onFocused,
     required this.onMove,
@@ -1444,7 +1748,7 @@ class _PinnedHomeShelf extends StatelessWidget {
   final List<FocusNode> nodes;
   final ScrollController? controller;
   final String? selectedLibraryItemId;
-  final bool narrow;
+  final _HomeLayout layout;
   final ArtworkProvider? artworkLoader;
   final void Function(int index, BuildContext context) onFocused;
   final void Function(int index, LogicalKeyboardKey key) onMove;
@@ -1457,52 +1761,37 @@ class _PinnedHomeShelf extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Row(
-        children: [
-          Expanded(
-            child: Text(
-              shelf.collection.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: _warmWhite,
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          Text(
-            '${shelf.collection.itemCount} items',
-            style: const TextStyle(color: _quietText, fontSize: 13),
-          ),
-        ],
+      _ShelfTitle(
+        title: shelf.collection.name,
+        detail: '${shelf.collection.itemCount} items',
       ),
-      const SizedBox(height: 12),
       if (shelf.items.isEmpty)
-        Focus(
-          focusNode: emptyFocus,
-          onKeyEvent: (_, event) {
-            if (event is KeyDownEvent &&
-                (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
-                    event.logicalKey == LogicalKeyboardKey.escape ||
-                    event.logicalKey == LogicalKeyboardKey.browserBack)) {
-              onOpenRail();
-              return KeyEventResult.handled;
-            }
-            return KeyEventResult.ignored;
-          },
-          child: const DecoratedBox(
-            decoration: BoxDecoration(
-              color: _surface,
-              border: Border.fromBorderSide(BorderSide(color: _line)),
-              borderRadius: BorderRadius.all(Radius.circular(8)),
-            ),
-            child: SizedBox(
-              height: 82,
-              child: Center(
-                child: Text(
-                  'This pinned collection is empty.',
-                  style: TextStyle(color: _quietText, fontSize: 14),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(_rowBleed, 10, 32, 0),
+          child: Focus(
+            focusNode: emptyFocus,
+            onKeyEvent: (_, event) {
+              if (event is KeyDownEvent &&
+                  (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+                      event.logicalKey == LogicalKeyboardKey.escape ||
+                      event.logicalKey == LogicalKeyboardKey.browserBack)) {
+                onOpenRail();
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
+            child: const DecoratedBox(
+              decoration: BoxDecoration(
+                color: _surface,
+                borderRadius: BorderRadius.all(Radius.circular(14)),
+              ),
+              child: SizedBox(
+                height: 82,
+                child: Center(
+                  child: Text(
+                    'This pinned collection is empty.',
+                    style: TextStyle(color: _quietText, fontSize: 14),
+                  ),
                 ),
               ),
             ),
@@ -1510,16 +1799,17 @@ class _PinnedHomeShelf extends StatelessWidget {
         )
       else
         SizedBox(
-          height: 196,
+          height: layout.rowHeight,
           child: ListView.separated(
             controller: controller,
             scrollDirection: Axis.horizontal,
             itemCount: shelf.items.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 14),
+            padding: const EdgeInsets.fromLTRB(_rowBleed, 10, 40, 10),
+            separatorBuilder: (_, _) => const SizedBox(width: 16),
             itemBuilder: (context, index) {
               final item = shelf.items[index];
               return SizedBox(
-                width: narrow ? 144 : 172,
+                width: layout.tileWidth,
                 child: _PinnedHomeCard(
                   item: item,
                   focusNode: nodes[index],
@@ -1636,104 +1926,36 @@ class _PinnedHomeCardState extends State<_PinnedHomeCard> {
                 : null,
             child: Stack(
               children: [
-                Positioned.fill(
-                  child: AnimatedScale(
-                    scale: active ? 1.025 : 1,
-                    duration: const Duration(milliseconds: 120),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: _surface,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: _focused ? _amber : _line,
-                          width: 2,
-                        ),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Expanded(
-                              child: SourceArtwork(
-                                locator: widget.item.isAvailable
-                                    ? widget.item.artworkLocator
-                                    : null,
-                                kind: widget.item.kind,
-                                loader: widget.artworkLoader,
-                                focused: _focused,
-                                loadWhenVisible: true,
-                                width: double.infinity,
-                                height: double.infinity,
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(10, 8, 10, 9),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    widget.item.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: _warmWhite,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    widget.item.isAvailable
-                                        ? widget.item.kind.label
-                                        : 'Source unavailable',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: _quietText,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                _HomeTile(
+                  focused: _focused,
+                  active: active,
+                  dimmed: !widget.item.isAvailable,
+                  title: widget.item.title,
+                  subtitle: widget.item.isAvailable
+                      ? widget.item.kind.label
+                      : 'Source unavailable',
+                  artwork: SourceArtwork(
+                    locator: widget.item.isAvailable
+                        ? widget.item.artworkLocator
+                        : null,
+                    kind: widget.item.kind,
+                    loader: widget.artworkLoader,
+                    focused: _focused,
+                    loadWhenVisible: true,
+                    width: double.infinity,
+                    height: double.infinity,
                   ),
                 ),
                 if (widget.onOrganize != null && active)
                   Positioned(
                     right: 7,
                     top: 7,
-                    child: Tooltip(
+                    child: _OrganizeBadge(
                       message: 'Organize item',
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () {
-                          widget.focusNode.requestFocus();
-                          widget.onOrganize!();
-                        },
-                        child: const SizedBox.square(
-                          dimension: 48,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: Color(0xDD343534),
-                              borderRadius: BorderRadius.all(
-                                Radius.circular(24),
-                              ),
-                            ),
-                            child: Center(
-                              child: Icon(
-                                Icons.bookmark_add_outlined,
-                                size: 18,
-                                color: _warmWhite,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
+                      onTap: () {
+                        widget.focusNode.requestFocus();
+                        widget.onOrganize!();
+                      },
                     ),
                   ),
               ],
@@ -1909,72 +2131,6 @@ class _HomeReadFailure extends StatelessWidget {
   );
 }
 
-class _RecentShelfDetails extends StatelessWidget {
-  const _RecentShelfDetails({required this.item, required this.fillHeight});
-
-  final RecentlyWatchedItem item;
-  final bool fillHeight;
-
-  @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      color: _surface,
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(8),
-    ),
-    child: Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Recently Watched',
-            style: TextStyle(
-              color: _warmWhite,
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            item.item.kind.label.toUpperCase(),
-            style: const TextStyle(
-              color: _amber,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.7,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            item.item.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _warmWhite,
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              height: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            item.item.sourceDisplayName,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _quietText, fontSize: 14),
-          ),
-          if (fillHeight) const Spacer() else const SizedBox(height: 24),
-          const Text(
-            'Local watch history',
-            style: TextStyle(color: _quietText, fontSize: 12),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
 class _RecentCard extends StatefulWidget {
   const _RecentCard({
     required this.item,
@@ -2066,107 +2222,32 @@ class _RecentCardState extends State<_RecentCard> {
             },
             child: Stack(
               children: [
-                Positioned.fill(
-                  child: AnimatedScale(
-                    scale: active ? 1.025 : 1,
-                    duration: const Duration(milliseconds: 130),
-                    curve: Curves.easeOutCubic,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 130),
-                      curve: Curves.easeOutCubic,
-                      decoration: BoxDecoration(
-                        color: _raised,
-                        borderRadius: BorderRadius.circular(7),
-                        border: Border.all(
-                          color: focused ? _amber : _line,
-                          width: focused ? 2 : 1,
-                        ),
-                        boxShadow: active
-                            ? const [
-                                BoxShadow(
-                                  color: Color(0x55000000),
-                                  offset: Offset(0, 8),
-                                  blurRadius: 16,
-                                ),
-                              ]
-                            : null,
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: SizedBox.expand(
-                              child: RepaintBoundary(
-                                child:
-                                    widget.artworkBuilder?.call(
-                                      context,
-                                      widget.item,
-                                      focused,
-                                    ) ??
-                                    _HomeArtworkPlaceholder(
-                                      kind: widget.item.item.kind,
-                                    ),
-                              ),
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  widget.item.item.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: _warmWhite,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  widget.item.item.kind.label,
-                                  style: const TextStyle(
-                                    color: _quietText,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                _HomeTile(
+                  focused: focused,
+                  active: active,
+                  title: widget.item.item.title,
+                  subtitle:
+                      '${widget.item.item.kind.label} · ${widget.item.item.sourceDisplayName}',
+                  artwork: RepaintBoundary(
+                    child:
+                        widget.artworkBuilder?.call(
+                          context,
+                          widget.item,
+                          focused,
+                        ) ??
+                        _HomeArtworkPlaceholder(kind: widget.item.item.kind),
                   ),
                 ),
-                if (widget.onOrganize != null)
+                if (widget.onOrganize != null && active)
                   Positioned(
                     top: 7,
                     right: 7,
-                    child: Tooltip(
+                    child: _OrganizeBadge(
                       message: 'Organize',
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () {
-                          widget.focusNode.requestFocus();
-                          widget.onOrganize!();
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(7),
-                          decoration: BoxDecoration(
-                            color: const Color(0xCC111212),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: _line),
-                          ),
-                          child: const Icon(
-                            Icons.bookmark_add_outlined,
-                            size: 18,
-                            color: _warmWhite,
-                          ),
-                        ),
-                      ),
+                      onTap: () {
+                        widget.focusNode.requestFocus();
+                        widget.onOrganize!();
+                      },
                     ),
                   ),
               ],
