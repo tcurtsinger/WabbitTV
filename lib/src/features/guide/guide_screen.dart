@@ -3178,9 +3178,11 @@ class _TimeRuler extends StatelessWidget {
       fontWeight: FontWeight.w600,
     );
     final textScaler = MediaQuery.textScalerOf(context);
+    // Measure with the style the Text renders: inherited font included.
+    final measuredStyle = DefaultTextStyle.of(context).style.merge(labelStyle);
     bool coveredByNow(int index) {
       final painter = TextPainter(
-        text: TextSpan(text: labelFor(index), style: labelStyle),
+        text: TextSpan(text: labelFor(index), style: measuredStyle),
         textDirection: TextDirection.ltr,
         textScaler: textScaler,
         maxLines: 1,
