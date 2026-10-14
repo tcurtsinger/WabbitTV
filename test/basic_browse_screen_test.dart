@@ -107,7 +107,7 @@ void main() {
     final retry = find.byKey(const ValueKey('browse-action-Try again'));
     final retryDecoration =
         tester.widget<Container>(retry).decoration! as BoxDecoration;
-    expect(retryDecoration.color, const Color(0xFF141419));
+    expect(retryDecoration.color, Cinema.glass);
   });
 
   testWidgets('launcher and no-source actions activate through remote keys', (

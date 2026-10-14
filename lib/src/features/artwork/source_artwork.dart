@@ -3,12 +3,13 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../../cinema.dart';
 import '../sources/source_models.dart';
 import 'artwork_loader.dart';
 
 const _raised = Color(0xFF1C1C22);
 const _logoTile = Color(0xFF3A3A43);
-const _quietText = Color(0xFFAAA8A2);
+const _quietText = Cinema.faint;
 
 /// Fixed-geometry provider artwork with an opt-in bounded visible-row load.
 class SourceArtwork extends StatefulWidget {

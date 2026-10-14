@@ -1952,11 +1952,10 @@ class _SecondChannelBannerState extends State<_SecondChannelBanner> {
   Widget build(BuildContext context) => Container(
     key: const ValueKey('browse-second-channel-banner'),
     constraints: const BoxConstraints(minHeight: 64),
-    padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
+    padding: const EdgeInsets.fromLTRB(18, 10, 10, 10),
     decoration: BoxDecoration(
       color: _surface,
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(18),
     ),
     child: Row(
       children: [
@@ -1968,9 +1967,7 @@ class _SecondChannelBannerState extends State<_SecondChannelBanner> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                widget.busy
-                    ? 'Checking stream allowance…'
-                    : 'Choose a second channel',
+                widget.busy ? 'Checking streams…' : 'Choose a second channel',
                 style: const TextStyle(
                   color: _warmWhite,
                   fontSize: 15,
@@ -2020,21 +2017,18 @@ class _SecondChannelBannerState extends State<_SecondChannelBanner> {
                     },
               child: Container(
                 height: 44,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: _focused ? _raised : Colors.transparent,
-                  border: Border.all(
-                    color: _focused ? _amber : _line,
-                    width: _focused ? 2 : 1,
-                  ),
-                  borderRadius: BorderRadius.circular(6),
+                  color: _focused ? _amber : Cinema.glass,
+                  borderRadius: BorderRadius.circular(22),
+                  boxShadow: _focused ? [Cinema.focusGlow.last] : null,
                 ),
-                child: const Text(
+                child: Text(
                   'Cancel',
                   style: TextStyle(
-                    color: _warmWhite,
-                    fontSize: 13,
+                    color: _focused ? Cinema.amberInk : _warmWhite,
+                    fontSize: 14,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -2312,13 +2306,9 @@ class _ScopeMenuState extends State<_ScopeMenu> {
       color: _surface,
       elevation: 10,
       shadowColor: Colors.black54,
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: BorderRadius.circular(16),
       child: Container(
         constraints: const BoxConstraints(maxHeight: 264),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: _line),
-        ),
         child: ListView.builder(
           controller: _scrollController,
           padding: const EdgeInsets.symmetric(vertical: 6),
@@ -2448,12 +2438,12 @@ class _ScopeOptionRowState extends State<_ScopeOptionRow> {
           margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: widget.selected ? _raised : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: _focused ? _amber : Colors.transparent,
-              width: 2,
-            ),
+            color: _focused
+                ? _amber
+                : widget.selected
+                ? _raised
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
           ),
           alignment: Alignment.centerLeft,
           child: Text(
@@ -2461,7 +2451,11 @@ class _ScopeOptionRowState extends State<_ScopeOptionRow> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: widget.selected ? _warmWhite : _quietText,
+              color: _focused
+                  ? Cinema.amberInk
+                  : widget.selected
+                  ? _warmWhite
+                  : _quietText,
               fontSize: 14,
               fontWeight: widget.selected ? FontWeight.w700 : FontWeight.w500,
             ),
@@ -2580,8 +2574,7 @@ class _CategoryOverlay extends StatelessWidget {
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: _surface,
-            border: Border.all(color: _line),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(18),
           ),
           child: Focus(
             onKeyEvent: (_, event) {
@@ -3247,15 +3240,11 @@ class _ScopeLoading extends StatelessWidget {
                         kind.label,
                         style: const TextStyle(
                           color: _warmWhite,
-                          fontSize: 31,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.7,
+                          fontFamily: Cinema.display,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.6,
                         ),
-                      ),
-                      const SizedBox(height: 5),
-                      const Text(
-                        'Loading local catalog',
-                        style: TextStyle(color: _quietText, fontSize: 14),
                       ),
                     ],
                   ),
@@ -3267,13 +3256,12 @@ class _ScopeLoading extends StatelessWidget {
                   child: Container(
                     key: const ValueKey('catalog-scope-loading'),
                     width: 184,
-                    height: 44,
+                    height: 40,
                     padding: const EdgeInsets.symmetric(horizontal: 14),
                     alignment: Alignment.centerLeft,
                     decoration: BoxDecoration(
-                      color: _surface,
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: _line),
+                      color: Cinema.glass,
+                      borderRadius: BorderRadius.circular(20),
                     ),
                     child: const Text(
                       'Loading sources…',
@@ -3303,8 +3291,7 @@ class _SkeletonPanel extends StatelessWidget {
     key: const ValueKey('browse-skeleton-panel'),
     decoration: BoxDecoration(
       color: _surface,
-      border: Border.fromBorderSide(const BorderSide(color: _line)),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(18),
     ),
     child: Semantics(
       label: 'Loading catalog items',
@@ -3325,9 +3312,24 @@ class _ItemSkeleton extends StatelessWidget {
     padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
     child: Row(
       children: [
-        Container(width: 50, height: 36, color: _raised),
+        Container(
+          width: 50,
+          height: 36,
+          decoration: BoxDecoration(
+            color: _raised,
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
         const SizedBox(width: 12),
-        Expanded(child: Container(height: 12, color: _raised)),
+        Expanded(
+          child: Container(
+            height: 12,
+            decoration: BoxDecoration(
+              color: _raised,
+              borderRadius: BorderRadius.circular(6),
+            ),
+          ),
+        ),
       ],
     ),
   );
@@ -3384,8 +3386,7 @@ class _EmptyCategory extends StatelessWidget {
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
       color: _surface,
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(18),
     ),
     child: Center(
       child: Column(
@@ -3437,8 +3438,7 @@ class _EmptyUnifiedCatalog extends StatelessWidget {
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
       color: _surface,
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(18),
     ),
     child: Center(
       child: Column(
@@ -3558,6 +3558,8 @@ class _DirectoryButton extends StatefulWidget {
 
 class _DirectoryButtonState extends State<_DirectoryButton> {
   bool _focused = false;
+
+  bool get _filled => widget.primary || _focused;
   @override
   Widget build(BuildContext context) => Focus(
     focusNode: widget.focusNode,
@@ -3591,24 +3593,24 @@ class _DirectoryButtonState extends State<_DirectoryButton> {
         child: Container(
           key: ValueKey('browse-action-${widget.label}'),
           height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 18),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: widget.primary ? _amber : _surface,
-            borderRadius: BorderRadius.circular(6),
+            color: _filled ? _amber : Cinema.glass,
+            // A constant width so focus never resizes the pill.
             border: Border.all(
-              color: _focused
-                  ? (widget.primary ? _warmWhite : _amber)
-                  : (widget.primary ? _amber : _line),
-              width: _focused ? 2 : 1,
+              color: _focused ? _warmWhite : const Color(0x00000000),
+              width: 2,
             ),
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: _focused ? [Cinema.focusGlow.last] : null,
           ),
           child: Text(
             widget.label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: widget.primary ? const Color(0xFF17120A) : _warmWhite,
+              color: _filled ? Cinema.amberInk : _warmWhite,
               fontSize: 14,
               fontWeight: FontWeight.w700,
             ),

@@ -3219,17 +3219,24 @@ class _FocusedActionState extends State<_FocusedAction> {
             widget.focusNode.requestFocus();
             widget.onPressed();
           },
+          // A primary pill; the edge is always there so focus never
+          // resizes it.
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
             decoration: BoxDecoration(
               color: _amber,
-              borderRadius: BorderRadius.circular(6),
-              border: _focused ? Border.all(color: _warmWhite, width: 2) : null,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: _focused ? _warmWhite : const Color(0x00000000),
+                width: 2,
+              ),
+              boxShadow: _focused ? [Cinema.focusGlow.last] : null,
             ),
             child: Text(
               widget.label,
               style: const TextStyle(
-                color: Color(0xFF17120A),
+                color: Cinema.amberInk,
+                fontSize: 14,
                 fontWeight: FontWeight.w700,
               ),
             ),
