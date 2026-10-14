@@ -162,6 +162,21 @@ class WabbitApp extends StatelessWidget {
           secondary: Cinema.quiet,
         ),
         fontFamily: 'Figtree',
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFF1E1E24),
+          shape: StadiumBorder(),
+          elevation: 0,
+          width: 440,
+          insetPadding: EdgeInsets.only(bottom: 32),
+          // A snack bar's own text style replaces the theme's, font family included.
+          contentTextStyle: TextStyle(
+            fontFamily: 'Figtree',
+            color: Cinema.text,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ),
       home: WabbitShell(
         fixtureMode: fixtureMode,
