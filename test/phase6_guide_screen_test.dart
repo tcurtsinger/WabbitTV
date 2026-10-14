@@ -81,6 +81,29 @@ void main() {
     expect(focused.last, 'guide schedule filter');
   });
 
+  testWidgets('the now marker hides the ruler label it covers', (tester) async {
+    // 5:35 AM CDT: just past the 5:30 tick, so the marker sits on its label.
+    await tester.pumpWidget(
+      _guideApp(
+        data: _GuideFixtureData(),
+        now: () => DateTime.utc(2026, 8, 19, 10, 35),
+        localize: _centralUsLocalize,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    double opacityOf(int index) => tester
+        .widget<Opacity>(
+          find.ancestor(
+            of: find.byKey(ValueKey('guide-ruler-label-$index')),
+            matching: find.byType(Opacity),
+          ),
+        )
+        .opacity;
+    expect(opacityOf(1), 0);
+    expect(opacityOf(2), 1);
+  });
+
   testWidgets('a category without schedules offers every channel', (
     tester,
   ) async {
@@ -2034,12 +2057,8 @@ void main() {
     final localizations = MaterialLocalizations.of(
       tester.element(find.byType(GuideScreen)),
     );
-    expect(
-      find.textContaining(
-        localizations.formatShortDate(DateTime.utc(2026, 10, 31, 23, 30)),
-      ),
-      findsWidgets,
-    );
+    // A cell past midnight reads as plain times; the ruler marks the day.
+    expect(find.textContaining('11:30 PM CDT–12:30 AM CDT'), findsWidgets);
     expect(
       find.textContaining(
         localizations.formatShortDate(DateTime.utc(2026, 11, 1, 0, 30)),

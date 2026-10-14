@@ -3172,6 +3172,27 @@ class _TimeRuler extends StatelessWidget {
         nowUtc.difference(startUtc).inSeconds /
         Duration.secondsPerHour *
         hourWidth;
+    const labelStyle = TextStyle(
+      color: _quietText,
+      fontSize: 11.5,
+      fontWeight: FontWeight.w600,
+    );
+    final textScaler = MediaQuery.textScalerOf(context);
+    // Measure with the style the Text renders: inherited font included.
+    final measuredStyle = DefaultTextStyle.of(context).style.merge(labelStyle);
+    bool coveredByNow(int index) {
+      final painter = TextPainter(
+        text: TextSpan(text: labelFor(index), style: measuredStyle),
+        textDirection: TextDirection.ltr,
+        textScaler: textScaler,
+        maxLines: 1,
+      )..layout(maxWidth: math.max(0, hourWidth - 12));
+      final left = index * hourWidth + 9;
+      final right = left + painter.width;
+      painter.dispose();
+      return left < nowX + 30 && right > nowX - 30;
+    }
+
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -3186,15 +3207,14 @@ class _TimeRuler extends StatelessWidget {
                 const SizedBox(width: 8),
                 SizedBox(
                   width: math.max(0, hourWidth - 12),
-                  child: Text(
-                    labelFor(index),
-                    key: ValueKey('guide-ruler-label-$index'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: _quietText,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w600,
+                  child: Opacity(
+                    opacity: coveredByNow(index) ? 0 : 1,
+                    child: Text(
+                      labelFor(index),
+                      key: ValueKey('guide-ruler-label-$index'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: labelStyle,
                     ),
                   ),
                 ),
@@ -3281,7 +3301,9 @@ class _GuideDropdown<T> extends StatelessWidget {
         isExpanded: true,
         dropdownColor: _raised,
         iconEnabledColor: _quietText,
+        // A dropdown's own style replaces the theme's, font family included.
         style: const TextStyle(
+          fontFamily: 'Figtree',
           color: Cinema.quiet,
           fontSize: 13,
           fontWeight: FontWeight.w600,
@@ -3793,11 +3815,11 @@ String _formatGuideCompactRange(
     end,
     includeZone: includeZone,
   );
-  final crossesDay =
-      start.wallTime.year != end.wallTime.year ||
-      start.wallTime.month != end.wallTime.month ||
-      start.wallTime.day != end.wallTime.day;
-  if (!crossesDay) return '$startTime–$endTime';
+  // Cells are narrow and the ruler marks the new day, so only a program a
+  // day or longer needs dates.
+  final longerThanADay =
+      end.wallTime.difference(start.wallTime) >= const Duration(days: 1);
+  if (!longerThanADay) return '$startTime–$endTime';
   return '${localizations.formatShortDate(start.wallTime)} $startTime–${localizations.formatShortDate(end.wallTime)} $endTime';
 }
 
