@@ -171,12 +171,9 @@ class GeneralSettingsSectionState extends State<GeneralSettingsSection> {
                 ),
             ],
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'If the previous screen or channel is unavailable, Wabbit opens Home.',
-            style: TextStyle(color: _quietText, fontSize: 12.5, height: 1.35),
-          ),
-          if (status != null) ...[
+          // Saving is near-instant, so only a failure gets a visible line;
+          // a flash of "Saving…" shoved the page down and back up.
+          if (failed && status != null) ...[
             const SizedBox(height: 8),
             Text(
               status,
@@ -303,23 +300,22 @@ class _StartupChoice extends StatelessWidget {
                   // show through the translucent rest fill.
                   color: focused ? _amber : Cinema.glass,
                   borderRadius: BorderRadius.circular(20),
-                  border: selected && !focused
-                      ? Border.all(color: _amber, width: 1.5)
-                      : null,
+                  // Every pill carries the border so choosing one never
+                  // changes any pill's width.
+                  border: Border.all(
+                    color: selected && !focused
+                        ? _amber
+                        : const Color(0x00000000),
+                    width: 1.5,
+                  ),
                   boxShadow: focused ? [Cinema.focusGlow.last] : const [],
                 ),
+                // No checkmark: it widened the chosen pill and shifted
+                // its neighbors whenever the choice moved.
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    if (selected) ...[
-                      Icon(
-                        Icons.check_rounded,
-                        size: 16,
-                        color: focused ? Cinema.amberInk : _amber,
-                      ),
-                      const SizedBox(width: 6),
-                    ],
                     Text(
                       label,
                       textAlign: TextAlign.center,
@@ -332,9 +328,7 @@ class _StartupChoice extends StatelessWidget {
                             ? _amber
                             : _warmWhite,
                         fontSize: 14,
-                        fontWeight: selected
-                            ? FontWeight.w700
-                            : FontWeight.w600,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ],

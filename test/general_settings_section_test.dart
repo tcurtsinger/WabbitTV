@@ -66,6 +66,33 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('choosing a startup option moves nothing on screen', (
+    tester,
+  ) async {
+    final save = Completer<void>();
+    final port = _SettingsPort()..targetSave = save.future;
+    final controller = StartupPreferencesController(port: port);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+    final section = find.byKey(const ValueKey('general-startup-settings'));
+    List<Rect> layout() => [
+      tester.getRect(section),
+      for (final target in StartupTarget.values)
+        tester.getRect(find.byKey(ValueKey('startup-choice-${target.name}'))),
+    ];
+    final before = layout();
+
+    await tester.tap(find.text('Previous screen'));
+    await tester.pump();
+    expect(controller.state, StartupPreferencesState.saving);
+    expect(layout(), before);
+
+    save.complete();
+    await tester.pumpAndSettle();
+    expect(layout(), before);
+  });
+
   testWidgets('remote Select saves and keeps focus through async rebuilds', (
     tester,
   ) async {
@@ -83,7 +110,9 @@ void main() {
     await tester.pump();
 
     expect(controller.displayedTarget, StartupTarget.previousScreen);
-    expect(find.text('Saving startup choice…'), findsOneWidget);
+    expect(controller.state, StartupPreferencesState.saving);
+    // No visible "Saving…" line: it would push the page down and back up.
+    expect(find.byKey(const ValueKey('startup-settings-status')), findsNothing);
     expect(FocusManager.instance.primaryFocus, focus);
 
     save.complete();
@@ -134,7 +163,10 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.select);
       await tester.pump();
       expect(port.saveCalls, [StartupTarget.previousScreen]);
-      expect(find.text('Saving startup choice…'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('startup-settings-status')),
+        findsNothing,
+      );
 
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
       await tester.pump();
@@ -207,7 +239,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Sources could not be loaded'), findsOneWidget);
+    expect(find.text("Couldn't load sources"), findsOneWidget);
 
     _focus(tester, 'startup home').requestFocus();
     await tester.pump();
@@ -278,7 +310,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.displayedTarget, StartupTarget.home);
-    expect(find.textContaining('previous choice is unchanged'), findsOneWidget);
+    expect(find.text("Couldn't save your choice."), findsOneWidget);
     expect(
       find.byKey(const ValueKey('startup-settings-retry')),
       findsOneWidget,

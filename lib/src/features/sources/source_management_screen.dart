@@ -177,7 +177,7 @@ class SourceManagementController extends ChangeNotifier {
       if (selectedId != sourceId || generation != _connectionGeneration) return;
       _failedConnectionOverride = overrideLimit;
       connectionAllowanceState = SourceConnectionAllowanceState.saveFailed;
-      connectionRecovery = 'The stream setting could not be saved. Your previous choice is unchanged.';
+      connectionRecovery = "Couldn't save the stream setting.";
     } finally {
       _working = false;
       notifyListeners();
@@ -196,8 +196,7 @@ class SourceManagementController extends ChangeNotifier {
       await _reload(reportFailure: true);
     } catch (_) {
       failedSourceId = source.id;
-      recovery =
-          'Refresh failed. Your previous local catalog is still available.';
+      recovery = 'Refresh failed · showing saved catalog';
     } finally {
       refreshing = false;
       _working = false;
@@ -214,8 +213,7 @@ class SourceManagementController extends ChangeNotifier {
       await _requirePort().setEnabled(source.id, !source.enabled);
       await _reload(reportFailure: true);
     } catch (_) {
-      recovery =
-          'That source could not be updated. Your local catalog is unchanged.';
+      recovery = "Couldn't update this source.";
     } finally {
       _working = false;
       notifyListeners();
@@ -232,8 +230,7 @@ class SourceManagementController extends ChangeNotifier {
       await _requirePort().rename(source.id, normalized);
       await _reload(reportFailure: true);
     } catch (_) {
-      recovery =
-          'That source could not be renamed. Your local catalog is unchanged.';
+      recovery = "Couldn't rename this source.";
     } finally {
       _working = false;
       notifyListeners();
@@ -249,8 +246,7 @@ class SourceManagementController extends ChangeNotifier {
       await _requirePort().editAndRefresh(source.id);
       await _reload(reportFailure: true);
     } catch (_) {
-      recovery =
-          'That source could not be updated. Your local catalog is unchanged.';
+      recovery = "Couldn't update this source.";
     } finally {
       _working = false;
       notifyListeners();
@@ -266,8 +262,7 @@ class SourceManagementController extends ChangeNotifier {
       await _requirePort().remove(source.id);
       await _reload(reportFailure: true);
     } catch (_) {
-      recovery =
-          'That source could not be removed. Your local catalog is unchanged.';
+      recovery = "Couldn't remove this source.";
     } finally {
       _working = false;
       notifyListeners();
@@ -279,7 +274,7 @@ class SourceManagementController extends ChangeNotifier {
       _working = true;
       return true;
     }
-    recovery = 'Another source action is already in progress.';
+    recovery = 'Another action is running.';
     notifyListeners();
     return false;
   }
@@ -324,8 +319,7 @@ class SourceManagementController extends ChangeNotifier {
         // the user was just managing. Keep the last roster and let the next
         // maintenance action retry normally.
         state = SourceManagementLoadState.ready;
-        recovery ??=
-            'Sources could not be updated. Showing your last local catalog.';
+        recovery ??= "Couldn't update sources · showing saved list";
       }
       if (reportFailure) rethrow;
     } finally {
@@ -368,7 +362,7 @@ class SourceManagementController extends ChangeNotifier {
     } catch (_) {
       if (selectedId != sourceId || generation != _connectionGeneration) return;
       connectionAllowanceState = SourceConnectionAllowanceState.loadFailed;
-      connectionRecovery = 'The stream setting could not be loaded.';
+      connectionRecovery = "Couldn't load the stream setting.";
     } finally {
       notifyListeners();
     }
@@ -625,7 +619,7 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
         title: Text('Remove ${source.name}', style: _dialogTitle),
         content: const Text(
-          'This removes this source’s credentials and active catalog contribution. Other sources stay available.',
+          'Its login and catalog leave Wabbit. Other sources stay.',
           style: TextStyle(color: _quietText),
         ),
         actions: [
@@ -1005,7 +999,6 @@ class _SourceRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final connector = _connectorLabel(source.kind);
     final state = _sourceStatus(source).directory;
-    final counts = _directoryCounts(source.counts);
     return FocusableActionDetector(
       focusNode: focusNode,
       autofocus: selected,
@@ -1076,7 +1069,7 @@ class _SourceRow extends StatelessWidget {
                           ),
                           const SizedBox(height: 5),
                           Text(
-                            '$connector · $state · $counts',
+                            '$connector · $state',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -1159,7 +1152,7 @@ class _Detail extends StatelessWidget {
   Widget build(BuildContext context) {
     final status = _sourceStatus(source);
     final statusMessage = failed
-        ? 'Refresh failed. Previous local catalog retained.'
+        ? 'Refresh failed · showing saved catalog'
         : (recovery ?? status.detail);
     final actions = [
       _FilledAction(
@@ -1220,16 +1213,13 @@ class _Detail extends StatelessWidget {
         Semantics(
           key: ValueKey('source-status-${source.id}'),
           liveRegion: true,
-          label:
-              '${source.enabled ? 'Enabled' : 'Disabled, excluded from active results'}. $statusMessage',
+          label: '${source.enabled ? 'Enabled' : 'Disabled'}. $statusMessage',
           child: ExcludeSemantics(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  source.enabled
-                      ? 'Enabled'
-                      : 'Disabled — excluded from active results',
+                  source.enabled ? 'Enabled' : 'Disabled',
                   style: TextStyle(
                     color: source.enabled ? Cinema.quiet : _amber,
                     fontSize: 14,
@@ -1246,59 +1236,8 @@ class _Detail extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 28),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final textScale = MediaQuery.textScalerOf(context)
-                .scale(1)
-                .clamp(1.0, 2.0);
-            final stackActions =
-                narrow || constraints.maxWidth < 260 * textScale;
-            if (stackActions) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (final action in actions)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: action,
-                    ),
-                ],
-              );
-            }
-            if (constraints.maxWidth < 760 * textScale) {
-              Widget pair(Widget first, Widget second) => Row(
-                children: [
-                  Expanded(child: first),
-                  const SizedBox(width: 12),
-                  Expanded(child: second),
-                ],
-              );
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  pair(actions[0], actions[1]),
-                  const SizedBox(height: 10),
-                  actions[2],
-                  const SizedBox(height: 10),
-                  pair(actions[3], actions[4]),
-                ],
-              );
-            }
-            return Row(
-              children: [
-                for (var index = 0; index < actions.length; index++)
-                  Expanded(
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                        right: index == actions.length - 1 ? 0 : 12,
-                      ),
-                      child: actions[index],
-                    ),
-                  ),
-              ],
-            );
-          },
-        ),
+        // Natural-width pills that wrap in reading order at any width.
+        Wrap(spacing: 10, runSpacing: 10, children: actions),
         const SizedBox(height: 24),
         _Counts(counts: source.counts, narrow: narrow),
         if (showConnectionAllowance) ...[
@@ -1367,137 +1306,118 @@ class _ConnectionAllowanceLedger extends StatelessWidget {
       container: true,
       liveRegion: true,
       label: semanticsLabel.toString(),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 278),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Simultaneous streams',
-              style: TextStyle(
-                color: _warmWhite,
-                fontFamily: Cinema.display,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Simultaneous streams',
+            style: TextStyle(
+              color: _warmWhite,
+              fontFamily: Cinema.display,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
             ),
-            const SizedBox(height: 4),
-            const Text(
-              'Choose how many streams Wabbit may open from this source.',
-              style: TextStyle(color: Cinema.quiet, fontSize: 14),
-            ),
-            const SizedBox(height: 16),
-            ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 24),
-              child: state == SourceConnectionAllowanceState.loading
-                  ? const Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(
-                            color: _amber,
-                            strokeWidth: 2,
-                          ),
+          ),
+          const SizedBox(height: 16),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 24),
+            child: state == SourceConnectionAllowanceState.loading
+                ? const Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(
+                          color: _amber,
+                          strokeWidth: 2,
                         ),
-                        SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Loading stream setting…',
-                            style: TextStyle(color: _quietText),
-                          ),
-                        ),
-                      ],
-                    )
-                  : Text(
-                      status ?? 'Stream setting unavailable',
-                      key: const ValueKey('source-connection-status'),
-                      style: const TextStyle(
-                        color: _warmWhite,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
                       ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Loading stream setting…',
+                          style: TextStyle(color: _quietText),
+                        ),
+                      ),
+                    ],
+                  )
+                : Text(
+                    status ?? 'Stream setting unavailable',
+                    key: const ValueKey('source-connection-status'),
+                    style: const TextStyle(
+                      color: _warmWhite,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
                     ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _AllowanceChoice(
-                    label: 'Automatic',
-                    selected: current != null && current.overrideLimit == null,
-                    focusNode: automaticFocus,
-                    enabled: !busy,
-                    onPressed: current == null ? null : () => onChanged(null),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _AllowanceChoice(
-                    label: '1',
-                    selected: current?.overrideLimit == 1,
-                    focusNode: oneFocus,
-                    enabled: !busy,
-                    onPressed: current == null ? null : () => onChanged(1),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _AllowanceChoice(
-                    label: '2',
-                    selected: current?.overrideLimit == 2,
-                    focusNode: twoFocus,
-                    enabled: !busy,
-                    onPressed: current == null ? null : () => onChanged(2),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 48),
-              child: showRetry
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            failed
-                                ? (recovery ??
-                                      'The stream setting is unavailable.')
-                                : 'Retrying…',
-                            style: const TextStyle(
-                              color: _quietText,
-                              fontSize: 14,
-                            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _AllowanceChoice(
+                label: 'Automatic',
+                selected: current != null && current.overrideLimit == null,
+                focusNode: automaticFocus,
+                enabled: !busy,
+                onPressed: current == null ? null : () => onChanged(null),
+              ),
+              _AllowanceChoice(
+                label: '1',
+                selected: current?.overrideLimit == 1,
+                focusNode: oneFocus,
+                enabled: !busy,
+                onPressed: current == null ? null : () => onChanged(1),
+              ),
+              _AllowanceChoice(
+                label: '2',
+                selected: current?.overrideLimit == 2,
+                focusNode: twoFocus,
+                enabled: !busy,
+                onPressed: current == null ? null : () => onChanged(2),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: showRetry
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          failed
+                              ? (recovery ??
+                                    'The stream setting is unavailable.')
+                              : 'Retrying…',
+                          style: const TextStyle(
+                            color: _quietText,
+                            fontSize: 14,
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        _FocusHoldingOutlinedAction(
-                          label: 'Retry',
-                          focusNode: retryFocus,
-                          enabled: failed && !busy,
-                          onPressed: onRetry,
-                        ),
-                      ],
-                    )
-                  : Align(
-                      alignment: Alignment.centerLeft,
-                      child: state == SourceConnectionAllowanceState.saving
-                          ? const Text(
-                              'Saving locally…',
-                              style: TextStyle(color: _quietText, fontSize: 14),
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Wabbit cannot change your provider subscription. A higher local limit does not grant more streams. Lowering this setting does not stop sessions already playing.',
-              style: TextStyle(color: _quietText, fontSize: 12.5, height: 1.4),
-            ),
-          ],
-        ),
+                      ),
+                      const SizedBox(width: 12),
+                      _FocusHoldingOutlinedAction(
+                        label: 'Retry',
+                        focusNode: retryFocus,
+                        enabled: failed && !busy,
+                        onPressed: onRetry,
+                      ),
+                    ],
+                  )
+                : Align(
+                    alignment: Alignment.centerLeft,
+                    child: state == SourceConnectionAllowanceState.saving
+                        ? const Text(
+                            'Saving locally…',
+                            style: TextStyle(color: _quietText, fontSize: 14),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -1535,6 +1455,7 @@ class _AllowanceChoice extends StatelessWidget {
       focusNode: focusNode,
       onPressed: onPressed == null ? null : _invoke,
       style: Cinema.pillButton().copyWith(
+        minimumSize: const WidgetStatePropertyAll(Size(96, 44)),
         // Selected reads amber on glass; focus still fills the pill amber.
         foregroundColor: WidgetStateProperty.resolveWith(
           (states) => states.contains(WidgetState.focused)
@@ -1603,13 +1524,13 @@ String _allowanceStatus(SourceConnectionAllowance allowance) {
   if (override == null) {
     final reported = allowance.reportedLimit;
     return reported == null
-        ? 'Automatic · Assuming 1'
-        : 'Automatic · Reported $reported';
+        ? 'Automatic · 1 stream'
+        : 'Automatic · provider allows $reported';
   }
   final reported = allowance.reportedLimit;
   return reported == null
-      ? 'Local override $override · Provider limit not reported'
-      : 'Local override $override · Provider reports $reported';
+      ? 'Set to $override'
+      : 'Set to $override · provider allows $reported';
 }
 
 class _Counts extends StatelessWidget {
@@ -1679,7 +1600,7 @@ class _Empty extends StatelessWidget {
         const Text('No sources yet', style: _messageTitle),
         const SizedBox(height: 8),
         const Text(
-          'Add a source to build your local library.',
+          'Add one to start watching.',
           style: TextStyle(color: Cinema.quiet, fontSize: 15),
         ),
         const SizedBox(height: 20),
@@ -1703,12 +1624,7 @@ class _LoadFailure extends StatelessWidget {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text('Sources could not be loaded', style: _messageTitle),
-        const SizedBox(height: 8),
-        const Text(
-          'Try again. Your local catalog is unchanged.',
-          style: TextStyle(color: Cinema.quiet, fontSize: 15),
-        ),
+        const Text("Couldn't load sources", style: _messageTitle),
         const SizedBox(height: 20),
         _OutlinedAction(
           label: 'Retry',
@@ -1784,19 +1700,6 @@ String _count(int value) => value.toString().replaceAllMapped(
   (_) => ',',
 );
 
-String _compactCount(int value) {
-  if (value < 1000) return value.toString();
-  final divisor = value >= 1000000 ? 1000000 : 1000;
-  final suffix = value >= 1000000 ? 'M' : 'K';
-  final compact = value / divisor;
-  return '${compact >= 100 ? compact.toStringAsFixed(0) : compact.toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '')}$suffix';
-}
-
-String _directoryCounts(Map<SourceMediaKind, int> counts) =>
-    'L ${_compactCount(counts[SourceMediaKind.live] ?? 0)} · '
-    'M ${_compactCount(counts[SourceMediaKind.movies] ?? 0)} · '
-    'S ${_compactCount(counts[SourceMediaKind.series] ?? 0)}';
-
 String _connectorLabel(String kind) => switch (kind.toLowerCase()) {
   'm3u_url' => 'M3U URL',
   'm3u_file' => 'Local M3U',
@@ -1818,20 +1721,12 @@ _SourceStatusPresentation _sourceStatus(SourceRosterEntry source) {
   final refresh = switch (source.status.trim().toLowerCase()) {
     'refresh_failed' => const (
       directory: 'Refresh failed',
-      detail: 'Refresh failed. Previous local catalog retained.',
+      detail: 'Refresh failed · showing saved catalog',
     ),
-    'refreshing' => const (
-      directory: 'Refreshing',
-      detail: 'Refreshing. Current local catalog remains available.',
-    ),
-    'ready' || 'last refresh complete' => const (
-      directory: 'Ready',
-      detail: 'Last refresh complete.',
-    ),
-    _ => const (
-      directory: 'Status unavailable',
-      detail: 'Refresh status unavailable.',
-    ),
+    'refreshing' => const (directory: 'Refreshing', detail: 'Refreshing…'),
+    'ready' ||
+    'last refresh complete' => const (directory: 'Ready', detail: 'Up to date'),
+    _ => const (directory: 'Status unavailable', detail: 'Status unknown'),
   };
   return _SourceStatusPresentation(
     directory: source.enabled

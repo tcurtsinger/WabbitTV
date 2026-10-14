@@ -76,16 +76,10 @@ void main() {
           .resolve({});
       expect(addShape, isA<StadiumBorder>());
       expect(refreshShape, isA<StadiumBorder>());
-      expect(
-        find.text('Xtream · Ready · L 56.7K · M 177K · S 47.3K'),
-        findsOneWidget,
-      );
+      expect(find.text('Xtream · Ready'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('source-row-two')));
       await tester.pump();
-      expect(
-        find.text('Disabled — excluded from active results'),
-        findsOneWidget,
-      );
+      expect(find.text('Disabled'), findsOneWidget);
       expect(find.text('Enable'), findsOneWidget);
       final selected = tester.widget<Container>(
         find.byKey(const ValueKey('source-row-two')),
@@ -97,9 +91,7 @@ void main() {
     },
   );
 
-  testWidgets('Up and Down move directory focus', (
-    tester,
-  ) async {
+  testWidgets('Up and Down move directory focus', (tester) async {
     final c = SourceManagementController(
       entries: [entry('one', 'One'), entry('two', 'Two')],
     );
@@ -175,14 +167,9 @@ void main() {
       await tester.pumpWidget(app(c));
       await tester.pumpAndSettle();
 
+      expect(find.text('Xtream · Disabled · Refresh failed'), findsOneWidget);
       expect(
-        find.text(
-          'Xtream · Disabled · Refresh failed · L 56.7K · M 177K · S 47.3K',
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.text('Refresh failed. Previous local catalog retained.'),
+        find.text('Refresh failed · showing saved catalog'),
         findsOneWidget,
       );
       expect(find.text('refresh_failed'), findsNothing);
@@ -275,9 +262,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Home provider'), findsWidgets);
   });
-  testWidgets('keyboard focus shows on dialog buttons', (
-    tester,
-  ) async {
+  testWidgets('keyboard focus shows on dialog buttons', (tester) async {
     final c = SourceManagementController(
       entries: [entry('one', 'Home provider')],
     );
@@ -322,76 +307,72 @@ void main() {
     );
   });
 
-  testWidgets(
-    'intermediate width reflows complete actions and keeps remote order',
-    (tester) async {
-      final c = SourceManagementController(
-        entries: [entry('one', 'Home provider')],
-      );
-      await tester.binding.setSurfaceSize(const Size(800, 713));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(
-        MaterialApp(
-          builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(context)
-                .copyWith(textScaler: const TextScaler.linear(1.2)),
-            child: child!,
-          ),
-          home: Scaffold(
-            body: SourceManagementScreen(
-              initialFocus: FocusNode(debugLabel: 'management initial'),
-              onContentFocus: (_) {},
-              onOpenRail: () {},
-              onAddSource: () {},
-              controller: c,
-            ),
+  testWidgets('intermediate width wraps one-line actions in reading order', (
+    tester,
+  ) async {
+    final c = SourceManagementController(
+      entries: [entry('one', 'Home provider')],
+    );
+    await tester.binding.setSurfaceSize(const Size(800, 713));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: const TextScaler.linear(1.2)),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: SourceManagementScreen(
+            initialFocus: FocusNode(debugLabel: 'management initial'),
+            onContentFocus: (_) {},
+            onOpenRail: () {},
+            onAddSource: () {},
+            controller: c,
           ),
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      final refresh = find.byKey(const ValueKey('source-action-Refresh'));
-      final edit = find.byKey(const ValueKey('source-action-Edit'));
-      final visibility = find.byKey(
-        const ValueKey('source-action-Manage visibility'),
-      );
-      final toggle = find.byKey(const ValueKey('source-action-Disable'));
-      final remove = find.byKey(const ValueKey('source-action-Remove'));
-      expect(tester.getTopLeft(refresh).dy, tester.getTopLeft(edit).dy);
+    final refresh = find.byKey(const ValueKey('source-action-Refresh'));
+    final edit = find.byKey(const ValueKey('source-action-Edit'));
+    final visibility = find.byKey(
+      const ValueKey('source-action-Manage visibility'),
+    );
+    final toggle = find.byKey(const ValueKey('source-action-Disable'));
+    final remove = find.byKey(const ValueKey('source-action-Remove'));
+    final ordered = [refresh, edit, visibility, toggle, remove];
+    for (var index = 1; index < ordered.length; index++) {
+      final before = tester.getRect(ordered[index - 1]);
+      final after = tester.getRect(ordered[index]);
+      // Every label fits on one line, so every pill is the same height.
+      expect(after.height, before.height);
+      // Each action follows the last on its row or starts a lower row.
       expect(
-        tester.getTopLeft(edit).dy,
-        lessThan(tester.getTopLeft(visibility).dy),
+        after.top > before.top ||
+            (after.top == before.top && after.left > before.left),
+        isTrue,
       );
-      expect(
-        tester.getTopLeft(visibility).dy,
-        lessThan(tester.getTopLeft(toggle).dy),
-      );
-      expect(tester.getTopLeft(toggle).dy, tester.getTopLeft(remove).dy);
+    }
 
-      await tester.ensureVisible(visibility);
-      await tester.pumpAndSettle();
-      final buttonRect = tester.getRect(visibility);
-      final labelRect = tester.getRect(find.text('Manage visibility'));
-      expect(buttonRect.left, lessThanOrEqualTo(labelRect.left));
-      expect(buttonRect.right, greaterThanOrEqualTo(labelRect.right));
-      expect(tester.takeException(), isNull);
+    await tester.ensureVisible(visibility);
+    await tester.pumpAndSettle();
+    final buttonRect = tester.getRect(visibility);
+    final labelRect = tester.getRect(find.text('Manage visibility'));
+    expect(buttonRect.left, lessThanOrEqualTo(labelRect.left));
+    expect(buttonRect.right, greaterThanOrEqualTo(labelRect.right));
+    expect(tester.takeException(), isNull);
 
-      tester.widget<FilledButton>(refresh).focusNode!.requestFocus();
-      await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
-      await tester.pump();
-      expect(
-        FocusManager.instance.primaryFocus?.debugLabel,
-        'source management edit',
-      );
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await tester.pump();
-      expect(
-        FocusManager.instance.primaryFocus?.debugLabel,
-        'source management manage visibility',
-      );
-    },
-  );
+    tester.widget<FilledButton>(refresh).focusNode!.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(
+      FocusManager.instance.primaryFocus?.debugLabel,
+      'source management edit',
+    );
+  });
 
   testWidgets(
     'selected source shows reported or conservative Automatic allowance',
@@ -414,15 +395,11 @@ void main() {
       await tester.pumpWidget(app(c));
       await tester.pumpAndSettle();
       expect(find.text('Simultaneous streams'), findsOneWidget);
-      expect(find.text('Automatic · Reported 2'), findsOneWidget);
-      expect(
-        find.textContaining('Wabbit cannot change your provider subscription'),
-        findsOneWidget,
-      );
+      expect(find.text('Automatic · provider allows 2'), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('source-row-two')));
       await tester.pumpAndSettle();
-      expect(find.text('Automatic · Assuming 1'), findsOneWidget);
+      expect(find.text('Automatic · 1 stream'), findsOneWidget);
     },
   );
 
@@ -471,10 +448,7 @@ void main() {
       expect(reportedFocus, contains('source management streams one'));
       await tester.sendKeyEvent(LogicalKeyboardKey.select);
       await tester.pumpAndSettle();
-      expect(
-        find.text('Local override 1 · Provider reports 1'),
-        findsOneWidget,
-      );
+      expect(find.text('Set to 1 · provider allows 1'), findsOneWidget);
 
       port.saveGate = saveGate;
 
@@ -490,17 +464,11 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.select);
       await tester.pump();
       expect(port.saveCalls, [('one', 1), ('one', 2)]);
-      expect(
-        find.text('Local override 1 · Provider reports 1'),
-        findsOneWidget,
-      );
+      expect(find.text('Set to 1 · provider allows 1'), findsOneWidget);
 
       saveGate.complete();
       await tester.pumpAndSettle();
-      expect(
-        find.text('Local override 2 · Provider reports 1'),
-        findsOneWidget,
-      );
+      expect(find.text('Set to 2 · provider allows 1'), findsOneWidget);
       expect(
         FocusManager.instance.primaryFocus?.debugLabel,
         'source management streams two',
@@ -511,7 +479,7 @@ void main() {
         find.byKey(const ValueKey('source-connection-choice-Automatic')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Automatic · Reported 1'), findsOneWidget);
+      expect(find.text('Automatic · provider allows 1'), findsOneWidget);
       expect(port.saveCalls, [('one', 1), ('one', 2), ('one', null)]);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -536,10 +504,7 @@ void main() {
       await tester.pumpWidget(app(c));
       await tester.pumpAndSettle();
 
-      expect(
-        find.text('The stream setting could not be loaded.'),
-        findsOneWidget,
-      );
+      expect(find.text("Couldn't load the stream setting."), findsOneWidget);
       expect(find.text('Retry'), findsOneWidget);
       port.failLoad = false;
       final retryLoad = Completer<SourceConnectionAllowance>();
@@ -567,7 +532,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Automatic · Assuming 1'), findsOneWidget);
+      expect(find.text('Automatic · 1 stream'), findsOneWidget);
       expect(
         FocusManager.instance.primaryFocus?.debugLabel,
         'source management streams automatic',
@@ -594,13 +559,8 @@ void main() {
       );
       failedSave.complete();
       await tester.pumpAndSettle();
-      expect(
-        find.text(
-          'The stream setting could not be saved. Your previous choice is unchanged.',
-        ),
-        findsOneWidget,
-      );
-      expect(find.text('Automatic · Assuming 1'), findsOneWidget);
+      expect(find.text("Couldn't save the stream setting."), findsOneWidget);
+      expect(find.text('Automatic · 1 stream'), findsOneWidget);
       expect(
         FocusManager.instance.primaryFocus?.debugLabel,
         'source management streams two',
@@ -611,10 +571,7 @@ void main() {
       await tester.ensureVisible(find.text('Retry'));
       await tester.tap(find.text('Retry'));
       await tester.pumpAndSettle();
-      expect(
-        find.text('Local override 2 · Provider limit not reported'),
-        findsOneWidget,
-      );
+      expect(find.text('Set to 2'), findsOneWidget);
       expect(port.saveCalls, [('one', 2), ('one', 2)]);
     },
   );
@@ -644,14 +601,14 @@ void main() {
     await tester.pump();
     c.select('two');
     await tester.pumpAndSettle();
-    expect(find.text('Local override 1 · Provider reports 2'), findsOneWidget);
+    expect(find.text('Set to 1 · provider allows 2'), findsOneWidget);
 
     firstLoad.complete(
       const SourceConnectionAllowance(reportedLimit: 9, overrideLimit: null),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Local override 1 · Provider reports 2'), findsOneWidget);
-    expect(find.text('Automatic · Reported 9'), findsNothing);
+    expect(find.text('Set to 1 · provider allows 2'), findsOneWidget);
+    expect(find.text('Automatic · provider allows 9'), findsNothing);
   });
 
   testWidgets('constrained allowance states keep controls fixed and readable', (
@@ -686,7 +643,7 @@ void main() {
       find.byKey(const ValueKey('source-connection-choice-Automatic')),
     );
     expect(readyRect.size, loadingRect.size);
-    expect(find.text('Automatic · Assuming 1'), findsOneWidget);
+    expect(find.text('Automatic · 1 stream'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -735,7 +692,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final ready = find.text('Automatic · Assuming 1');
+      final ready = find.text('Automatic · 1 stream');
       await tester.ensureVisible(ready);
       await tester.pump();
       expect(tester.getSize(ready).height, greaterThan(24));
@@ -757,8 +714,7 @@ void main() {
 
       save.complete();
       await tester.pumpAndSettle();
-      const failureCopy =
-          'The stream setting could not be saved. Your previous choice is unchanged.';
+      const failureCopy = "Couldn't save the stream setting.";
       final failure = find.text(failureCopy);
       await tester.ensureVisible(failure);
       await tester.pump();
@@ -798,7 +754,7 @@ void main() {
       find.byKey(const ValueKey('source-row-one')),
     );
     expect(rowSize.height, greaterThan(140));
-    expect(find.textContaining('L 56.7K'), findsOneWidget);
+    expect(find.text('Xtream · Ready'), findsOneWidget);
   });
   testWidgets('Escape returns detail focus to row, then opens rail', (
     tester,
@@ -918,12 +874,7 @@ void main() {
 
     await tester.tap(find.text('Disable'));
     await tester.pump();
-    expect(
-      find.text(
-        'That source could not be updated. Your local catalog is unchanged.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text("Couldn't update this source."), findsOneWidget);
     expect(c.entries, hasLength(1));
     expect(
       FocusManager.instance.primaryFocus?.debugLabel,
@@ -944,12 +895,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump();
     expect(c.entries, hasLength(1));
-    expect(
-      find.text(
-        'That source could not be removed. Your local catalog is unchanged.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text("Couldn't remove this source."), findsOneWidget);
   });
 
   testWidgets('loading and load failure expose a retry path', (tester) async {
@@ -964,7 +910,7 @@ void main() {
     c.state = SourceManagementLoadState.failed;
     c.notifyListeners();
     await tester.pump();
-    expect(find.text('Sources could not be loaded'), findsOneWidget);
+    expect(find.text("Couldn't load sources"), findsOneWidget);
     await tester.tap(find.text('Retry'));
     await tester.pump();
     expect(find.text('Refresh'), findsOneWidget);
@@ -982,11 +928,9 @@ void main() {
 
     expect(c.state, SourceManagementLoadState.ready);
     expect(find.text('Last good source'), findsWidgets);
-    expect(find.text('Sources could not be loaded'), findsNothing);
+    expect(find.text("Couldn't load sources"), findsNothing);
     expect(
-      find.text(
-        'Sources could not be updated. Showing your last local catalog.',
-      ),
+      find.text("Couldn't update sources · showing saved list"),
       findsOneWidget,
     );
   });
