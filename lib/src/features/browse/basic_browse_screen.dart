@@ -5,7 +5,6 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import '../../cinema.dart';
-import '../../focus_edge.dart';
 import '../artwork/artwork_loader.dart';
 import '../artwork/source_artwork.dart';
 import '../guide/guide_data.dart';
@@ -2614,8 +2613,19 @@ class _CategoryOverlay extends StatelessWidget {
                       IconButton(
                         tooltip: 'Close categories',
                         onPressed: onDismiss,
-                        style: ButtonStyle(side: focusEdge()),
-                        icon: const Icon(Icons.close, color: _warmWhite),
+                        style: ButtonStyle(
+                          backgroundColor: WidgetStateProperty.resolveWith(
+                            (states) => states.contains(WidgetState.focused)
+                                ? _amber
+                                : null,
+                          ),
+                          iconColor: WidgetStateProperty.resolveWith(
+                            (states) => states.contains(WidgetState.focused)
+                                ? Cinema.amberInk
+                                : _warmWhite,
+                          ),
+                        ),
+                        icon: const Icon(Icons.close_rounded),
                       ),
                     ],
                   ),
@@ -3350,7 +3360,7 @@ class _PageErrorFooter extends StatelessWidget {
         ),
         TextButton(
           onPressed: onRetry,
-          style: ButtonStyle(side: focusEdge()),
+          style: Cinema.pillButton(),
           child: const Text('Retry'),
         ),
       ],

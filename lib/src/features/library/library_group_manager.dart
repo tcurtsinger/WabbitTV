@@ -3,17 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../focus_edge.dart';
+import '../../cinema.dart';
 import '../sources/source_models.dart';
 import 'library_organization_service.dart';
 
-const _graphite = Color(0xFF111212);
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
+/// The side panel's ground: a step above the ink so it reads as a sheet.
+const _panel = Color(0xFF141419);
+const _surface = Color(0xFF1A1A20);
+const _raised = Color(0xFF1E1E23);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.faint;
+const _amber = Cinema.amber;
 
 class LibraryGroupManagementRequest {
   const LibraryGroupManagementRequest.create() : group = null;
@@ -528,14 +528,13 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
       const SingleActivator(LogicalKeyboardKey.browserBack): _close,
     },
     child: Material(
-      color: _graphite,
+      color: _panel,
       child: SafeArea(
         left: false,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _header(),
-            const Divider(height: 1, color: _line),
             Expanded(
               child: widget.request.creating || _editingName
                   ? _nameEditor()
@@ -560,16 +559,27 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
                 : 'Manage group',
             style: const TextStyle(
               color: _warmWhite,
+              fontFamily: Cinema.display,
               fontSize: 20,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ),
         IconButton(
           tooltip: _busy ? 'Wait for the local save' : 'Close',
           onPressed: _busy ? null : _close,
-          style: ButtonStyle(side: focusEdge()),
-          icon: const Icon(Icons.close, color: _warmWhite),
+          style: ButtonStyle(
+            backgroundColor: WidgetStateProperty.resolveWith(
+              (states) =>
+                  states.contains(WidgetState.focused) ? Cinema.amber : null,
+            ),
+            iconColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.focused)
+                  ? Cinema.amberInk
+                  : _warmWhite,
+            ),
+          ),
+          icon: const Icon(Icons.close_rounded),
         ),
       ],
     ),
@@ -617,11 +627,11 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
             filled: true,
             fillColor: _surface,
             enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: const BorderSide(color: _line, width: 2),
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(14),
               borderSide: const BorderSide(color: _amber, width: 2),
             ),
           ),
@@ -847,7 +857,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
                 ),
               ),
             ),
-            const Divider(height: 1, color: _line),
+            const Divider(height: 1, color: Cinema.glass),
             if (_itemOrder && _selectedItemId != null)
               SizedBox(
                 height: itemToolbarHeight,
@@ -1222,6 +1232,7 @@ class _GroupManagerItemRowState extends State<_GroupManagerItemRow> {
       label:
           '${widget.item.title}, ${_groupItemKindLabel(widget.item.kind)}${widget.item.isAvailable ? '' : ', unavailable'}',
       child: InkWell(
+        borderRadius: BorderRadius.circular(14),
         onTap: () {
           _focusNode.requestFocus();
           widget.onFocused();
@@ -1229,14 +1240,14 @@ class _GroupManagerItemRowState extends State<_GroupManagerItemRow> {
         child: Container(
           key: ValueKey('group-manager-item-${widget.item.libraryItemId}'),
           margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: _focused || widget.selected ? _raised : Colors.transparent,
-            border: Border.all(
-              color: _focused ? _amber : Colors.transparent,
-              width: 2,
-            ),
-            borderRadius: BorderRadius.circular(6),
+            // Opaque when focused so the ring stays a ring.
+            color: _focused || widget.selected
+                ? _raised
+                : const Color(0x00000000),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: _focused ? Cinema.focusGlow : const [],
           ),
           child: Row(
             children: [
@@ -1246,7 +1257,9 @@ class _GroupManagerItemRowState extends State<_GroupManagerItemRow> {
                   SourceMediaKind.movies => Icons.movie_outlined,
                   SourceMediaKind.series => Icons.tv_outlined,
                 },
-                color: widget.item.isAvailable ? _quietText : _line,
+                color: widget.item.isAvailable
+                    ? _quietText
+                    : _quietText.withValues(alpha: .4),
                 size: 20,
               ),
               const SizedBox(width: 12),
@@ -1266,11 +1279,11 @@ class _GroupManagerItemRowState extends State<_GroupManagerItemRow> {
               Text(
                 widget.item.isAvailable
                     ? _groupItemKindLabel(widget.item.kind)
-                    : 'UNAVAILABLE',
-                style: const TextStyle(
-                  color: _quietText,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
+                    : 'Unavailable',
+                style: TextStyle(
+                  color: widget.item.isAvailable ? _quietText : _amber,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               if (widget.itemOrder) ...[
@@ -1286,9 +1299,9 @@ class _GroupManagerItemRowState extends State<_GroupManagerItemRow> {
 }
 
 String _groupItemKindLabel(SourceMediaKind kind) => switch (kind) {
-  SourceMediaKind.live => 'LIVE',
-  SourceMediaKind.movies => 'MOVIE',
-  SourceMediaKind.series => 'SERIES',
+  SourceMediaKind.live => 'Channel',
+  SourceMediaKind.movies => 'Movie',
+  SourceMediaKind.series => 'Series',
 };
 
 class _ManagerAction extends StatelessWidget {
@@ -1324,24 +1337,12 @@ class _ManagerAction extends StatelessWidget {
         });
       },
       onPressed: enabled ? onPressed : null,
-      style:
-          OutlinedButton.styleFrom(
-            foregroundColor: primary ? _graphite : _warmWhite,
-            backgroundColor: primary && enabled ? _amber : _raised,
-            disabledForegroundColor: _quietText,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(6),
-            ),
-            minimumSize: const Size(108, 40),
-          ).copyWith(
-            side: focusEdge(
-              rest: BorderSide(
-                color: primary && enabled ? _amber : _line,
-                width: 2,
-              ),
-              onAmber: primary && enabled,
-            ),
-          ),
+      style: Cinema.pillButton(primary: primary && enabled).copyWith(
+        minimumSize: const WidgetStatePropertyAll(Size(108, 40)),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 14),
+        ),
+      ),
       child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
     );
     final handler = onKeyEvent;
