@@ -1,21 +1,36 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show FrameCallback;
 import 'package:flutter/services.dart';
 
-import '../../focus_edge.dart';
+import '../../cinema.dart';
 import '../settings/general_settings_section.dart';
 import '../settings/startup_preferences_controller.dart';
 import 'source_models.dart';
 
-const _graphite = Color(0xFF111212);
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
-const _amberInk = Color(0xFF17120A);
+const _graphite = Cinema.ink;
+const _surface = Color(0xFF141419);
+const _raised = Color(0xFF1E1E23);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.faint;
+const _amber = Cinema.amber;
+
+const _overline = TextStyle(
+  color: _quietText,
+  fontSize: 12,
+  fontWeight: FontWeight.w700,
+  letterSpacing: 0.3,
+);
+
+/// Runs [callback] after the next frame and makes sure that frame comes. A
+/// key press alone schedules none, so a focus move would otherwise wait for
+/// some unrelated repaint.
+void _afterNextFrame(FrameCallback callback) {
+  WidgetsBinding.instance
+    ..addPostFrameCallback(callback)
+    ..ensureVisualUpdate();
+}
 
 void _noopManageVisibility(SourceRosterEntry _) {}
 
@@ -436,9 +451,7 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
     super.initState();
     widget.controller.addListener(_changed);
     unawaited(widget.controller.initialize());
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _restoreEntryFocusIfNeeded(),
-    );
+    _afterNextFrame((_) => _restoreEntryFocusIfNeeded());
     for (final node in [
       widget.initialFocus,
       _addFocus,
@@ -504,7 +517,7 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
     final connectionTarget = _connectionFocusTarget;
     setState(() {});
     if (connectionTarget != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      _afterNextFrame((_) {
         if (!mounted || _connectionFocusTarget != connectionTarget) return;
         final target =
             connectionTarget == _streamsRetryFocus &&
@@ -530,7 +543,7 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
   void _restoreEntryFocusIfNeeded() {
     if (_restoreVisibilityFocus && mounted) {
       _restoreVisibilityFocus = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      _afterNextFrame((_) {
         if (mounted) _visibilityFocus.requestFocus();
       });
       return;
@@ -539,7 +552,7 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
     final selected = widget.controller.selected;
     if (selected == null) return;
     _restoreSelectedFocus = false;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _afterNextFrame((_) {
       if (mounted) _row(selected.id).requestFocus();
     });
   }
@@ -604,17 +617,13 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
     final removedIndex = widget.controller.entries.indexWhere(
       (entry) => entry.id == source.id,
     );
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _cancelRemoveFocus.requestFocus(),
-    );
+    _afterNextFrame((_) => _cancelRemoveFocus.requestFocus());
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: _surface,
-        title: Text(
-          'Remove ${source.name}',
-          style: const TextStyle(color: _warmWhite),
-        ),
+        backgroundColor: _raised,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        title: Text('Remove ${source.name}', style: _dialogTitle),
         content: const Text(
           'This removes this source’s credentials and active catalog contribution. Other sources stay available.',
           style: TextStyle(color: _quietText),
@@ -623,14 +632,12 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
           OutlinedButton(
             focusNode: _cancelRemoveFocus,
             onPressed: () => Navigator.pop(context, false),
-            style: ButtonStyle(
-              side: focusEdge(rest: const BorderSide(color: _line)),
-            ),
+            style: Cinema.pillButton(),
             child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ButtonStyle(side: focusEdge(onAmber: true)),
+            style: Cinema.pillButton(primary: true),
             child: const Text('Remove source'),
           ),
         ],
@@ -647,7 +654,7 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
           widget.controller.select(target.id);
         }
       }
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      _afterNextFrame((_) {
         if (!mounted) return;
         final selected = widget.controller.selected;
         (selected == null ? widget.initialFocus : _row(selected.id))
@@ -663,8 +670,9 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
     final renamed = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: _surface,
-        title: const Text('Rename source', style: TextStyle(color: _warmWhite)),
+        backgroundColor: _raised,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        title: const Text('Rename source', style: _dialogTitle),
         content: TextFormField(
           key: const ValueKey('source-rename-field'),
           initialValue: source.name,
@@ -680,13 +688,11 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
         actions: [
           OutlinedButton(
             onPressed: () => Navigator.pop(context),
-            style: ButtonStyle(
-              side: focusEdge(rest: const BorderSide(color: _line)),
-            ),
+            style: Cinema.pillButton(),
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: ButtonStyle(side: focusEdge(onAmber: true)),
+            style: Cinema.pillButton(primary: true),
             onPressed: () {
               final normalized = name.trim();
               if (normalized.isNotEmpty) Navigator.pop(context, normalized);
@@ -720,25 +726,15 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
             builder: (context, box) {
               final narrow = box.maxWidth < 760;
               final selected = c.selected;
-              const headerText = Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Sources',
-                    style: TextStyle(
-                      color: _warmWhite,
-                      fontSize: 31,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -.7,
-                    ),
-                  ),
-                  SizedBox(height: 6),
-                  Text(
-                    'Manage the local sources in your library.',
-                    style: TextStyle(color: _quietText, fontSize: 16),
-                  ),
-                ],
+              const headerText = Text(
+                'Settings',
+                style: TextStyle(
+                  color: _warmWhite,
+                  fontFamily: Cinema.display,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -.6,
+                ),
               );
               final addSource = _OutlinedAction(
                 label: 'Add source',
@@ -859,15 +855,15 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
                   : Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        SizedBox(width: 340, child: directory),
-                        const VerticalDivider(color: _line, width: 44),
+                        SizedBox(width: 300, child: directory),
+                        const SizedBox(width: 28),
                         Expanded(child: SingleChildScrollView(child: detail)),
                       ],
                     );
               final content = <Widget>[
                 header,
                 if (widget.startupPreferencesController != null) ...[
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 18),
                   GeneralSettingsSection(
                     key: _generalSettingsKey,
                     controller: widget.startupPreferencesController!,
@@ -876,11 +872,13 @@ class _SourceManagementScreenState extends State<SourceManagementScreen> {
                     onMoveAbove: _addFocus.requestFocus,
                   ),
                 ],
-                const SizedBox(height: 28),
+                const SizedBox(height: 22),
+                const Text('Sources', style: _overline),
+                const SizedBox(height: 10),
               ];
               return Padding(
                 padding: EdgeInsets.fromLTRB(
-                  narrow ? 24 : 48,
+                  narrow ? 24 : 32,
                   22,
                   narrow ? 24 : 32,
                   32,
@@ -926,7 +924,7 @@ class _Directory extends StatefulWidget {
 
 class _DirectoryState extends State<_Directory> {
   final _scroll = ScrollController();
-  double _rowExtent = 96;
+  double _rowExtent = 88;
 
   @override
   void dispose() {
@@ -944,7 +942,7 @@ class _DirectoryState extends State<_Directory> {
     if (_scroll.hasClients) {
       _scroll.jumpTo(target.clamp(0, _scroll.position.maxScrollExtent));
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _afterNextFrame((_) {
       if (mounted) widget.focusFor(widget.entries[next].id).requestFocus();
     });
   }
@@ -956,7 +954,7 @@ class _DirectoryState extends State<_Directory> {
     if (_scroll.hasClients) {
       _scroll.jumpTo(target.clamp(0, _scroll.position.maxScrollExtent));
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _afterNextFrame((_) {
       if (mounted) widget.focusFor(sourceId).requestFocus();
     });
   }
@@ -965,12 +963,9 @@ class _DirectoryState extends State<_Directory> {
   Widget build(BuildContext context) {
     if (widget.entries.isEmpty) return const SizedBox();
     final scale = MediaQuery.textScalerOf(context).scale(1);
-    _rowExtent = (96 + ((scale - 1).clamp(0, 3) * 58)).toDouble();
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border.all(color: _line),
-        borderRadius: BorderRadius.circular(7),
-      ),
+    _rowExtent = (88 + ((scale - 1).clamp(0, 3) * 64)).toDouble();
+    return ScrollConfiguration(
+      behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
       child: ListView(
         controller: _scroll,
         itemExtent: _rowExtent,
@@ -1035,6 +1030,7 @@ class _SourceRow extends StatelessWidget {
         ),
       },
       onShowFocusHighlight: (_) {},
+      mouseCursor: SystemMouseCursors.click,
       child: Builder(
         builder: (context) {
           final focused = Focus.of(context).hasFocus;
@@ -1044,65 +1040,60 @@ class _SourceRow extends StatelessWidget {
             excludeSemantics: true,
             label:
                 '${source.name}, $connector, $state, Live ${_count(source.counts[SourceMediaKind.live] ?? 0)}, Movies ${_count(source.counts[SourceMediaKind.movies] ?? 0)}, Series ${_count(source.counts[SourceMediaKind.series] ?? 0)}',
-            child: Container(
-              key: ValueKey('source-row-${source.id}'),
-              decoration: BoxDecoration(
-                color: selected ? _raised : Colors.transparent,
-                border: Border.all(
-                  color: focused ? _amber : Colors.transparent,
-                  width: 2,
+            child: GestureDetector(
+              onTap: onPressed,
+              child: Container(
+                key: ValueKey('source-row-${source.id}'),
+                margin: const EdgeInsets.symmetric(vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
                 ),
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: onPressed,
-                  child: DecoratedBox(
-                    decoration: const BoxDecoration(
-                      border: Border(bottom: BorderSide(color: _line)),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                      child: Row(
+                decoration: BoxDecoration(
+                  // Opaque when focused so the ring stays a ring.
+                  color: selected || focused
+                      ? _raised
+                      : const Color(0x00000000),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: focused ? Cinema.focusGlow : const [],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  source.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: _warmWhite,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 7),
-                                Text(
-                                  '$connector · $state · $counts',
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: _quietText,
-                                    fontSize: 12,
-                                    height: 1.35,
-                                  ),
-                                ),
-                              ],
+                          Text(
+                            source.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: selected ? _amber : _warmWhite,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          const Icon(Icons.chevron_right, color: _warmWhite),
+                          const SizedBox(height: 5),
+                          Text(
+                            '$connector · $state · $counts',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Cinema.quiet,
+                              fontSize: 12,
+                              height: 1.35,
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: selected ? _amber : _quietText,
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1210,8 +1201,10 @@ class _Detail extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: _warmWhite,
-                  fontSize: 31,
-                  fontWeight: FontWeight.w700,
+                  fontFamily: Cinema.display,
+                  fontSize: 26,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -.4,
                 ),
               ),
             ),
@@ -1237,12 +1230,16 @@ class _Detail extends StatelessWidget {
                   source.enabled
                       ? 'Enabled'
                       : 'Disabled — excluded from active results',
-                  style: const TextStyle(color: _quietText, fontSize: 16),
+                  style: TextStyle(
+                    color: source.enabled ? Cinema.quiet : _amber,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 4),
                 Text(
                   statusMessage,
-                  style: const TextStyle(color: _quietText, fontSize: 16),
+                  style: const TextStyle(color: Cinema.quiet, fontSize: 14),
                 ),
               ],
             ),
@@ -1302,14 +1299,10 @@ class _Detail extends StatelessWidget {
             );
           },
         ),
-        const SizedBox(height: 30),
-        const Divider(color: _line),
-        const SizedBox(height: 28),
+        const SizedBox(height: 24),
         _Counts(counts: source.counts, narrow: narrow),
         if (showConnectionAllowance) ...[
           const SizedBox(height: 28),
-          const Divider(color: _line),
-          const SizedBox(height: 24),
           _ConnectionAllowanceLedger(
             allowance: connectionAllowance,
             state: connectionAllowanceState,
@@ -1383,14 +1376,15 @@ class _ConnectionAllowanceLedger extends StatelessWidget {
               'Simultaneous streams',
               style: TextStyle(
                 color: _warmWhite,
+                fontFamily: Cinema.display,
                 fontSize: 18,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w800,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             const Text(
               'Choose how many streams Wabbit may open from this source.',
-              style: TextStyle(color: _quietText, fontSize: 15),
+              style: TextStyle(color: Cinema.quiet, fontSize: 14),
             ),
             const SizedBox(height: 16),
             ConstrainedBox(
@@ -1500,7 +1494,7 @@ class _ConnectionAllowanceLedger extends StatelessWidget {
             const SizedBox(height: 6),
             const Text(
               'Wabbit cannot change your provider subscription. A higher local limit does not grant more streams. Lowering this setting does not stop sessions already playing.',
-              style: TextStyle(color: _quietText, fontSize: 14),
+              style: TextStyle(color: _quietText, fontSize: 12.5, height: 1.4),
             ),
           ],
         ),
@@ -1540,22 +1534,21 @@ class _AllowanceChoice extends StatelessWidget {
       key: ValueKey('source-connection-choice-$label'),
       focusNode: focusNode,
       onPressed: onPressed == null ? null : _invoke,
-      style: ButtonStyle(
-        foregroundColor: WidgetStatePropertyAll(
-          !enabled ? _quietText : (selected ? _amber : _warmWhite),
+      style: Cinema.pillButton().copyWith(
+        // Selected reads amber on glass; focus still fills the pill amber.
+        foregroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.focused)
+              ? Cinema.amberInk
+              : !enabled
+              ? _quietText
+              : selected
+              ? _amber
+              : _warmWhite,
         ),
-        backgroundColor: const WidgetStatePropertyAll(_raised),
-        minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-        ),
-        side: WidgetStateProperty.resolveWith(
-          (states) => BorderSide(
-            color: states.contains(WidgetState.focused) || selected
-                ? _amber
-                : _line,
-            width: states.contains(WidgetState.focused) || selected ? 2 : 1,
-          ),
+        side: WidgetStatePropertyAll(
+          selected
+              ? const BorderSide(color: _amber, width: 1.5)
+              : BorderSide.none,
         ),
       ),
       child: Text(label),
@@ -1591,19 +1584,13 @@ class _FocusHoldingOutlinedAction extends StatelessWidget {
       key: ValueKey('source-action-$label'),
       focusNode: focusNode,
       onPressed: _invoke,
-      style: ButtonStyle(
-        foregroundColor: WidgetStatePropertyAll(
-          enabled ? _warmWhite : _quietText,
-        ),
-        minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-        ),
-        side: WidgetStateProperty.resolveWith(
-          (states) => BorderSide(
-            color: states.contains(WidgetState.focused) ? _amber : _line,
-            width: states.contains(WidgetState.focused) ? 2 : 1,
-          ),
+      style: Cinema.pillButton().copyWith(
+        foregroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.focused)
+              ? Cinema.amberInk
+              : enabled
+              ? _warmWhite
+              : _quietText,
         ),
       ),
       child: Text(label),
@@ -1631,44 +1618,51 @@ class _Counts extends StatelessWidget {
   final bool narrow;
   @override
   Widget build(BuildContext context) {
-    final cells = [
-      for (final k in SourceMediaKind.values)
-        Expanded(
-          child: Column(
-            children: [
-              Text(
-                k.label,
-                style: const TextStyle(color: _quietText, fontSize: 16),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _count(counts[k] ?? 0),
-                style: const TextStyle(color: _warmWhite, fontSize: 26),
-              ),
-            ],
-          ),
-        ),
-    ];
-    return DecoratedBox(
+    Widget tile(SourceMediaKind kind) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       decoration: BoxDecoration(
-        border: Border.all(color: _line),
-        borderRadius: BorderRadius.circular(7),
+        color: _surface,
+        borderRadius: BorderRadius.circular(16),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: narrow
-            ? Column(
-                children: cells
-                    .map(
-                      (e) => Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: e.child,
-                      ),
-                    )
-                    .toList(),
-              )
-            : Row(children: cells),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            kind.label,
+            style: const TextStyle(color: Cinema.quiet, fontSize: 13),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _count(counts[kind] ?? 0),
+            style: const TextStyle(
+              color: _warmWhite,
+              fontFamily: Cinema.display,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
       ),
+    );
+    if (narrow) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final kind in SourceMediaKind.values)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: tile(kind),
+            ),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        for (final kind in SourceMediaKind.values) ...[
+          if (kind != SourceMediaKind.values.first) const SizedBox(width: 10),
+          Expanded(child: tile(kind)),
+        ],
+      ],
     );
   }
 }
@@ -1682,18 +1676,11 @@ class _Empty extends StatelessWidget {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
-          'No sources yet',
-          style: TextStyle(
-            color: _warmWhite,
-            fontSize: 22,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
+        const Text('No sources yet', style: _messageTitle),
         const SizedBox(height: 8),
         const Text(
           'Add a source to build your local library.',
-          style: TextStyle(color: _quietText),
+          style: TextStyle(color: Cinema.quiet, fontSize: 15),
         ),
         const SizedBox(height: 20),
         _FilledAction(
@@ -1716,18 +1703,11 @@ class _LoadFailure extends StatelessWidget {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
-          'Sources could not be loaded',
-          style: TextStyle(
-            color: _warmWhite,
-            fontSize: 22,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
+        const Text('Sources could not be loaded', style: _messageTitle),
         const SizedBox(height: 8),
         const Text(
           'Try again. Your local catalog is unchanged.',
-          style: TextStyle(color: _quietText),
+          style: TextStyle(color: Cinema.quiet, fontSize: 15),
         ),
         const SizedBox(height: 20),
         _OutlinedAction(
@@ -1754,14 +1734,7 @@ class _OutlinedAction extends StatelessWidget {
     key: ValueKey('source-action-$label'),
     focusNode: focusNode,
     onPressed: onPressed,
-    style:
-        OutlinedButton.styleFrom(
-          foregroundColor: _warmWhite,
-          minimumSize: const Size(0, 48),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-        ).copyWith(
-          side: focusEdge(rest: const BorderSide(color: _line)),
-        ),
+    style: Cinema.pillButton(),
     child: Text(label),
   );
 }
@@ -1782,15 +1755,7 @@ class _QuietTextAction extends StatelessWidget {
     key: ValueKey('source-action-$label'),
     focusNode: focusNode,
     onPressed: onPressed,
-    style:
-        TextButton.styleFrom(
-          foregroundColor: _warmWhite,
-          minimumSize: const Size(0, 44),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-        ).copyWith(
-          side: focusEdge(rest: const BorderSide(color: _line)),
-        ),
+    style: Cinema.pillButton(),
     child: Text(label),
   );
 }
@@ -1809,12 +1774,7 @@ class _FilledAction extends StatelessWidget {
     key: ValueKey('source-action-$label'),
     focusNode: focusNode,
     onPressed: onPressed,
-    style: FilledButton.styleFrom(
-      backgroundColor: _amber,
-      foregroundColor: _amberInk,
-      minimumSize: const Size(0, 48),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-    ).copyWith(side: focusEdge(onAmber: true)),
+    style: Cinema.pillButton(primary: true),
     child: Text(label),
   );
 }
@@ -1884,3 +1844,17 @@ _SourceStatusPresentation _sourceStatus(SourceRosterEntry source) {
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
+
+const _dialogTitle = TextStyle(
+  color: _warmWhite,
+  fontFamily: Cinema.display,
+  fontSize: 20,
+  fontWeight: FontWeight.w800,
+);
+
+const _messageTitle = TextStyle(
+  color: _warmWhite,
+  fontFamily: Cinema.display,
+  fontSize: 22,
+  fontWeight: FontWeight.w800,
+);

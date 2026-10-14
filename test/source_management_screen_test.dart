@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wabbit_tv/src/app_shell.dart';
+import 'package:wabbit_tv/src/cinema.dart';
 import 'package:wabbit_tv/src/features/sources/source_management_screen.dart';
 import 'package:wabbit_tv/src/features/sources/source_models.dart';
 import 'package:wabbit_tv/src/home_fixture_mode.dart';
@@ -61,26 +62,20 @@ void main() {
       expect(find.text('56,712'), findsOneWidget);
       expect(find.text('176,792'), findsOneWidget);
       expect(find.text('47,253'), findsOneWidget);
-      final addShape =
-          tester
-                  .widget<OutlinedButton>(
-                    find.widgetWithText(OutlinedButton, 'Add source'),
-                  )
-                  .style!
-                  .shape!
-                  .resolve({})!
-              as RoundedRectangleBorder;
-      final refreshShape =
-          tester
-                  .widget<FilledButton>(
-                    find.widgetWithText(FilledButton, 'Refresh'),
-                  )
-                  .style!
-                  .shape!
-                  .resolve({})!
-              as RoundedRectangleBorder;
-      expect(addShape.borderRadius, BorderRadius.circular(6));
-      expect(refreshShape.borderRadius, BorderRadius.circular(6));
+      final addShape = tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, 'Add source'),
+          )
+          .style!
+          .shape!
+          .resolve({});
+      final refreshShape = tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Refresh'))
+          .style!
+          .shape!
+          .resolve({});
+      expect(addShape, isA<StadiumBorder>());
+      expect(refreshShape, isA<StadiumBorder>());
       expect(
         find.text('Xtream · Ready · L 56.7K · M 177K · S 47.3K'),
         findsOneWidget,
@@ -97,10 +92,35 @@ void main() {
       );
       expect(
         (selected.decoration! as BoxDecoration).color,
-        const Color(0xFF222321),
+        const Color(0xFF1E1E23),
       );
     },
   );
+
+  testWidgets('Up and Down move directory focus', (
+    tester,
+  ) async {
+    final c = SourceManagementController(
+      entries: [entry('one', 'One'), entry('two', 'Two')],
+    );
+    await tester.pumpWidget(app(c));
+    FocusNode rowFocus(String id) => tester
+        .widget<FocusableActionDetector>(
+          find.ancestor(
+            of: find.byKey(ValueKey('source-row-$id')),
+            matching: find.byType(FocusableActionDetector),
+          ),
+        )
+        .focusNode!;
+    rowFocus('one').requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(rowFocus('two').hasPrimaryFocus, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(rowFocus('one').hasPrimaryFocus, isTrue);
+  });
 
   testWidgets('Enter and remote Select activate the focused directory row', (
     tester,
@@ -255,7 +275,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Home provider'), findsWidgets);
   });
-  testWidgets('keyboard focus shows the amber edge on dialog buttons', (
+  testWidgets('keyboard focus shows on dialog buttons', (
     tester,
   ) async {
     final c = SourceManagementController(
@@ -264,27 +284,26 @@ void main() {
     await tester.pumpWidget(app(c));
     await tester.tap(find.text('Remove'));
     await tester.pumpAndSettle();
-    BorderSide edge(Type type, String label) {
-      final material = tester.widget<Material>(
-        find
-            .descendant(
-              of: find.widgetWithText(type, label),
-              matching: find.byType(Material),
-            )
-            .first,
-      );
-      return (material.shape! as OutlinedBorder).side;
-    }
+    Material material(Type type, String label) => tester.widget<Material>(
+      find
+          .descendant(
+            of: find.widgetWithText(type, label),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+    BorderSide edge(Type type, String label) =>
+        (material(type, label).shape! as OutlinedBorder).side;
 
-    // Cancel starts focused; the filled action rests without an edge.
-    expect(edge(OutlinedButton, 'Cancel').color, const Color(0xFFFFB347));
-    expect(edge(OutlinedButton, 'Cancel').width, 2);
+    // Cancel starts focused, so it fills amber; the primary action rests
+    // amber without an edge.
+    expect(material(OutlinedButton, 'Cancel').color, Cinema.amber);
     expect(edge(FilledButton, 'Remove source'), BorderSide.none);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pumpAndSettle();
-    expect(edge(OutlinedButton, 'Cancel').width, 1);
-    expect(edge(FilledButton, 'Remove source').color, const Color(0xFFF4F0E7));
+    expect(material(OutlinedButton, 'Cancel').color, Cinema.glass);
+    expect(edge(FilledButton, 'Remove source').color, Cinema.text);
     expect(edge(FilledButton, 'Remove source').width, 2);
   });
 

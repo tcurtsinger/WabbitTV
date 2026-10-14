@@ -31,8 +31,13 @@ abstract final class Cinema {
     shape: const WidgetStatePropertyAll(StadiumBorder()),
     minimumSize: const WidgetStatePropertyAll(Size(64, 44)),
     padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 20)),
+    // A button's own text style replaces the theme's, font family included.
     textStyle: const WidgetStatePropertyAll(
-      TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+      TextStyle(
+        fontFamily: 'Figtree',
+        fontSize: 14,
+        fontWeight: FontWeight.w700,
+      ),
     ),
     overlayColor: const WidgetStatePropertyAll(Color(0x00000000)),
     backgroundColor: WidgetStateProperty.resolveWith(
