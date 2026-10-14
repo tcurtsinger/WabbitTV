@@ -28,3 +28,22 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - run: flutter build windows --release
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # Format, analyze and tests run once, in the Windows job.
+      - run: flutter build apk --release

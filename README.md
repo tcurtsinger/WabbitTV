@@ -4,31 +4,31 @@
 
 # Wabbit TV
 
-**A calm, fast IPTV player for Windows that brings your own sources together in one library.**
+**A calm, fast IPTV player for Windows and Android TV that brings your own sources together in one library.**
 
 [![CI](https://github.com/tcurtsinger/WabbitTV/actions/workflows/ci.yml/badge.svg)](https://github.com/tcurtsinger/WabbitTV/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4)
+![Platforms: Windows and Android TV](https://img.shields.io/badge/platform-Windows%20%7C%20Android%20TV-0078D4)
 ![Flutter 3.47](https://img.shields.io/badge/Flutter-3.47-02569B?logo=flutter)
 
 </div>
 
-Wabbit TV turns large Xtream and M3U catalogs into one quiet, keyboard-first library. Live TV, movies and series from all your sources sit side by side, search is instant, and everything stays on your PC.
+Wabbit TV turns large Xtream and M3U catalogs into one quiet library built for a TV remote or a keyboard. Live TV, movies and series from all your sources sit side by side, search is instant, and everything stays on your device.
 
 > [!NOTE]
 > Wabbit TV supplies **no content**: no channels, playlists, movies or series. Use it only with sources you are entitled to access.
 
 <table>
   <tr>
-    <td><img src=".github/readme/home.png" alt="Home with pinned shelves and recently watched"></td>
-    <td><img src=".github/readme/browse.png" alt="Live channels from two sources in one list"></td>
+    <td><img src=".github/readme/home.png" alt="Home with a continue-watching hero, recently watched and a pinned group"></td>
+    <td><img src=".github/readme/browse.png" alt="Movies as a poster wall with categories"></td>
   </tr>
   <tr>
-    <td><img src=".github/readme/guide.png" alt="TV guide grid with now and next programs"></td>
-    <td><img src=".github/readme/multiview.png" alt="Two live channels side by side in multiview"></td>
+    <td><img src=".github/readme/guide.png" alt="TV guide with an on-now panel and a program grid"></td>
+    <td><img src=".github/readme/player.png" alt="Live player showing the current program and what's up next"></td>
   </tr>
 </table>
-<p align="center"><sub>Screenshots use the built-in synthetic sample catalog.</sub></p>
+<p align="center"><sub>Screenshots use made-up sample channels, titles and artwork.</sub></p>
 
 ## Features
 
@@ -45,34 +45,38 @@ Wabbit TV turns large Xtream and M3U catalogs into one quiet, keyboard-first lib
 
 **Watching**
 - Full-screen player with audio and subtitle tracks, resume, and watch history
+- Now and next from the guide right in the player, and a star to add the channel to Favorites
 - Corner picture-in-picture while you keep browsing, and two-channel side-by-side multiview
 - Automatic recovery from network drops, and a fallback to the same channel on another source
 - Respects your provider's connection limit
-- TV guide with now/next for Xtream live channels
+- TV guide for Xtream live channels, with a "With schedule" filter that hides channels without guide data
 - Start up on Home, any section, or straight into your last channel
 
 **Built for the couch and the desk**
-- Every screen works with arrow keys and Enter, with a clear amber focus ring
+- Runs on Windows and on Android TV, Google TV and Fire TV
+- Every screen works with a TV remote or arrow keys, with a clear amber focus ring
 - On-screen TV keyboard for remote-style text entry
 
 ## Privacy and security
 
-- **Local-first.** Your catalog, favorites, groups and history live in a SQLite database on your PC. No accounts, no telemetry, no Wabbit servers.
+- **Local-first.** Your catalog, favorites, groups and history live in a SQLite database on your device. No accounts, no telemetry, no Wabbit servers.
 - **Network use.** Wabbit TV only connects to the sources you add, and to the stream, artwork and guide addresses those sources hand it.
-- **Logins.** Xtream passwords are encrypted with your Windows account (DPAPI) and never stored in the catalog database.
+- **Logins.** Xtream passwords are encrypted with your Windows account (DPAPI) or the Android Keystore, and never stored in the catalog database.
 - **Secure streams.** HTTPS streams are verified against a bundled Mozilla root certificate list.
 
 ## Getting started
 
 There are no prebuilt releases yet, so you build it from source.
 
-### Requirements
+### Windows
+
+**Requirements**
 
 - Windows 10 or 11 (64-bit)
 - [Flutter](https://docs.flutter.dev/get-started/install/windows/desktop) 3.47 (stable)
 - Visual Studio 2022 (Build Tools are enough) with the **Desktop development with C++** workload and the **C++ ATL** component
 
-### Build and run
+**Build and run**
 
 ```powershell
 git clone https://github.com/tcurtsinger/WabbitTV.git
@@ -92,12 +96,27 @@ The app ends up at `build\windows\x64\runner\Release\wabbit_tv.exe`. Open it, ch
 > [!TIP]
 > If the build hangs while CMake detects the compiler, run `$env:TrackFileAccess = 'false'` in that PowerShell window and build again.
 
+### Android TV, Google TV and Fire TV
+
+**Requirements:** Flutter 3.47, the Android SDK (from Android Studio or the command-line tools) and JDK 17.
+
+1. Turn on **Developer options** and **ADB debugging** on the TV. On Fire TV this is under *Settings → My Fire TV*.
+2. Build the APK and install it over the network:
+
+```powershell
+flutter build apk --release
+adb connect <tv-ip-address>:5555
+adb install -r build\app\outputs\flutter-apk\app-release.apk
+```
+
+Wabbit TV then appears with your other apps. The release APK is signed with a debug key, which is fine for sideloading but not for a store.
+
 ## Keyboard shortcuts
 
 | Where | Keys | Action |
 |---|---|---|
-| Everywhere | Arrow keys, Enter | Move focus, select |
-| Everywhere | Esc | Back / open the navigation rail |
+| Everywhere | Arrow keys, Enter (TV: D-pad, Select) | Move focus, select |
+| Everywhere | Esc (TV: Back) | Back / open the navigation rail |
 | Player | Space, K, media Play/Pause | Play / pause |
 | Player | ← / → | Seek back / forward 10 s (movies and episodes; hold to keep seeking) |
 | Player | F, or double-click the video | Fullscreen on / off |
@@ -108,10 +127,10 @@ The app ends up at `build\windows\x64\runner\Release\wabbit_tv.exe`. Open it, ch
 ```powershell
 dart format lib test   # formatting
 flutter analyze        # static analysis
-flutter test           # 600+ unit and widget tests
+flutter test           # 640+ unit and widget tests
 ```
 
-GitHub Actions runs all of these, plus a release build, on every pull request.
+GitHub Actions runs all of these, plus Windows and Android release builds, on every pull request.
 
 <details>
 <summary><b>Synthetic preview fixtures and probes</b></summary>
@@ -135,6 +154,7 @@ lib/
 ├── main.dart
 └── src/
     ├── app_shell.dart        # navigation rail, routing, playback surfaces
+    ├── cinema.dart           # design tokens, focus glow, pill buttons, the Wabbit mark
     └── features/
         ├── sources/          # Xtream + M3U import, SQLite catalog, credentials
         ├── browse/           # Live / Movies / Series lists
@@ -149,8 +169,8 @@ lib/
 
 ## Roadmap
 
-- **Android TV, Google TV and Fire TV.** The interface is already remote-first. Next comes the Android build.
-- Prebuilt Windows releases
+- Prebuilt releases for Windows and Android TV
+- A full XMLTV guide download for providers that block per-channel guide requests
 
 ## Built with
 

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../cinema.dart';
 import '../../features/browse/playback_handoff.dart';
 import '../../features/playback/playback_transport.dart';
 import '../../features/playback/player_screen.dart';
@@ -34,15 +35,15 @@ class _ProductionPlayerFixtureApp extends StatelessWidget {
     theme: ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
-      scaffoldBackgroundColor: const Color(0xFF111212),
+      scaffoldBackgroundColor: Cinema.ink,
       colorScheme: const ColorScheme.dark(
-        primary: Color(0xFFFFB347),
-        onPrimary: Color(0xFF17120A),
-        surface: Color(0xFF191A1A),
-        onSurface: Color(0xFFF4F0E7),
-        secondary: Color(0xFFBEBAB1),
+        primary: Cinema.amber,
+        onPrimary: Cinema.amberInk,
+        surface: Color(0xFF16161B),
+        onSurface: Cinema.text,
+        secondary: Cinema.quiet,
       ),
-      fontFamily: 'Segoe UI',
+      fontFamily: 'Figtree',
     ),
     home: const _ProductionPlayerFixture(),
   );
@@ -66,7 +67,7 @@ class _ProductionPlayerFixtureState extends State<_ProductionPlayerFixture> {
         body: Center(
           child: Text(
             'Player fixture exited',
-            style: TextStyle(color: Color(0xFFF4F0E7), fontSize: 16),
+            style: TextStyle(color: Cinema.text, fontSize: 16),
           ),
         ),
       );
@@ -139,12 +140,12 @@ class _FixturePlaybackTransport implements PlaybackTransport {
 
   @override
   Widget buildVideo() => const ColoredBox(
-    color: Color(0xFF292A29),
+    color: Color(0xFF1E1E23),
     child: Center(
       child: Text(
         'Synthetic video fixture',
         style: TextStyle(
-          color: Color(0xFFF4F0E7),
+          color: Cinema.text,
           fontSize: 16,
           fontWeight: FontWeight.w600,
         ),
