@@ -231,12 +231,7 @@ class _GuideScreenState extends State<GuideScreen> {
     _visualFocusProgramStartUtcMs = widget.session.focusedProgramStartUtcMs;
     _visualFocusProgramEndUtcMs = widget.session.focusedProgramEndUtcMs;
     _resetTimeWindow();
-    for (final node in [
-      _sourceFocus,
-      _categoryFocus,
-      _goNowFocus,
-      _retryFocus,
-    ]) {
+    for (final node in _headerFocusNodes) {
       node.addListener(_reportHeaderFocus);
     }
     _vertical.addListener(_onVerticalScroll);
@@ -292,13 +287,17 @@ class _GuideScreenState extends State<GuideScreen> {
     return hour.subtract(const Duration(minutes: 30));
   }
 
+  /// Header controls whose focus the shell remembers for the rail and PiP.
+  List<FocusNode> get _headerFocusNodes => [
+    _sourceFocus,
+    _categoryFocus,
+    _scheduleFocus,
+    _goNowFocus,
+    _retryFocus,
+  ];
+
   void _reportHeaderFocus() {
-    for (final node in [
-      _sourceFocus,
-      _categoryFocus,
-      _goNowFocus,
-      _retryFocus,
-    ]) {
+    for (final node in _headerFocusNodes) {
       if (node.hasFocus) {
         widget.onContentFocus(node);
         return;

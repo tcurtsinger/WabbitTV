@@ -467,10 +467,7 @@ void main() {
             )
             .first,
       );
-      expect(
-        confirmSemantics.properties.hint,
-        'Hide all 3 Live categories.',
-      );
+      expect(confirmSemantics.properties.hint, 'Hide all 3 Live categories.');
       expect(
         FocusManager.instance.primaryFocus?.debugLabel,
         'library visibility bulk cancel',

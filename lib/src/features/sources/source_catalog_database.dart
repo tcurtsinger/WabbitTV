@@ -894,9 +894,10 @@ class SourceCatalogDatabase {
     );
   }
 
-  /// Whether any available live channel of [sourceId] carries a provider
-  /// guide identity. Catalogs imported before guide identities were saved
-  /// have none until their next refresh.
+  /// Whether any browsable live channel of [sourceId] carries a provider
+  /// guide identity. Hidden channels and channels in hidden categories don't
+  /// count, matching [browsePage]. Catalogs imported before guide identities
+  /// were saved have none until their next refresh.
   Future<bool> hasScheduledChannels(String sourceId) async {
     final path = await resolvedPath();
     return Isolate.run<bool>(() {
@@ -907,7 +908,13 @@ class SourceCatalogDatabase {
             .select(
               '''SELECT 1 FROM catalog_items
              WHERE source_id = ? AND kind = 'live' AND available = 1
+               AND hidden = 0
                AND external_id IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM source_groups AS visibility_group
+                 WHERE visibility_group.id = catalog_items.source_group_id
+                   AND visibility_group.hidden = 1
+               )
              LIMIT 1''',
               [sourceId],
             )

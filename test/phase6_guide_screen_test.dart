@@ -55,6 +55,32 @@ void main() {
     expect(_inGrid(find.text('Channel Two')), findsOneWidget);
   });
 
+  testWidgets('focusing With schedule reports it to the shell', (tester) async {
+    final focused = <String?>[];
+    final data = _ScheduledGuideData(scheduled: {'channel-1'});
+    await tester.pumpWidget(
+      _guideApp(
+        data: data,
+        onContentFocus: (node) => focused.add(node.debugLabel),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    tester
+        .widgetList<Focus>(
+          find.descendant(
+            of: find.byKey(const ValueKey('guide-schedule-filter')),
+            matching: find.byType(Focus),
+          ),
+        )
+        .map((focus) => focus.focusNode)
+        .whereType<FocusNode>()
+        .firstWhere((node) => node.debugLabel == 'guide schedule filter')
+        .requestFocus();
+    await tester.pump();
+    expect(focused.last, 'guide schedule filter');
+  });
+
   testWidgets('a category without schedules offers every channel', (
     tester,
   ) async {

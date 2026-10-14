@@ -81,6 +81,19 @@ void main() {
         await titles(const BrowseCategorySelection.all(scheduledOnly: true)),
         ['A'],
       );
+
+      // Hiding the only scheduled channel leaves nothing for the filter.
+      final scheduled = (await database.browsePage(
+        sourceId: 'x',
+        kind: SourceMediaKind.live,
+        selection: const BrowseCategorySelection.all(scheduledOnly: true),
+      )).items.single;
+      await database.setCatalogItemHidden(
+        sourceId: 'x',
+        catalogItemId: scheduled.id,
+        hidden: true,
+      );
+      expect(await database.hasScheduledChannels('x'), isFalse);
     },
   );
 
