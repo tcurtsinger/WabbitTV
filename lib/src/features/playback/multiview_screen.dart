@@ -3,15 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../cinema.dart';
 import 'playback_manager.dart';
 
-const _graphite = Color(0xFF111212);
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF252624);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.faint;
+const _amber = Cinema.amber;
 
 /// Fixed two-stream Live multiview. Each native video is mounted exactly once;
 /// the shared deck commands sessions through the shell-lifetime manager.
@@ -147,10 +144,9 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
     final actual = _audibleOwner();
     final prior = previousOwner ?? _lastAudioOwner;
     final target = actual ?? prior ?? fallbackTarget ?? _deckTarget;
-    final message = actual == null
-        ? 'No channel is audible. Select a channel to restore audio.'
-        : transferSucceeded == false && actual == prior
-        ? 'Audio stayed with the current channel. Try again.'
+    final message =
+        actual != null && transferSucceeded == false && actual == prior
+        ? "Couldn't switch audio."
         : null;
     final ownerChanged = actual != _lastAudioOwner;
     setState(() {
@@ -195,37 +191,48 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
           policy: WidgetOrderTraversalPolicy(),
           child: Material(
             key: const ValueKey('live-multiview'),
-            color: _graphite,
+            color: Cinema.ink,
             child: SafeArea(
               top: false,
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final tiles = <Widget>[
                     Expanded(
-                      child: _MultiviewTile(
-                        key: const ValueKey('multiview-original-tile'),
-                        manager: widget.manager,
-                        snapshot: first,
-                        focusNode: _firstFocus,
-                        selected: first.isAudible,
-                        onSelected: () => _makeAudible(first.id),
+                      child: AspectRatio(
+                        aspectRatio: 16 / 9,
+                        child: _MultiviewTile(
+                          key: const ValueKey('multiview-original-tile'),
+                          manager: widget.manager,
+                          snapshot: first,
+                          focusNode: _firstFocus,
+                          selected: first.isAudible,
+                          onSelected: () => _makeAudible(first.id),
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 2),
+                    const SizedBox(width: 12),
                     Expanded(
-                      child: _MultiviewTile(
-                        key: const ValueKey('multiview-second-tile'),
-                        manager: widget.manager,
-                        snapshot: second,
-                        focusNode: _secondFocus,
-                        selected: second.isAudible,
-                        onSelected: () => _makeAudible(second.id),
+                      child: AspectRatio(
+                        aspectRatio: 16 / 9,
+                        child: _MultiviewTile(
+                          key: const ValueKey('multiview-second-tile'),
+                          manager: widget.manager,
+                          snapshot: second,
+                          focusNode: _secondFocus,
+                          selected: second.isAudible,
+                          onSelected: () => _makeAudible(second.id),
+                        ),
                       ),
                     ),
                   ];
                   return Column(
                     children: [
-                      Expanded(child: Row(children: tiles)),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                          child: Row(children: tiles),
+                        ),
+                      ),
                       _MultiviewDeck(
                         selected: selected,
                         target: target,
@@ -300,12 +307,11 @@ class _MultiviewTileState extends State<_MultiviewTile> {
           widget.onSelected();
         },
         child: Container(
+          clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             color: Colors.black,
-            border: Border.all(
-              color: _focused || widget.selected ? _amber : _line,
-              width: _focused ? 2 : 1,
-            ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: _focused ? Cinema.focusGlow : null,
           ),
           child: Stack(
             fit: StackFit.expand,
@@ -324,33 +330,38 @@ class _MultiviewTileState extends State<_MultiviewTile> {
               if (widget.snapshot.phase == PlaybackSessionPhase.failed)
                 const Center(child: _TileStatus(label: 'Playback unavailable')),
               Positioned(
-                left: 14,
-                right: 14,
-                bottom: 12,
-                child: Row(
-                  children: [
-                    Icon(
-                      widget.snapshot.isAudible
-                          ? Icons.volume_up
-                          : Icons.volume_off,
-                      size: 18,
-                      color: _warmWhite,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        widget.snapshot.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _warmWhite,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(14, 28, 14, 12),
+                  decoration: BoxDecoration(
+                    gradient: Cinema.scrim(fromTop: false),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        widget.snapshot.isAudible
+                            ? Icons.volume_up
+                            : Icons.volume_off,
+                        size: 18,
+                        color: widget.snapshot.isAudible ? _amber : _quietText,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          widget.snapshot.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _warmWhite,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -393,53 +404,43 @@ class _MultiviewDeck extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     key: const ValueKey('multiview-shared-deck'),
-    constraints: const BoxConstraints(minHeight: 82),
-    padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
-    decoration: const BoxDecoration(
-      color: _surface,
-      border: Border(top: BorderSide(color: _line)),
-    ),
+    constraints: const BoxConstraints(minHeight: 76),
+    padding: const EdgeInsets.fromLTRB(20, 14, 20, 16),
     child: LayoutBuilder(
       builder: (context, constraints) {
         final narrow = constraints.maxWidth < 800;
-        final title = Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+        final title = Row(
           children: [
-            Text(
-              selected == null
-                  ? 'MULTIVIEW · AUDIO OFF'
-                  : 'MULTIVIEW · SELECTED',
-              style: const TextStyle(
-                color: _quietText,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.8,
-              ),
+            Icon(
+              selected == null ? Icons.volume_off : Icons.volume_up,
+              size: 20,
+              color: selected == null ? _quietText : _amber,
             ),
-            const SizedBox(height: 4),
-            Text(
-              selected?.title ?? 'Select a channel to restore audio',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: _warmWhite,
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                selected?.title ?? 'Muted. Pick a channel to hear it.',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: _warmWhite,
+                  fontFamily: selected == null ? null : Cinema.display,
+                  fontSize: selected == null ? 15 : 18,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
             if (audioTransferMessage != null) ...[
-              const SizedBox(height: 5),
+              const SizedBox(width: 12),
               Semantics(
                 liveRegion: true,
                 child: Text(
                   audioTransferMessage!,
                   key: const ValueKey('multiview-audio-transfer-error'),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                   style: const TextStyle(
                     color: Color(0xFFFF8D83),
-                    fontSize: 12,
+                    fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -534,6 +535,12 @@ class _DeckButton extends StatefulWidget {
 class _DeckButtonState extends State<_DeckButton> {
   bool _focused = false;
 
+  Color get _content => _focused
+      ? Cinema.amberInk
+      : widget.enabled
+      ? _warmWhite
+      : _quietText;
+
   @override
   Widget build(BuildContext context) => Focus(
     focusNode: widget.focusNode,
@@ -564,33 +571,26 @@ class _DeckButtonState extends State<_DeckButton> {
                 }
               : null,
           child: Container(
-            width: widget.compact ? 48 : null,
+            width: widget.compact ? 44 : null,
             height: 44,
-            padding: EdgeInsets.symmetric(horizontal: widget.compact ? 0 : 12),
+            padding: EdgeInsets.symmetric(horizontal: widget.compact ? 0 : 18),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: _focused ? _raised : Colors.transparent,
-              border: Border.all(
-                color: _focused ? _amber : _line,
-                width: _focused ? 2 : 1,
-              ),
-              borderRadius: BorderRadius.circular(6),
+              color: _focused ? _amber : Cinema.glass,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: _focused ? [Cinema.focusGlow.last] : null,
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  widget.icon,
-                  size: 18,
-                  color: widget.enabled ? _warmWhite : _quietText,
-                ),
+                Icon(widget.icon, size: 18, color: _content),
                 if (!widget.compact) ...[
                   const SizedBox(width: 7),
                   Text(
                     widget.label,
                     style: TextStyle(
-                      color: widget.enabled ? _warmWhite : _quietText,
-                      fontSize: 13,
+                      color: _content,
+                      fontSize: 14,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -612,15 +612,18 @@ class _TileStatus extends StatelessWidget {
   @override
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
-      color: const Color(0xDD191A1A),
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(6),
+      color: Cinema.card,
+      borderRadius: BorderRadius.circular(999),
     ),
     child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Text(
         label,
-        style: const TextStyle(color: _warmWhite, fontSize: 12),
+        style: const TextStyle(
+          color: _warmWhite,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     ),
   );

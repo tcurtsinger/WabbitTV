@@ -36,6 +36,13 @@ const _maximumPersonalLibraryDirectoryLimit = 200;
 const _maximumCustomGroups = _maximumPersonalLibraryDirectoryLimit - 1;
 const _maximumCustomGroupNameLength = 80;
 const _favoritesHomeOrdinalSettingKey = 'favorites_home_ordinal';
+
+/// The local id of one source's catalog row, which the guide is keyed by.
+String catalogItemId(
+  String sourceId,
+  SourceMediaKind kind,
+  String providerKey,
+) => '$sourceId:${kind.name}:$providerKey';
 const _catalogScopeSettingKey = 'catalog_scope';
 const _startupTargetSettingKey = 'startup_target';
 const _previousDestinationSettingKey = 'previous_destination';
@@ -885,6 +892,37 @@ class SourceCatalogDatabase {
     return Isolate.run<List<BrowseCategorySummary>>(
       () => _browseCategoriesOnWorker(path, sourceId, kind),
     );
+  }
+
+  /// Whether any browsable live channel of [sourceId] carries a provider
+  /// guide identity. Hidden channels and channels in hidden categories don't
+  /// count, matching [browsePage]. Catalogs imported before guide identities
+  /// were saved have none until their next refresh.
+  Future<bool> hasScheduledChannels(String sourceId) async {
+    final path = await resolvedPath();
+    return Isolate.run<bool>(() {
+      if (!File(path).existsSync()) return false;
+      final db = _openDatabase(path);
+      try {
+        return db
+            .select(
+              '''SELECT 1 FROM catalog_items
+             WHERE source_id = ? AND kind = 'live' AND available = 1
+               AND hidden = 0
+               AND external_id IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM source_groups AS visibility_group
+                 WHERE visibility_group.id = catalog_items.source_group_id
+                   AND visibility_group.hidden = 1
+               )
+             LIMIT 1''',
+              [sourceId],
+            )
+            .isNotEmpty;
+      } finally {
+        db.close();
+      }
+    });
   }
 
   /// Reads one bounded, title-ordered catalog page without resolving source
@@ -2047,6 +2085,10 @@ EpgAvailability _epgAvailability(
   DateTime atUtc,
 ) {
   if (capability == 'unsupported') return EpgAvailability.unsupported;
+  if (sourceError == EpgRefreshFailure.providerBlocked.name &&
+      (sourceRetryAfterUtcMs ?? 0) > atUtc.millisecondsSinceEpoch) {
+    return EpgAvailability.providerBlocked;
+  }
   final sourceFailureActive =
       (sourceError == EpgRefreshFailure.credentialsUnavailable.name ||
           sourceError == EpgRefreshFailure.authentication.name) &&
@@ -2308,6 +2350,7 @@ bool _failEpgRefreshTargetOnWorker(
           break;
         case EpgRefreshFailure.credentialsUnavailable:
         case EpgRefreshFailure.authentication:
+        case EpgRefreshFailure.providerBlocked:
           _markEpgSourceTransientFailure(
             db,
             target.sourceId,
@@ -3288,6 +3331,7 @@ BrowsePage _browsePageOnWorker(
         filters.add('source_group_id = ?');
         arguments.add(sourceGroupId);
     }
+    if (selection.scheduledOnly) filters.add('external_id IS NOT NULL');
     if (cursor != null) {
       filters.add(
         '(normalized_title > ? OR (normalized_title = ? AND id > ?))',
@@ -3507,6 +3551,7 @@ CatalogBrowseWindow _browsePageBeforeOnWorker(
       filters.add('source_group_id = ?');
       arguments.add(sourceGroupId);
   }
+  if (selection.scheduledOnly) filters.add('external_id IS NOT NULL');
   return (filters: filters, arguments: arguments);
 }
 
@@ -3560,6 +3605,7 @@ BrowseCatalogItem? _loadVisibleCatalogItemOnWorker(
         filters.add('source_group_id = ?');
         arguments.add(sourceGroupId);
     }
+    if (selection.scheduledOnly) filters.add('external_id IS NOT NULL');
     final rows = db.select(
       '''SELECT id, source_id, kind, title, artwork_locator, playback_ref,
                 (SELECT member.library_item_id
@@ -5472,13 +5518,13 @@ void _writeStage(
       groups.close();
     }
     final insert = db.prepare(
-      '''INSERT INTO catalog_items (id, source_id, provider_key, kind, parent_id, source_group_id, title, normalized_title, playback_ref, artwork_locator, year, external_id, metadata_json, generation, available, updated_at) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, 1, 1, ?)''',
+      '''INSERT INTO catalog_items (id, source_id, provider_key, kind, parent_id, source_group_id, title, normalized_title, playback_ref, artwork_locator, year, external_id, metadata_json, generation, available, updated_at) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, NULL, 1, 1, ?)''',
     );
     final updatedAt = DateTime.now().toUtc().toIso8601String();
     try {
       for (final item in items) {
         insert.execute([
-          '$sourceId:${kind.name}:${item.providerKey}',
+          catalogItemId(sourceId, kind, item.providerKey),
           sourceId,
           item.providerKey,
           kind.name,
@@ -5487,6 +5533,7 @@ void _writeStage(
           item.title.toLowerCase(),
           item.playbackRef,
           item.artworkLocator,
+          item.guideKey,
           updatedAt,
         ]);
       }
@@ -5504,7 +5551,7 @@ void _writeStage(
          (library_item_id, title, supporting_text) VALUES (?, ?, ?)''');
     try {
       for (final item in items) {
-        final id = '$sourceId:${kind.name}:${item.providerKey}';
+        final id = catalogItemId(sourceId, kind, item.providerKey);
         identities.execute([
           id,
           kind.name,
@@ -5574,12 +5621,13 @@ void _upsertStage(
        (id, source_id, provider_key, kind, parent_id, source_group_id, title,
         normalized_title, playback_ref, artwork_locator, year, external_id,
         metadata_json, generation, available, updated_at)
-       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, 1, ?)
+       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, 1, ?)
        ON CONFLICT(source_id, provider_key, kind) DO UPDATE SET
          source_group_id = excluded.source_group_id, title = excluded.title,
          normalized_title = excluded.normalized_title,
          playback_ref = excluded.playback_ref,
-         artwork_locator = excluded.artwork_locator, generation = excluded.generation,
+         artwork_locator = excluded.artwork_locator,
+         external_id = excluded.external_id, generation = excluded.generation,
          available = 1, updated_at = excluded.updated_at''');
   final identities = db.prepare('''INSERT OR IGNORE INTO library_items
        (id, kind, display_title, normalized_title, artwork_locator)
@@ -5609,7 +5657,7 @@ void _upsertStage(
   final updatedAt = DateTime.now().toUtc().toIso8601String();
   try {
     for (final item in items) {
-      final id = '$sourceId:${kind.name}:${item.providerKey}';
+      final id = catalogItemId(sourceId, kind, item.providerKey);
       final normalizedTitle = item.title.toLowerCase();
       catalog.execute([
         id,
@@ -5621,6 +5669,7 @@ void _upsertStage(
         normalizedTitle,
         item.playbackRef,
         item.artworkLocator,
+        item.guideKey,
         generation,
         updatedAt,
       ]);
@@ -6127,6 +6176,9 @@ List<ImportedCatalogItem> _parseItems(
         final artwork =
             '${e[kind == SourceMediaKind.series ? 'cover' : 'stream_icon'] ?? ''}'
                 .trim();
+        final guide = kind == SourceMediaKind.live
+            ? '${e['epg_channel_id'] ?? ''}'.trim()
+            : '';
         return ImportedCatalogItem(
           providerKey: key,
           title: title,
@@ -6137,6 +6189,7 @@ List<ImportedCatalogItem> _parseItems(
             if (extension.isNotEmpty) 'extension': extension,
           }),
           artworkLocator: artwork.isEmpty ? null : artwork,
+          guideKey: guide.isEmpty || guide == 'null' ? null : guide,
         );
       })
       .where(

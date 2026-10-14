@@ -159,7 +159,7 @@ void main() {
       );
 
       expect(
-        find.text('Last channel is unavailable. Wabbit opened Home instead.'),
+        find.text('Last channel unavailable · opened Home'),
         findsOneWidget,
       );
       expect(find.textContaining('private-library-id'), findsNothing);
@@ -345,7 +345,7 @@ void main() {
       contains(StartupDestinationSlug.movies),
     );
 
-    await tester.tap(find.byIcon(Icons.view_week_outlined));
+    await tester.tap(find.byIcon(Icons.calendar_view_day_outlined));
     await tester.pumpAndSettle();
     expect(
       harness.startup.savedDestinations,
@@ -425,8 +425,8 @@ void main() {
       PlaybackSessionPhase.failed,
     );
     expect(find.byKey(const ValueKey('player-failure-deck')), findsOneWidget);
-    expect(find.text('Playback is unavailable right now.'), findsOneWidget);
-    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text("The stream isn't available."), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
     expect(harness.startup.savedLastItems, isEmpty);
   });
 }

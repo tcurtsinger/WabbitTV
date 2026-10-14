@@ -52,7 +52,7 @@ void main() {
       expect(controller.scope.isAll, isTrue);
       expect(
         controller.announcement,
-        'Source unavailable. Showing All sources.',
+        'Source unavailable · showing all sources',
       );
     },
   );
@@ -65,7 +65,7 @@ void main() {
     await controller.select(const LibraryScope.source('missing'));
 
     expect(controller.scope.isAll, isTrue);
-    expect(controller.announcement, 'Source unavailable. Showing All sources.');
+    expect(controller.announcement, 'Source unavailable · showing all sources');
   });
 
   test('fresh initialization reads roster before persisted scope', () async {
@@ -103,7 +103,7 @@ void main() {
       expect(controller.sources.map((source) => source.id), ['ready']);
       expect(
         controller.announcement,
-        'Could not update sources. Showing the last local catalog.',
+        "Couldn't update sources · showing saved list",
       );
     },
   );
@@ -164,7 +164,7 @@ void main() {
       expect(port.scope.sourceId, 'first');
       expect(controller.scope.sourceId, 'first');
       expect(controller.error, isNotNull);
-      expect(controller.announcement, 'Could not change source. Try again.');
+      expect(controller.announcement, "Couldn't change source.");
     },
   );
 }

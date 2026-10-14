@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
+import 'cinema.dart';
 import 'content_focus_node.dart';
 import 'features/artwork/artwork_loader.dart';
 import 'features/artwork/source_artwork.dart';
@@ -41,16 +42,8 @@ import 'features/sources/startup_models.dart';
 import 'features/sources/xtream_epg_service.dart';
 import 'home_fixture_mode.dart';
 
-const _rail = Color(0xFF171818);
-const _raised = Color(0xFF222321);
-const _railSelected = Color(0xFF262624);
-const _railSelectedHover = Color(0xFF2A2B29);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
-const _lastChannelUnavailableNotice =
-    'Last channel is unavailable. Wabbit opened Home instead.';
+const _railOpen = Color(0xFF141419);
+const _lastChannelUnavailableNotice = 'Last channel unavailable · opened Home';
 
 enum ShellDestination {
   home,
@@ -80,7 +73,7 @@ extension ShellDestinationLabel on ShellDestination {
   IconData get icon => switch (this) {
     ShellDestination.home => Icons.home_outlined,
     ShellDestination.live => Icons.live_tv_outlined,
-    ShellDestination.guide => Icons.view_week_outlined,
+    ShellDestination.guide => Icons.calendar_view_day_outlined,
     ShellDestination.movies => Icons.movie_outlined,
     ShellDestination.series => Icons.tv_outlined,
     ShellDestination.search => Icons.search,
@@ -1188,7 +1181,7 @@ class _WabbitShellState extends State<WabbitShell> {
       if (!mounted) return;
       setState(() {
         _secondChannelBusy = false;
-        _secondChannelMessage = 'The second channel could not start. The current channel is still playing.';
+        _secondChannelMessage = "Second channel couldn't start";
       });
       return;
     }
@@ -1324,11 +1317,11 @@ class _WabbitShellState extends State<WabbitShell> {
       reason: PlaybackBlockReason.sourceLimit,
       :final effectiveLimit,
     ) =>
-      'This source currently allows ${effectiveLimit ?? 1} stream${effectiveLimit == 1 ? '' : 's'}. Cancel adding a second channel, then open Settings to change the local limit.',
+      "This source allows ${effectiveLimit ?? 1} stream${effectiveLimit == 1 ? '' : 's'} at once",
     PlaybackBlocked(reason: PlaybackBlockReason.globalMaximum) =>
-      'Two streams are already active. Close one before adding another.',
+      'Two streams already playing · close one first',
     PlaybackBlocked(reason: PlaybackBlockReason.managerClosed) =>
-      'Playback is unavailable until Wabbit TV restarts.',
+      'Restart Wabbit TV to play again',
     _ => 'Playback could not start.',
   };
 
@@ -1605,6 +1598,12 @@ class _WabbitShellState extends State<WabbitShell> {
         onAddChannel: selectedHandoff.mediaKind == PlaybackMediaKind.live
             ? _beginSecondChannelSelection
             : null,
+        organization: _libraryOrganizationPort,
+        guide: _guideData,
+        onOrganizationChanged: () {
+          setState(() => _organizationRevision += 1);
+          unawaited(_homeController.refresh());
+        },
       );
     }
     return const SizedBox.expand();
@@ -1782,32 +1781,14 @@ class _WabbitShellState extends State<WabbitShell> {
                 if (_playbackStarting)
                   Positioned.fill(
                     child: BlockSemantics(
+                      // Matches the player's own starting mark, so the
+                      // hand-off to the player doesn't flicker.
                       child: ColoredBox(
                         key: const ValueKey('playback-starting-surface'),
-                        color: const Color(0xFF111212),
+                        color: Cinema.ink,
                         child: Center(
-                          child: Semantics(
-                            liveRegion: true,
-                            label: 'Starting playback',
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF191A1A),
-                                border: Border.all(color: _line),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                'Starting ${_pendingPlaybackTitle ?? 'playback'}',
-                                style: const TextStyle(
-                                  color: _warmWhite,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
+                          child: StatusMark(
+                            'Starting ${_pendingPlaybackTitle ?? 'playback'}',
                           ),
                         ),
                       ),
@@ -1963,25 +1944,17 @@ class _StartupPreparingSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ColoredBox(
     key: const ValueKey('startup-preparing-surface'),
-    color: const Color(0xFF111212),
+    color: Cinema.ink,
     child: Center(
       child: Semantics(
         liveRegion: true,
         label: 'Opening Wabbit TV',
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xFF191A1A),
-            border: Border.all(color: _line),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: const Text(
-            'Opening Wabbit TV…',
-            style: TextStyle(
-              color: _warmWhite,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
+        child: const Text(
+          'Opening Wabbit TV…',
+          style: TextStyle(
+            color: Cinema.text,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
@@ -2217,6 +2190,7 @@ class _ShellBody extends StatelessWidget {
         data: guideData,
         onBrowseLive: () => onSelectDestination(ShellDestination.live),
         onOpenSettings: () => onSelectDestination(ShellDestination.settings),
+        artworkLoader: artworkProvider,
       );
     }
 
@@ -2342,16 +2316,20 @@ class _ShellBody extends StatelessWidget {
               item.artworkKey != null && data is DatabaseMyLibraryData
               ? data.artworkLocatorFor(item.id)
               : null;
-          return SourceArtwork(
-            locator: locator,
-            kind: switch (item.kind) {
-              MyLibraryMediaKind.live => SourceMediaKind.live,
-              MyLibraryMediaKind.movie => SourceMediaKind.movies,
-              MyLibraryMediaKind.series => SourceMediaKind.series,
-            },
-            loader: artworkProvider,
-            focused: focused,
-            loadWhenVisible: true,
+          return LayoutBuilder(
+            builder: (context, constraints) => SourceArtwork(
+              locator: locator,
+              kind: switch (item.kind) {
+                MyLibraryMediaKind.live => SourceMediaKind.live,
+                MyLibraryMediaKind.movie => SourceMediaKind.movies,
+                MyLibraryMediaKind.series => SourceMediaKind.series,
+              },
+              loader: artworkProvider,
+              focused: focused,
+              loadWhenVisible: true,
+              width: constraints.maxWidth,
+              height: constraints.maxHeight,
+            ),
           );
         },
       );
@@ -2392,7 +2370,12 @@ class _NavigationRail extends StatelessWidget {
       duration: motionDuration,
       curve: Curves.easeOutCubic,
       width: railWidth,
-      color: _rail,
+      decoration: BoxDecoration(
+        color: isExpanded ? _railOpen : Cinema.ink,
+        boxShadow: isExpanded
+            ? const [BoxShadow(color: Color(0xA6000000), blurRadius: 48)]
+            : const [],
+      ),
       child: ClipRect(
         child: OverflowBox(
           alignment: Alignment.topLeft,
@@ -2400,129 +2383,127 @@ class _NavigationRail extends StatelessWidget {
           maxWidth: 224,
           child: SizedBox(
             width: 224,
-            child: DecoratedBox(
-              decoration: const BoxDecoration(
-                border: Border(right: BorderSide(color: _line)),
-              ),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    const SizedBox(height: 12),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(minHeight: 52),
-                      child: Row(
-                        children: [
-                          const SizedBox(width: 22),
-                          const Icon(
-                            Icons.play_circle_outline,
-                            color: _quietText,
-                            size: 27,
+            child: SafeArea(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 18),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 52),
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 19),
+                        const CustomPaint(
+                          size: Size.square(34),
+                          painter: WabbitMarkPainter(),
+                        ),
+                        if (isExpanded) ...[
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8),
+                              child: Text(
+                                'Wabbit TV',
+                                style: TextStyle(
+                                  color: Cinema.text,
+                                  fontFamily: Cinema.display,
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: -0.3,
+                                ),
+                              ),
+                            ),
                           ),
-                          if (isExpanded) ...[
-                            const SizedBox(width: 12),
-                            const Expanded(
-                              child: Padding(
-                                padding: EdgeInsets.symmetric(vertical: 8),
-                                child: Text(
-                                  'Wabbit TV',
-                                  style: TextStyle(
-                                    color: _warmWhite,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: -0.2,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                          ],
+                          const SizedBox(width: 16),
                         ],
-                      ),
+                      ],
                     ),
-                    const SizedBox(height: 20),
-                    Expanded(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          return SingleChildScrollView(
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                minHeight: constraints.maxHeight,
-                              ),
-                              child: IntrinsicHeight(
-                                child: Column(
-                                  children: [
-                                    for (final destination
-                                        in ShellDestination.values.where(
-                                          (candidate) =>
-                                              candidate !=
-                                              ShellDestination.settings,
-                                        ))
-                                      _RailDestination(
-                                        destination: destination,
-                                        isSelected: destination == selected,
-                                        expanded: isExpanded,
-                                        focusNode: focusNodes[destination]!,
-                                        onPressed: () =>
-                                            onSelected(destination),
-                                      ),
-                                    if (showNowPlaying)
-                                      _RailNowPlaying(
-                                        expanded: isExpanded,
-                                        focusNode: nowPlayingFocus,
-                                        onPressed: onNowPlaying,
-                                      ),
-                                    const Spacer(),
-                                    if (isExpanded && showFixtureLabel)
-                                      const Padding(
-                                        padding: EdgeInsets.fromLTRB(
-                                          20,
-                                          12,
-                                          16,
-                                          12,
-                                        ),
-                                        child: Text(
-                                          'Local fixture preview',
-                                          style: TextStyle(
-                                            color: _quietText,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
-                                    const Padding(
-                                      key: ValueKey('rail-settings-separator'),
-                                      padding: EdgeInsets.fromLTRB(
-                                        18,
-                                        8,
-                                        18,
-                                        6,
-                                      ),
-                                      child: Divider(
-                                        height: 1,
-                                        thickness: 1,
-                                        color: _line,
-                                      ),
-                                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return SingleChildScrollView(
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              minHeight: constraints.maxHeight,
+                            ),
+                            child: IntrinsicHeight(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  for (final destination
+                                      in ShellDestination.values.where(
+                                        (candidate) =>
+                                            candidate !=
+                                            ShellDestination.settings,
+                                      ))
                                     _RailDestination(
-                                      destination: ShellDestination.settings,
-                                      isSelected:
-                                          selected == ShellDestination.settings,
+                                      destination: destination,
+                                      isSelected: destination == selected,
                                       expanded: isExpanded,
-                                      focusNode:
-                                          focusNodes[ShellDestination
-                                              .settings]!,
-                                      onPressed: () =>
-                                          onSelected(ShellDestination.settings),
+                                      focusNode: focusNodes[destination]!,
+                                      onPressed: () => onSelected(destination),
                                     ),
-                                  ],
-                                ),
+                                  if (showNowPlaying)
+                                    _RailNowPlaying(
+                                      expanded: isExpanded,
+                                      focusNode: nowPlayingFocus,
+                                      onPressed: onNowPlaying,
+                                    ),
+                                  const Spacer(),
+                                  if (isExpanded && showFixtureLabel)
+                                    const Padding(
+                                      padding: EdgeInsets.fromLTRB(
+                                        20,
+                                        12,
+                                        16,
+                                        12,
+                                      ),
+                                      child: Text(
+                                        'Local fixture preview',
+                                        style: TextStyle(
+                                          color: Cinema.faint,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  Padding(
+                                    key: const ValueKey(
+                                      'rail-settings-separator',
+                                    ),
+                                    padding: const EdgeInsets.fromLTRB(
+                                      14,
+                                      8,
+                                      14,
+                                      6,
+                                    ),
+                                    child: Container(
+                                      width: _railItemWidth(isExpanded),
+                                      height: 1,
+                                      color: Cinema.glass,
+                                    ),
+                                  ),
+                                  _RailDestination(
+                                    destination: ShellDestination.settings,
+                                    isSelected:
+                                        selected == ShellDestination.settings,
+                                    expanded: isExpanded,
+                                    focusNode:
+                                        focusNodes[ShellDestination.settings]!,
+                                    onPressed: () =>
+                                        onSelected(ShellDestination.settings),
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
                               ),
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                        );
+                      },
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -2530,6 +2511,76 @@ class _NavigationRail extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Rail buttons are 44 px circles while the rail is collapsed and
+/// full-width pills once it opens.
+double _railItemWidth(bool expanded) => expanded ? 196 : 44;
+
+class _RailPill extends StatelessWidget {
+  const _RailPill({
+    required this.pillKey,
+    required this.icon,
+    required this.label,
+    required this.expanded,
+    required this.focused,
+    required this.fill,
+    required this.ink,
+    required this.bold,
+    this.iconKey,
+  });
+
+  final Key pillKey;
+  final IconData icon;
+  final String label;
+  final bool expanded;
+  final bool focused;
+  final Color fill;
+  final Color ink;
+  final bool bold;
+  final Key? iconKey;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+    child: SizedBox(
+      key: pillKey,
+      width: _railItemWidth(expanded),
+      child: AnimatedContainer(
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 130),
+        curve: Curves.easeOutCubic,
+        constraints: const BoxConstraints(minHeight: 44),
+        padding: const EdgeInsets.all(11),
+        decoration: BoxDecoration(
+          color: fill,
+          borderRadius: BorderRadius.circular(22),
+          // Focus is a solid amber pill, so only the soft glow applies.
+          boxShadow: focused ? [Cinema.focusGlow.last] : const [],
+        ),
+        child: Row(
+          children: [
+            Icon(icon, key: iconKey, size: 22, color: ink),
+            if (expanded) ...[
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  label,
+                  softWrap: true,
+                  style: TextStyle(
+                    color: ink,
+                    fontSize: 15,
+                    fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _RailDestination extends StatefulWidget {
@@ -2592,91 +2643,42 @@ class _RailDestinationState extends State<_RailDestination> {
       child: Builder(
         builder: (context) {
           final focused = Focus.of(context).hasFocus;
+          final selected = widget.isSelected;
           return Semantics(
             button: true,
-            selected: widget.isSelected,
+            selected: selected,
             label: widget.destination.label,
             onTap: widget.onPressed,
             excludeSemantics: true,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: widget.onPressed,
-              child: AnimatedContainer(
-                duration: MediaQuery.disableAnimationsOf(context)
-                    ? Duration.zero
-                    : const Duration(milliseconds: 130),
-                curve: Curves.easeOutCubic,
-                constraints: const BoxConstraints(minHeight: 48),
-                margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-                decoration: BoxDecoration(
-                  color: widget.isSelected
-                      ? _hovered
-                            ? _railSelectedHover
-                            : _railSelected
-                      : _hovered
-                      ? _raised
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(6),
-                  border: focused
-                      ? Border.all(color: _amber, width: 2)
-                      : Border.all(color: Colors.transparent, width: 2),
+              child: _RailPill(
+                pillKey: ValueKey(
+                  'shell-destination-pill-${widget.destination.name}',
                 ),
-                child: Stack(
-                  alignment: Alignment.centerLeft,
-                  children: [
-                    if (widget.isSelected && !focused)
-                      const Positioned(
-                        left: 5,
-                        top: 0,
-                        bottom: 0,
-                        child: Center(
-                          child: ColoredBox(
-                            key: ValueKey('rail-selected-location-marker'),
-                            color: _quietText,
-                            child: SizedBox(width: 2, height: 20),
-                          ),
-                        ),
-                      ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            widget.destination.icon,
-                            key: ValueKey(
-                              'shell-destination-icon-${widget.destination.name}',
-                            ),
-                            size: 22,
-                            color: widget.isSelected || _hovered
-                                ? _warmWhite
-                                : _quietText,
-                          ),
-                          if (widget.expanded) ...[
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Text(
-                                widget.destination.label,
-                                softWrap: true,
-                                style: TextStyle(
-                                  color: widget.isSelected || _hovered
-                                      ? _warmWhite
-                                      : _quietText,
-                                  fontSize: 15,
-                                  fontWeight: widget.isSelected
-                                      ? FontWeight.w700
-                                      : FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
+                iconKey: ValueKey(
+                  'shell-destination-icon-${widget.destination.name}',
                 ),
+                icon: widget.destination.icon,
+                label: widget.destination.label,
+                expanded: widget.expanded,
+                focused: focused,
+                fill: focused
+                    ? Cinema.amber
+                    : _hovered
+                    ? Cinema.glassFocused
+                    : selected
+                    ? Cinema.glass
+                    : const Color(0x00000000),
+                ink: focused
+                    ? Cinema.amberInk
+                    : selected
+                    ? Cinema.amber
+                    : _hovered
+                    ? Cinema.text
+                    : Cinema.faint,
+                bold: selected,
               ),
             ),
           );
@@ -2749,45 +2751,19 @@ class _RailNowPlayingState extends State<_RailNowPlaying> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onPressed,
-            child: AnimatedContainer(
-              duration: MediaQuery.disableAnimationsOf(context)
-                  ? Duration.zero
-                  : const Duration(milliseconds: 130),
-              curve: Curves.easeOutCubic,
-              constraints: const BoxConstraints(minHeight: 48),
-              margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: _hovered ? _railSelectedHover : _railSelected,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: focused ? _amber : Colors.transparent,
-                  width: 2,
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.picture_in_picture_alt_outlined,
-                    size: 22,
-                    color: _warmWhite,
-                  ),
-                  if (widget.expanded) ...[
-                    const SizedBox(width: 14),
-                    const Expanded(
-                      child: Text(
-                        'Now Playing',
-                        softWrap: true,
-                        style: TextStyle(
-                          color: _warmWhite,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+            child: _RailPill(
+              pillKey: const ValueKey('shell-now-playing-pill'),
+              icon: Icons.picture_in_picture_alt_outlined,
+              label: 'Now Playing',
+              expanded: widget.expanded,
+              focused: focused,
+              fill: focused
+                  ? Cinema.amber
+                  : _hovered
+                  ? Cinema.glassFocused
+                  : Cinema.glass,
+              ink: focused ? Cinema.amberInk : Cinema.text,
+              bold: true,
             ),
           ),
         );

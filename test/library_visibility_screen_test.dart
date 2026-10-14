@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wabbit_tv/src/cinema.dart';
 import 'package:wabbit_tv/src/features/sources/library_visibility_screen.dart';
 import 'package:wabbit_tv/src/features/sources/source_models.dart';
 
@@ -36,7 +37,7 @@ void main() {
     await tester.pumpWidget(app(port));
     await tester.pumpAndSettle();
     expect(find.text('Manage visibility'), findsOneWidget);
-    expect(find.textContaining('Local visibility only'), findsOneWidget);
+    expect(find.textContaining('this device only'), findsOneWidget);
     expect(find.text('Provider categories'), findsOneWidget);
     expect(find.text('Hide category'), findsOneWidget);
     expect(find.text('Film Select'), findsOneWidget);
@@ -139,43 +140,29 @@ void main() {
     );
   });
 
-  testWidgets('buttons reserve fixed two-pixel amber focus edges', (
+  testWidgets('buttons fill amber on focus, or gain a warm edge when amber', (
     tester,
   ) async {
     final back = FocusNode(debugLabel: 'visibility border back');
     addTearDown(back.dispose);
     await tester.pumpWidget(app(_Port(), initialFocus: back));
     await tester.pumpAndSettle();
+    const focused = {WidgetState.focused};
     final button = tester.widget<OutlinedButton>(
       find.byKey(const ValueKey('visibility-action-Back')),
     );
-    expect(button.style?.side?.resolve({})?.width, 2);
-    expect(
-      button.style?.side?.resolve({WidgetState.focused})?.color,
-      const Color(0xFFFFB347),
-    );
-    expect(button.style?.side?.resolve({WidgetState.focused})?.width, 2);
-    final selectedKind = tester.widget<OutlinedButton>(
-      find.byKey(const ValueKey('visibility-kind-live')),
-    );
-    expect(selectedKind.style?.side?.resolve({})?.width, 2);
-    expect(
-      selectedKind.style?.side?.resolve({})?.color,
-      const Color(0xFFFFB347),
-    );
-    expect(
-      selectedKind.style?.side?.resolve({WidgetState.focused})?.color,
-      const Color(0xFFF4F0E7),
-    );
-    final primary = tester.widget<FilledButton>(
-      find.byKey(const ValueKey('visibility-action-Hide category')),
-    );
-    expect(primary.style?.side?.resolve({})?.width, 2);
-    expect(primary.style?.side?.resolve({WidgetState.focused})?.width, 2);
-    expect(
-      primary.style?.side?.resolve({WidgetState.focused})?.color,
-      isNot(primary.style?.side?.resolve({})?.color),
-    );
+    expect(button.style?.backgroundColor?.resolve({}), Cinema.glass);
+    expect(button.style?.backgroundColor?.resolve(focused), Cinema.amber);
+    for (final key in [
+      'visibility-kind-live',
+      'visibility-action-Hide category',
+    ]) {
+      final amber = tester.widget<ButtonStyleButton>(find.byKey(ValueKey(key)));
+      expect(amber.style?.backgroundColor?.resolve({}), Cinema.amber);
+      expect(amber.style?.side?.resolve({}), BorderSide.none);
+      expect(amber.style?.side?.resolve(focused)?.color, Cinema.text);
+      expect(amber.style?.side?.resolve(focused)?.width, 2);
+    }
   });
 
   testWidgets(
@@ -440,7 +427,7 @@ void main() {
     final movies = tester.widget<OutlinedButton>(
       find.byKey(const ValueKey('visibility-kind-movies')),
     );
-    expect(movies.style?.backgroundColor?.resolve({}), const Color(0xFFFFB347));
+    expect(movies.style?.backgroundColor?.resolve({}), Cinema.amber);
     expect(find.text('All 3 categories included'), findsOneWidget);
     expect(find.text('Restore category'), findsNothing);
     expect(port.categoryChanges, [(SourceMediaKind.live, 'news', true)]);
@@ -454,20 +441,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('visibility-bulk-hide')));
       await tester.pump();
-      expect(
-        find.text(
-          'Hide all 3 Live categories from Strong? Individual item choices stay unchanged.',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('Hide all 3 Live categories?'), findsOneWidget);
       final confirmation = tester.widget<Semantics>(
         find.byKey(const ValueKey('visibility-bulk-confirmation-message')),
       );
       expect(confirmation.properties.liveRegion, isTrue);
-      expect(
-        confirmation.properties.label,
-        'Hide all 3 Live categories from Strong? Individual item choices stay unchanged.',
-      );
+      expect(confirmation.properties.label, 'Hide all 3 Live categories?');
       final cancelSemantics = tester.widget<Semantics>(
         find
             .descendant(
@@ -478,7 +457,7 @@ void main() {
       );
       expect(
         cancelSemantics.properties.hint,
-        'Cancel hiding all 3 Live categories from Strong. Individual item choices stay unchanged.',
+        'Cancel hiding all 3 Live categories.',
       );
       final confirmSemantics = tester.widget<Semantics>(
         find
@@ -488,10 +467,7 @@ void main() {
             )
             .first,
       );
-      expect(
-        confirmSemantics.properties.hint,
-        'Hide all 3 Live categories from Strong. Individual item choices stay unchanged.',
-      );
+      expect(confirmSemantics.properties.hint, 'Hide all 3 Live categories.');
       expect(
         FocusManager.instance.primaryFocus?.debugLabel,
         'library visibility bulk cancel',
@@ -551,7 +527,7 @@ void main() {
         find.byKey(const ValueKey('visibility-bulk-confirm-hide')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Category visibility was not changed'), findsOneWidget);
+      expect(find.text('Nothing changed'), findsOneWidget);
       expect(
         FocusManager.instance.primaryFocus?.debugLabel,
         'library visibility bulk retry',
@@ -586,7 +562,7 @@ void main() {
     final live = tester.widget<OutlinedButton>(
       find.byKey(const ValueKey('visibility-kind-live')),
     );
-    expect(live.style?.backgroundColor?.resolve({}), const Color(0xFFFFB347));
+    expect(live.style?.backgroundColor?.resolve({}), Cinema.amber);
     expect(find.text('Hidden only: on'), findsNothing);
     port.pending.complete(3);
     await tester.pumpAndSettle();
@@ -638,12 +614,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(port.bulkChanges, [(SourceMediaKind.live, false)]);
       expect(busyChanges, [true, false]);
-      expect(
-        find.text(
-          'Category visibility was saved locally; this view could not refresh',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text("Saved · view didn't refresh"), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('visibility-bulk-retry')));
       await tester.pumpAndSettle();
@@ -672,12 +643,7 @@ void main() {
       port.failFilteredAfterBulk = true;
       await tester.tap(find.byKey(const ValueKey('visibility-bulk-restore')));
       await tester.pumpAndSettle();
-      expect(
-        find.text(
-          'Category visibility was saved locally; this view could not refresh',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text("Saved · view didn't refresh"), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('visibility-bulk-cancel')));
       await tester.pumpAndSettle();
@@ -686,12 +652,7 @@ void main() {
       expect(find.text('News'), findsWidgets);
       expect(find.text('Sports'), findsWidgets);
       expect(find.text('Film Select'), findsOneWidget);
-      expect(
-        find.text(
-          'Category visibility was saved locally; this view could not refresh',
-        ),
-        findsNothing,
-      );
+      expect(find.text("Saved · view didn't refresh"), findsNothing);
     },
   );
 
@@ -845,12 +806,7 @@ void main() {
       await tester.tap(find.text('Hidden only'));
       await tester.pumpAndSettle();
       expect(find.text('News'), findsWidgets);
-      expect(
-        find.text(
-          'Visibility could not be updated. Showing your last local view.',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text("Couldn't update · showing last view"), findsOneWidget);
     },
   );
 
@@ -860,7 +816,7 @@ void main() {
     final port = _Port()..failCategories = true;
     await tester.pumpWidget(app(port));
     await tester.pumpAndSettle();
-    expect(find.text('Visibility could not be loaded'), findsOneWidget);
+    expect(find.text("Couldn't load visibility"), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
     expect(find.text('No provider categories'), findsNothing);
     port.failCategories = false;
@@ -877,7 +833,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Items could not be loaded'), findsOneWidget);
     expect(find.text('Retry items'), findsOneWidget);
-    expect(find.text('No available items in this category.'), findsNothing);
+    expect(find.text('Nothing in this category.'), findsNothing);
     port.failItems = false;
     await tester.tap(find.text('Retry items'));
     await tester.pumpAndSettle();
@@ -942,12 +898,7 @@ void main() {
     expect(find.text('Hidden only: on'), findsNothing);
     expect(find.text('News One'), findsOneWidget);
     expect(find.text('News Two'), findsOneWidget);
-    expect(
-      find.text(
-        'Visibility could not be updated. Showing your last local view.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text("Couldn't update · showing last view"), findsOneWidget);
   });
 
   testWidgets('failed kind item reload restores kind, selection, and items', (
@@ -964,7 +915,7 @@ void main() {
     final live = tester.widget<OutlinedButton>(
       find.byKey(const ValueKey('visibility-kind-live')),
     );
-    expect(live.style?.backgroundColor?.resolve({}), const Color(0xFFFFB347));
+    expect(live.style?.backgroundColor?.resolve({}), Cinema.amber);
   });
 
   testWidgets('superseded directory failure cannot roll back a newer kind', (
@@ -984,7 +935,7 @@ void main() {
     final series = tester.widget<OutlinedButton>(
       find.byKey(const ValueKey('visibility-kind-series')),
     );
-    expect(series.style?.backgroundColor?.resolve({}), const Color(0xFFFFB347));
+    expect(series.style?.backgroundColor?.resolve({}), Cinema.amber);
     expect(find.text('News One'), findsOneWidget);
     expect(find.byKey(const ValueKey('visibility-recovery')), findsNothing);
   });
@@ -1067,7 +1018,7 @@ void main() {
     final live = tester.widget<OutlinedButton>(
       find.byKey(const ValueKey('visibility-kind-live')),
     );
-    expect(live.style?.backgroundColor?.resolve({}), const Color(0xFFFFB347));
+    expect(live.style?.backgroundColor?.resolve({}), Cinema.amber);
 
     port.pending.complete(3);
     await tester.pumpAndSettle();
@@ -1320,21 +1271,20 @@ void main() {
     expect(find.text('Stale A'), findsNothing);
   });
 
-  testWidgets('item focus edge reserves two-pixel geometry in both states', (
-    tester,
-  ) async {
+  testWidgets('item focus glows without moving the row', (tester) async {
     await tester.pumpWidget(app(_Port()));
     await tester.pumpAndSettle();
     final finder = find.byKey(const ValueKey('visibility-item-live-1'));
-    Border border() =>
-        (tester.widget<Container>(finder).decoration! as BoxDecoration).border!
-            as Border;
-    expect(border().top.width, 2);
+    BoxDecoration decoration() =>
+        tester.widget<Container>(finder).decoration! as BoxDecoration;
+    final rest = tester.getRect(finder);
+    expect(decoration().boxShadow, isEmpty);
     final node = _focusNode(tester, 'library visibility item live-1');
     node.requestFocus();
     await tester.pump();
-    expect(border().top.width, 2);
-    expect(border().bottom.width, 2);
+    await tester.pump();
+    expect(decoration().boxShadow, Cinema.focusGlow);
+    expect(tester.getRect(finder), rest);
   });
 }
 

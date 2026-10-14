@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wabbit_tv/src/cinema.dart';
 import 'package:wabbit_tv/src/features/browse/catalog_scope_controller.dart';
 import 'package:wabbit_tv/src/features/browse/playback_handoff.dart';
 import 'package:wabbit_tv/src/features/browse/series_info_loader.dart';
@@ -26,12 +27,12 @@ void main() {
     final field = find.byKey(const ValueKey('search-field'));
     await tester.tap(field);
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
     final box = tester.widget<Container>(
       find.ancestor(of: field, matching: find.byType(Container)).first,
     );
-    final border = box.decoration! as BoxDecoration;
-    expect((border.border! as Border).top.color, const Color(0xFFFFB347));
-    expect((border.border! as Border).top.width, 2);
+    final decoration = box.decoration! as BoxDecoration;
+    expect(decoration.boxShadow, Cinema.focusGlow);
   });
 
   testWidgets(
@@ -92,11 +93,9 @@ void main() {
     expect(data.searchCalls, 1);
     expect(data.lastQuery, 'Café');
     expect(find.byKey(const ValueKey('search-results')), findsOneWidget);
-    expect(find.text('LIVE'), findsOneWidget);
-    expect(find.text('MOVIE'), findsOneWidget);
-    expect(find.text('SERIES'), findsOneWidget);
-    expect(find.text('Strong'), findsAtLeastNWidgets(1));
-    expect(find.text('M3U backup'), findsAtLeastNWidgets(1));
+    expect(find.text('Channel · Strong'), findsOneWidget);
+    expect(find.text('Movie · M3U backup'), findsOneWidget);
+    expect(find.text('Series · Strong'), findsOneWidget);
   });
 
   testWidgets(
@@ -179,7 +178,7 @@ void main() {
     );
   });
 
-  testWidgets('Search scope launcher matches the confirmed compact control', (
+  testWidgets('Search scope launcher matches the Browse scope pill', (
     tester,
   ) async {
     await tester.pumpWidget(_screen(data: _FakeSearchData()));
@@ -187,9 +186,9 @@ void main() {
 
     expect(
       tester.getSize(find.byKey(const ValueKey('search-scope-menu'))).height,
-      44,
+      40,
     );
-    expect(find.byIcon(Icons.layers_outlined), findsNothing);
+    expect(find.byIcon(Icons.layers_outlined), findsOneWidget);
     expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
   });
 
@@ -352,7 +351,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.text('Source unavailable. Showing All sources.'),
+      find.text('Source unavailable · showing all sources'),
       findsOneWidget,
     );
 
@@ -535,7 +534,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('search-error')), findsOneWidget);
-    expect(find.textContaining('Could not search'), findsOneWidget);
+    expect(find.text('Search failed'), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'search retry');
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -715,7 +714,7 @@ void main() {
 
     expect(find.byKey(const ValueKey('search-results')), findsOneWidget);
     expect(find.byKey(const ValueKey('search-item-live-1')), findsOneWidget);
-    expect(find.text('Searching local library'), findsOneWidget);
+    expect(find.text('Searching'), findsOneWidget);
 
     data.countCompleter.complete(318);
     await tester.pumpAndSettle();
@@ -742,7 +741,7 @@ void main() {
     await tester.pumpWidget(_screen(data: data, session: session));
     await tester.pump();
 
-    expect(find.text('Searching local library'), findsOneWidget);
+    expect(find.text('Searching'), findsOneWidget);
     expect(find.text('999 results'), findsNothing);
   });
 }

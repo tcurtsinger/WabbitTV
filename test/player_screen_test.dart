@@ -5,12 +5,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wabbit_tv/src/cinema.dart';
 import 'package:wabbit_tv/src/features/browse/playback_handoff.dart';
+import 'package:wabbit_tv/src/features/guide/guide_data.dart';
+import 'package:wabbit_tv/src/features/library/library_organization_service.dart';
 import 'package:wabbit_tv/src/features/playback/playback_manager.dart';
 import 'package:wabbit_tv/src/features/playback/playback_runtime_adapters.dart';
 import 'package:wabbit_tv/src/features/playback/playback_transport.dart';
 import 'package:wabbit_tv/src/features/playback/player_screen.dart';
 import 'package:wabbit_tv/src/features/sources/credential_store.dart';
+import 'package:wabbit_tv/src/features/sources/epg_models.dart';
 import 'package:wabbit_tv/src/features/sources/source_catalog_database.dart';
 import 'package:wabbit_tv/src/features/sources/source_models.dart';
 
@@ -224,7 +228,7 @@ void main() {
 
     expect(transportCalls, 0);
     expect(credentials.reads, 0);
-    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
   });
   testWidgets('a resolver-null Xtream result does not open a stale source', (
     tester,
@@ -249,7 +253,7 @@ void main() {
     await tester.pump();
 
     expect(transportCalls, 0);
-    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
   });
   testWidgets('a throwing source resolver stays in bounded recovery', (
     tester,
@@ -270,7 +274,7 @@ void main() {
     await tester.pump();
 
     expect(transportCalls, 0);
-    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
   });
   testWidgets('a throwing credential read stays in bounded recovery', (
     tester,
@@ -574,33 +578,34 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(calls, 2);
-      expect(find.text('Retry'), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
       expect(find.text('Back'), findsOneWidget);
-      expect(find.text('Technical details'), findsOneWidget);
-      expect(find.textContaining('Try '), findsNothing);
+      expect(find.text('Details'), findsOneWidget);
+      // No other-source variants were offered.
+      expect(find.textContaining(RegExp(r'^Try (?!again$)')), findsNothing);
       final recoverySemantics = tester.widget<Semantics>(
         find.descendant(
           of: find.byKey(const ValueKey('player-recovery-primary')),
           matching: find.byWidgetPredicate(
             (widget) =>
-                widget is Semantics && widget.properties.label == 'Retry',
+                widget is Semantics && widget.properties.label == 'Try again',
           ),
         ),
       );
       expect(recoverySemantics.properties.button, isTrue);
-      expect(recoverySemantics.properties.label, 'Retry');
+      expect(recoverySemantics.properties.label, 'Try again');
       expect(recoverySemantics.excludeSemantics, isTrue);
       expect(
         FocusManager.instance.primaryFocus?.debugLabel,
         'player recovery primary',
       );
-      final primaryRing = tester.widget<DecoratedBox>(
+      final primaryRing = tester.widget<AnimatedContainer>(
         find.byKey(const ValueKey('player-recovery-primary-focus-ring')),
       );
-      final primaryBorder =
-          (primaryRing.decoration as BoxDecoration).border! as Border;
-      expect(primaryBorder.top.color, const Color(0xFFFFB347));
-      expect(primaryBorder.top.width, 2);
+      expect(
+        (primaryRing.decoration! as BoxDecoration).boxShadow,
+        Cinema.focusGlow,
+      );
       for (final key in const [
         'player-recovery-primary',
         'player-recovery-back',
@@ -621,13 +626,13 @@ void main() {
         FocusManager.instance.primaryFocus?.debugLabel,
         'player recovery technical details',
       );
-      final detailsRing = tester.widget<DecoratedBox>(
+      final detailsRing = tester.widget<AnimatedContainer>(
         find.byKey(const ValueKey('player-recovery-details-focus-ring')),
       );
-      final detailsBorder =
-          (detailsRing.decoration as BoxDecoration).border! as Border;
-      expect(detailsBorder.top.color, const Color(0xFFFFB347));
-      expect(detailsBorder.top.width, 2);
+      expect(
+        (detailsRing.decoration! as BoxDecoration).boxShadow,
+        Cinema.focusGlow,
+      );
 
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
       await tester.pump();
@@ -730,9 +735,189 @@ void main() {
       find.byKey(const ValueKey('player-utility-controls')),
     );
     expect((primary.center.dx - 1265 / 2).abs(), lessThanOrEqualTo(0.5));
-    expect(primary.width, 44);
+    expect(primary.width, 56);
+    // Fullscreen joins the centered row so the two sides mirror.
+    final tracks = tester.getCenter(find.byTooltip('Audio & subtitles'));
+    final fullscreen = tester.getCenter(
+      find.byKey(const ValueKey('player-fullscreen')),
+    );
+    expect(
+      (primary.center.dx - tracks.dx) - (fullscreen.dx - primary.center.dx),
+      moreOrLessEquals(0, epsilon: 0.5),
+    );
     expect(utilities.right, lessThanOrEqualTo(1265));
     expect(utilities.bottom, lessThanOrEqualTo(713));
+  });
+  testWidgets('on a TV the deck drops volume and fullscreen and centers Play', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(960, 540));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'source',
+          title: 'Live',
+          providerItemId: '1',
+          extension: 'ts',
+        ),
+        transportFactory: _FakeTransport.ready,
+        windowControls: false,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('player-utility-controls')), findsNothing);
+    expect(find.byKey(const ValueKey('player-fullscreen')), findsNothing);
+    expect(find.byTooltip('Mute'), findsNothing);
+    final play = tester.getRect(
+      find.byKey(const ValueKey('player-play-pause')),
+    );
+    expect((play.center.dx - 960 / 2).abs(), lessThanOrEqualTo(0.5));
+    // The chrome floats over the video instead of boxing it in.
+    expect(
+      tester.getRect(find.byKey(const ValueKey('player-video-stage'))),
+      const Rect.fromLTWH(0, 0, 960, 540),
+    );
+    expect(find.text('LIVE'), findsNothing);
+  });
+  testWidgets('the star flips Favorite and keeps the item in its groups', (
+    tester,
+  ) async {
+    final organization = _Organization();
+    var changes = 0;
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'source',
+          title: 'Live',
+          providerItemId: '1',
+          extension: 'ts',
+          libraryItemId: 'item-1',
+        ),
+        transportFactory: _FakeTransport.ready,
+        organization: organization,
+        onOrganizationChanged: () => changes++,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Add to Favorites'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(organization.saved.single.$1, isTrue);
+    expect(organization.saved.single.$2, {'kids'});
+    expect(find.byTooltip('Remove from Favorites'), findsOneWidget);
+    expect(changes, 1);
+
+    // A failed save puts the star back and says so.
+    organization.fail = true;
+    await tester.tap(find.byTooltip('Remove from Favorites'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byTooltip('Remove from Favorites'), findsOneWidget);
+    expect(find.text("Couldn't update Favorites."), findsOneWidget);
+    expect(changes, 1);
+  });
+  testWidgets('a live channel with a guide shows now, its progress and next', (
+    tester,
+  ) async {
+    final now = DateTime.now().toUtc();
+    final guide = _Guide(
+      EpgNowNext(
+        current: EpgProgram(
+          catalogItemId: 'source:live:1',
+          startUtc: now.subtract(const Duration(minutes: 30)),
+          endUtc: now.add(const Duration(minutes: 30)),
+          title: 'Evening Report',
+        ),
+        next: EpgProgram(
+          catalogItemId: 'source:live:1',
+          startUtc: now.add(const Duration(minutes: 30)),
+          endUtc: now.add(const Duration(minutes: 90)),
+          title: 'World Report',
+        ),
+      ),
+    );
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'source',
+          title: 'City Desk',
+          providerItemId: '1',
+          extension: 'ts',
+        ),
+        transportFactory: _FakeTransport.ready,
+        guide: guide,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(guide.loaded, ['source:live:1']);
+    expect(guide.refreshed, isEmpty);
+    expect(
+      find.textContaining('Evening Report', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Up next · World Report', findRichText: true),
+      findsOneWidget,
+    );
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.descendant(
+        of: find.byKey(const ValueKey('player-guide-progress')),
+        matching: find.byType(LinearProgressIndicator),
+      ),
+    );
+    expect(bar.value, closeTo(0.5, 0.02));
+  });
+  testWidgets('a live channel without guide data shows no guide line', (
+    tester,
+  ) async {
+    final guide = _Guide(const EpgNowNext(current: null, next: null));
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'source',
+          title: 'City Desk',
+          providerItemId: '1',
+          extension: 'ts',
+        ),
+        transportFactory: _FakeTransport.ready,
+        guide: guide,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    // An empty cache asks the provider once, then shows nothing.
+    expect(guide.refreshed, [
+      ['source:live:1'],
+    ]);
+    expect(find.byKey(const ValueKey('player-guide-progress')), findsNothing);
+    expect(find.byKey(const ValueKey('player-guide-now')), findsNothing);
+    expect(find.textContaining('Up next', findRichText: true), findsNothing);
+  });
+  testWidgets('no star without a library item or organization port', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        handoff: const LivePlaybackHandoff(
+          sourceId: 'source',
+          title: 'Live',
+          providerItemId: '1',
+          extension: 'ts',
+        ),
+        transportFactory: _FakeTransport.ready,
+        organization: _Organization(),
+      ),
+    );
+    await tester.pump();
+    expect(find.byTooltip('Add to Favorites'), findsNothing);
   });
   testWidgets(
     'compact VOD deck stays within a constrained 480 by 713 viewport',
@@ -819,7 +1004,7 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Open Settings'), findsOneWidget);
-      await tester.tap(find.text('Technical details'));
+      await tester.tap(find.text('Details'));
       await tester.pump();
       final details = tester.widget<Text>(find.textContaining('Category:'));
       expect(details.data, isNot(contains('private-id')));
@@ -983,7 +1168,7 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byTooltip('Tracks'));
+      await tester.tap(find.byTooltip('Audio & subtitles'));
       await tester.pump();
       expect(
         find.byKey(const ValueKey('player-tracks-ledger')),
@@ -1050,9 +1235,9 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
     expect(find.text('Back'), findsOneWidget);
-    expect(find.text('Technical details'), findsOneWidget);
+    expect(find.text('Details'), findsOneWidget);
     expect(find.text('Try Source B'), findsOneWidget);
     expect(find.textContaining('source-b'), findsNothing);
   });
@@ -1157,6 +1342,10 @@ Widget _host({
   VoidCallback? onExit,
   Duration startupDeadline = productionPlayerStartupDeadline,
   UsableVideoCallback? onUsableVideo,
+  bool? windowControls,
+  LibraryOrganizationPort? organization,
+  VoidCallback? onOrganizationChanged,
+  EpgWindowPort? guide,
 }) => MaterialApp(
   home: PlayerScreen(
     handoff: handoff,
@@ -1182,6 +1371,10 @@ Widget _host({
     fullscreenPort: fullscreen,
     startupDeadline: startupDeadline,
     onUsableVideo: onUsableVideo,
+    windowControls: windowControls,
+    organization: organization,
+    onOrganizationChanged: onOrganizationChanged,
+    guide: guide,
     onExit: onExit ?? () {},
   ),
 );
@@ -1449,4 +1642,83 @@ class _FakeFullscreen implements FullscreenPort {
   Future<bool> get isFullscreen async => fullscreen;
   @override
   Future<void> setFullscreen(bool value) async => fullscreen = value;
+}
+
+class _Organization implements LibraryOrganizationPort {
+  final saved = <(bool, Set<String>)>[];
+  bool fail = false;
+
+  @override
+  Future<PersonalLibraryOrganization?> loadItem(String libraryItemId) async =>
+      PersonalLibraryOrganization(
+        libraryItemId: libraryItemId,
+        isFavorite: false,
+        groups: const [
+          PersonalLibraryGroupChoice(
+            groupId: 'kids',
+            name: 'Kids',
+            selected: true,
+          ),
+          PersonalLibraryGroupChoice(
+            groupId: 'news',
+            name: 'News',
+            selected: false,
+          ),
+        ],
+      );
+
+  @override
+  Future<PersonalLibraryMutationResult> saveItem({
+    required String libraryItemId,
+    required bool favorite,
+    required Set<String> customGroupIds,
+  }) async {
+    if (fail) {
+      return const PersonalLibraryMutationResult(
+        PersonalLibraryMutationOutcome.missingItem,
+      );
+    }
+    saved.add((favorite, customGroupIds));
+    return const PersonalLibraryMutationResult(
+      PersonalLibraryMutationOutcome.changed,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _Guide implements EpgWindowPort {
+  _Guide(this.nowNext);
+  final EpgNowNext nowNext;
+  final loaded = <String>[];
+  final refreshed = <List<String>>[];
+
+  @override
+  Future<List<EpgChannelWindow>> loadEpgWindow({
+    required List<String> catalogItemIds,
+    required DateTime windowStartUtc,
+    required DateTime windowEndUtc,
+    required DateTime atUtc,
+  }) async {
+    loaded.addAll(catalogItemIds);
+    return [
+      for (final id in catalogItemIds)
+        EpgChannelWindow(
+          catalogItemId: id,
+          availability: EpgAvailability.available,
+          programs: [?nowNext.current, ?nowNext.next],
+          nowNext: nowNext,
+        ),
+    ];
+  }
+
+  @override
+  Future<EpgRefreshSummary> refreshCatalogItems(
+    Iterable<String> catalogItemIds, {
+    bool manualRetry = false,
+  }) async {
+    refreshed.add(catalogItemIds.toList());
+    return const EpgRefreshSummary.none();
+  }
 }

@@ -16,6 +16,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'src/app_shell.dart';
+import 'src/cinema.dart';
 import 'src/features/artwork/artwork_loader.dart';
 import 'src/features/browse/basic_browse_screen.dart';
 import 'src/features/browse/catalog_scope_controller.dart';
@@ -152,15 +153,30 @@ class WabbitApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF111212),
+        scaffoldBackgroundColor: Cinema.ink,
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFFFFB347),
-          onPrimary: Color(0xFF17120A),
-          surface: Color(0xFF191A1A),
-          onSurface: Color(0xFFF4F0E7),
-          secondary: Color(0xFFBEBAB1),
+          primary: Cinema.amber,
+          onPrimary: Cinema.amberInk,
+          surface: Color(0xFF16161B),
+          onSurface: Cinema.text,
+          secondary: Cinema.quiet,
         ),
-        fontFamily: 'Segoe UI',
+        fontFamily: 'Figtree',
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFF1E1E24),
+          shape: StadiumBorder(),
+          elevation: 0,
+          width: 440,
+          insetPadding: EdgeInsets.only(bottom: 32),
+          // A snack bar's own text style replaces the theme's, font family included.
+          contentTextStyle: TextStyle(
+            fontFamily: 'Figtree',
+            color: Cinema.text,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ),
       home: WabbitShell(
         fixtureMode: fixtureMode,

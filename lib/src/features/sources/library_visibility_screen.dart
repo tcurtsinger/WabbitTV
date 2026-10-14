@@ -4,17 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/semantics.dart';
 
-import '../../focus_edge.dart';
+import '../../cinema.dart';
 import 'source_models.dart';
 
-const _graphite = Color(0xFF111212),
-    _surface = Color(0xFF191A1A),
-    _raised = Color(0xFF222321),
-    _line = Color(0xFF343534),
-    _warmWhite = Color(0xFFF4F0E7),
-    _quietText = Color(0xFFAAA8A2),
-    _amber = Color(0xFFFFB347),
-    _amberInk = Color(0xFF17120A);
+const _graphite = Cinema.ink,
+    _surface = Color(0xFF141419),
+    _raised = Color(0xFF1E1E23),
+    _warmWhite = Cinema.text,
+    _quietText = Cinema.faint,
+    _amber = Cinema.amber;
 
 /// Credential-free local identity for a provider category. A null group id is
 /// the truthful local Uncategorized grouping, never an invented provider key.
@@ -376,7 +374,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
         _initialLoadFailed = _categories.isEmpty;
         _failure = _initialLoadFailed
             ? null
-            : 'Visibility could not be updated. Showing your last local view.';
+            : "Couldn't update · showing last view";
       });
       return _DirectoryLoadResult.failed;
     }
@@ -433,7 +431,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
         _loadingItems = false;
         _loadingMore = false;
         _itemLoadFailed = reset && _items.isEmpty;
-        _failure = _itemLoadFailed ? null : 'Could not load more items. Your last local view is still available.';
+        _failure = _itemLoadFailed ? null : "Couldn't load more.";
       });
       return _ItemLoadResult.failed;
     }
@@ -534,8 +532,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
       _loadingItems = false;
       _loadingMore = false;
       _initialLoadFailed = false;
-      _failure =
-          'Visibility could not be updated. Showing your last local view.';
+      _failure = "Couldn't update · showing last view";
     });
     _lastUsableSnapshot = snapshot;
   }
@@ -618,10 +615,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
       }
     } catch (_) {
       if (!mounted || generation != _generation || kind != _kind) return;
-      setState(
-        () => _failure =
-            'Visibility could not be saved. No local change was made.',
-      );
+      setState(() => _failure = "Couldn't save.");
       _categoryActionFocus.requestFocus();
     }
   }
@@ -892,8 +886,8 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
     widget.onBusyChanged?.call(false);
     _announce(
       hidden
-          ? 'All ${kind.label} categories hidden locally. Individual item choices stay unchanged.'
-          : 'All ${kind.label} categories restored locally. Individual item choices stay unchanged.',
+          ? 'All ${kind.label} categories hidden.'
+          : 'All ${kind.label} categories restored.',
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && request == _bulkRequest && kind == _kind) {
@@ -906,8 +900,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
     });
   }
 
-  void _announceBulkWait() =>
-      _announce('Please wait while category visibility is updated.');
+  void _announceBulkWait() => _announce('Saving…');
 
   Future<void> _toggleItem(LibraryVisibilityItem item) async {
     if (_bulkSaving) {
@@ -915,7 +908,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
       return;
     }
     if (!_pendingItemWrites.add(item.catalogItemId)) {
-      _announce('Please wait while item visibility is updated.');
+      _announce('Saving…');
       return;
     }
     final targetHidden = !item.hidden;
@@ -967,10 +960,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
       if (!mounted || generation != _generation || _selected?.ref != category) {
         return;
       }
-      setState(
-        () => _failure =
-            'Visibility could not be saved. No local change was made.',
-      );
+      setState(() => _failure = "Couldn't save.");
       _requestItemFocus(item.catalogItemId);
     } finally {
       _pendingItemWrites.remove(item.catalogItemId);
@@ -1415,14 +1405,15 @@ class _Header extends StatelessWidget {
                   'Manage visibility',
                   style: TextStyle(
                     color: _warmWhite,
-                    fontSize: 31,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.7,
+                    fontFamily: Cinema.display,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.6,
                   ),
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  '$sourceName · Local visibility only',
+                  '$sourceName · this device only',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: _quietText, fontSize: 14),
@@ -1573,8 +1564,7 @@ class _CategoryDirectory extends StatelessWidget {
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
       color: _surface,
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(18),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1608,10 +1598,10 @@ class _CategoryDirectory extends StatelessWidget {
             onRight: onRight,
           ),
         ),
-        const Divider(height: 1, color: _line),
         Expanded(
           child: ListView.builder(
             controller: controller,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             itemExtent: 58,
             itemCount: categories.length,
             itemBuilder: (_, index) {
@@ -1686,8 +1676,9 @@ class _CategoryToolbar extends StatelessWidget {
       'Provider categories',
       style: TextStyle(
         color: _warmWhite,
+        fontFamily: Cinema.display,
         fontSize: 16,
-        fontWeight: FontWeight.w700,
+        fontWeight: FontWeight.w800,
       ),
     );
     if (providerCategoryCount == 0) {
@@ -1739,8 +1730,8 @@ class _CategoryToolbar extends StatelessWidget {
             liveRegion: true,
             child: Text(
               failureSavedLocally
-                  ? 'Category visibility was saved locally; this view could not refresh'
-                  : 'Category visibility was not changed',
+                  ? "Saved · view didn't refresh"
+                  : 'Nothing changed',
               style: TextStyle(color: _amber, fontSize: 14),
             ),
           ),
@@ -1781,7 +1772,7 @@ class _CategoryToolbar extends StatelessWidget {
     }
     if (confirming) {
       final confirmation =
-          'Hide all ${_formatCount(providerCategoryCount)} ${kind.label} categories from $sourceName? Individual item choices stay unchanged.';
+          'Hide all ${_formatCount(providerCategoryCount)} ${kind.label} categories?';
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1810,7 +1801,7 @@ class _CategoryToolbar extends StatelessWidget {
                     label: 'Cancel',
                     focusNode: cancelFocus,
                     semanticHint:
-                        'Cancel hiding all ${_formatCount(providerCategoryCount)} ${kind.label} categories from $sourceName. Individual item choices stay unchanged.',
+                        'Cancel hiding all ${_formatCount(providerCategoryCount)} ${kind.label} categories.',
                     onPressed: onCancel,
                     onRight: confirmFocus.requestFocus,
                     onDown: onDown,
@@ -1823,7 +1814,7 @@ class _CategoryToolbar extends StatelessWidget {
                     label: 'Hide ${_formatCount(providerCategoryCount)}',
                     focusNode: confirmFocus,
                     semanticHint:
-                        'Hide all ${_formatCount(providerCategoryCount)} ${kind.label} categories from $sourceName. Individual item choices stay unchanged.',
+                        'Hide all ${_formatCount(providerCategoryCount)} ${kind.label} categories.',
                     onPressed: onConfirmHideAll,
                     primary: true,
                     onLeft: cancelFocus.requestFocus,
@@ -1856,7 +1847,7 @@ class _CategoryToolbar extends StatelessWidget {
                   focusNode: hideAllFocus,
                   enabled: canHideAll,
                   semanticHint: canHideAll
-                      ? 'Hide all provider categories for ${kind.label}. Individual item choices stay unchanged.'
+                      ? 'Hide all provider categories for ${kind.label}.'
                       : 'All provider categories are already hidden.',
                   onPressed: onRequestHideAll,
                   onRight: canRestoreAll
@@ -1873,7 +1864,7 @@ class _CategoryToolbar extends StatelessWidget {
                   focusNode: restoreAllFocus,
                   enabled: canRestoreAll,
                   semanticHint: canRestoreAll
-                      ? 'Restore all provider categories for ${kind.label}. Individual item choices stay unchanged.'
+                      ? 'Restore all provider categories for ${kind.label}.'
                       : 'All provider categories are already included.',
                   onPressed: onRestoreAll,
                   onLeft: canHideAll ? hideAllFocus.requestFocus : null,
@@ -1924,14 +1915,7 @@ class _BulkAction extends StatelessWidget {
             ? FilledButton(
                 focusNode: focusNode,
                 onPressed: enabled ? onPressed : null,
-                style: FilledButton.styleFrom(
-                  backgroundColor: _amber,
-                  foregroundColor: _amberInk,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                ).copyWith(side: _buttonSide(primary: true)),
+                style: _pill(primary: true),
                 child: Text(
                   label,
                   maxLines: 1,
@@ -1941,13 +1925,7 @@ class _BulkAction extends StatelessWidget {
             : OutlinedButton(
                 focusNode: focusNode,
                 onPressed: enabled ? onPressed : null,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _warmWhite,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                ).copyWith(side: _buttonSide()),
+                style: _pill(),
                 child: Text(
                   label,
                   maxLines: 1,
@@ -2041,22 +2019,28 @@ class _CategoryRowState extends State<_CategoryRow> {
       selected: widget.selected,
       label:
           '${widget.category.name}, ${_formatCount(widget.category.availableItemCount)} items, ${widget.category.hidden ? 'Hidden' : 'Included'}',
-      child: InkWell(
+      child: GestureDetector(
         onTap: () {
           _focusNode.requestFocus();
           widget.onSelect();
         },
-        child: Container(
+        child: AnimatedContainer(
           key: ValueKey(
             'visibility-category-${widget.category.ref.sourceGroupId ?? 'uncategorized'}',
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          duration: const Duration(milliseconds: 120),
+          margin: const EdgeInsets.symmetric(vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: widget.selected ? _raised : Colors.transparent,
-            border: Border.all(
-              color: focused ? _amber : Colors.transparent,
-              width: 2,
-            ),
+            // Focus fills the pill solid amber: the glow ring would show
+            // through the selected pill's translucent fill.
+            color: focused
+                ? _amber
+                : widget.selected
+                ? Cinema.glass
+                : const Color(0x00000000),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: focused ? [Cinema.focusGlow.last] : const [],
           ),
           child: Row(
             children: [
@@ -2066,24 +2050,35 @@ class _CategoryRowState extends State<_CategoryRow> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: widget.selected ? _warmWhite : _quietText,
-                    fontSize: 15,
+                    color: focused
+                        ? Cinema.amberInk
+                        : widget.selected
+                        ? _amber
+                        : Cinema.quiet,
+                    fontSize: 14,
                     fontWeight: widget.selected
                         ? FontWeight.w700
-                        : FontWeight.w500,
+                        : FontWeight.w600,
                   ),
                 ),
               ),
               const SizedBox(width: 8),
               Text(
                 _formatCount(widget.category.availableItemCount),
-                style: const TextStyle(color: _quietText, fontSize: 12),
+                style: TextStyle(
+                  color: focused ? Cinema.amberInk : _quietText,
+                  fontSize: 12,
+                ),
               ),
               const SizedBox(width: 8),
               Text(
                 widget.category.hidden ? 'Hidden' : 'Included',
                 style: TextStyle(
-                  color: widget.category.hidden ? _amber : _quietText,
+                  color: focused
+                      ? Cinema.amberInk
+                      : widget.category.hidden
+                      ? _amber
+                      : _quietText,
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
                 ),
@@ -2141,8 +2136,7 @@ class _ItemLedger extends StatelessWidget {
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
       color: _surface,
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(18),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2162,8 +2156,9 @@ class _ItemLedger extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: _warmWhite,
+                        fontFamily: Cinema.display,
                         fontSize: 22,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 5),
@@ -2189,7 +2184,6 @@ class _ItemLedger extends StatelessWidget {
             ],
           ),
         ),
-        const Divider(height: 1, color: _line),
         Expanded(
           child: loading
               ? const _LedgerSkeleton()
@@ -2204,6 +2198,7 @@ class _ItemLedger extends StatelessWidget {
               ? _NoItems(hiddenOnly: hiddenOnly)
               : ListView.builder(
                   controller: controller,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
                   itemExtent: 60,
                   itemCount:
                       items.length +
@@ -2311,31 +2306,20 @@ class _ItemRowState extends State<_ItemRow> {
       button: true,
       label:
           '${widget.item.title}, ${widget.item.kind.label}, ${widget.item.hidden ? 'Hidden. Restore item' : 'Included. Hide item'}',
-      child: InkWell(
+      child: GestureDetector(
         onTap: () {
           _focusNode.requestFocus();
           widget.onToggle();
         },
         child: Container(
           key: ValueKey('visibility-item-${widget.item.catalogItemId}'),
-          padding: const EdgeInsets.symmetric(horizontal: 18),
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
-            color: focused ? _raised : Colors.transparent,
-            border: Border(
-              left: BorderSide(
-                color: focused ? _amber : Colors.transparent,
-                width: 2,
-              ),
-              right: BorderSide(
-                color: focused ? _amber : Colors.transparent,
-                width: 2,
-              ),
-              bottom: BorderSide(color: focused ? _amber : _line, width: 2),
-              top: BorderSide(
-                color: focused ? _amber : Colors.transparent,
-                width: 2,
-              ),
-            ),
+            // Opaque when focused so the ring stays a ring.
+            color: focused ? _raised : const Color(0x00000000),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: focused ? Cinema.focusGlow : const [],
           ),
           child: Row(
             children: [
@@ -2354,9 +2338,9 @@ class _ItemRowState extends State<_ItemRow> {
                   widget.item.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _warmWhite,
-                    fontSize: 16,
+                  style: TextStyle(
+                    color: widget.item.hidden ? _quietText : _warmWhite,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -2411,25 +2395,14 @@ class _VisibilityAction extends StatelessWidget {
               key: ValueKey('visibility-action-$label'),
               focusNode: focusNode,
               onPressed: onPressed,
-              style: FilledButton.styleFrom(
-                backgroundColor: _amber,
-                foregroundColor: _amberInk,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ).copyWith(side: _buttonSide(primary: true)),
+              style: _pill(primary: true),
               child: Text(label),
             )
           : OutlinedButton(
               key: ValueKey('visibility-action-$label'),
               focusNode: focusNode,
               onPressed: onPressed,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _warmWhite,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ).copyWith(side: _buttonSide()),
+              style: _pill(),
               child: Text(label),
             ),
     ),
@@ -2461,12 +2434,7 @@ class _QuietAction extends StatelessWidget {
       key: ValueKey('visibility-action-$label'),
       focusNode: focusNode,
       onPressed: onPressed,
-      style: OutlinedButton.styleFrom(
-        foregroundColor: _warmWhite,
-        minimumSize: const Size(0, 44),
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-      ).copyWith(side: _buttonSide()),
+      style: _pill(),
       child: Text(label),
     ),
   );
@@ -2499,12 +2467,9 @@ class _KindAction extends StatelessWidget {
       key: ValueKey('visibility-kind-${kind.name}'),
       focusNode: focusNode,
       onPressed: onPressed,
-      style: OutlinedButton.styleFrom(
-        foregroundColor: selected ? _amberInk : _warmWhite,
-        backgroundColor: selected ? _amber : _surface,
-        minimumSize: const Size(104, 44),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-      ).copyWith(side: _buttonSide(primary: selected)),
+      // The selected kind rests amber, like a chosen tab.
+      style: _pill(primary: selected)
+          .copyWith(minimumSize: const WidgetStatePropertyAll(Size(104, 40))),
       child: Text(kind.label),
     ),
   );
@@ -2545,13 +2510,12 @@ class _DirectionalShortcuts extends StatelessWidget {
   }
 }
 
-WidgetStateProperty<BorderSide> _buttonSide({bool primary = false}) =>
-    WidgetStateProperty.resolveWith(
-      (states) => BorderSide(
-        color: states.contains(WidgetState.focused)
-            ? (primary ? _warmWhite : _amber)
-            : (primary ? _amber : _line),
-        width: 2,
+/// Night Cinema pills, with a little less side padding so the paired bulk
+/// actions fit the 300-wide category pane.
+ButtonStyle _pill({bool primary = false}) => Cinema.pillButton(primary: primary)
+    .copyWith(
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 14),
       ),
     );
 
@@ -2574,8 +2538,7 @@ class _SkeletonPanel extends StatelessWidget {
     key: const ValueKey('visibility-skeleton'),
     decoration: BoxDecoration(
       color: _surface,
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(18),
     ),
     child: ListView.builder(
       physics: const NeverScrollableScrollPhysics(),
@@ -2602,7 +2565,12 @@ class _ItemSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
-    child: Container(color: _raised),
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: _raised,
+        borderRadius: BorderRadius.circular(8),
+      ),
+    ),
   );
 }
 
@@ -2613,7 +2581,7 @@ class _LoadMore extends StatelessWidget {
   Widget build(BuildContext context) => Center(
     child: TextButton(
       onPressed: onRetry,
-      style: ButtonStyle(side: focusEdge()),
+      style: _pill(),
       child: const Text('Load more'),
     ),
   );
@@ -2625,9 +2593,7 @@ class _NoItems extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
     child: Text(
-      hiddenOnly
-          ? 'No hidden items in this category.'
-          : 'No available items in this category.',
+      hiddenOnly ? 'Nothing hidden here.' : 'Nothing in this category.',
       style: const TextStyle(color: _quietText, fontSize: 16),
     ),
   );
@@ -2653,14 +2619,10 @@ class _InlineItemFailure extends StatelessWidget {
           'Items could not be loaded',
           style: TextStyle(
             color: _warmWhite,
+            fontFamily: Cinema.display,
             fontSize: 18,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w800,
           ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Try this local category again.',
-          style: TextStyle(color: _quietText, fontSize: 14),
         ),
         const SizedBox(height: 16),
         _QuietAction(
@@ -2691,18 +2653,13 @@ class _InitialLoadFailure extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         const Text(
-          'Visibility could not be loaded',
+          "Couldn't load visibility",
           style: TextStyle(
             color: _warmWhite,
+            fontFamily: Cinema.display,
             fontSize: 22,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w800,
           ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Try again. Your local visibility preferences are unchanged.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: _quietText, fontSize: 16),
         ),
         const SizedBox(height: 18),
         _QuietAction(
@@ -2734,15 +2691,16 @@ class _EmptyVisibility extends StatelessWidget {
           hiddenOnly ? 'Nothing is hidden' : 'No provider categories',
           style: const TextStyle(
             color: _warmWhite,
+            fontFamily: Cinema.display,
             fontSize: 22,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w800,
           ),
         ),
         const SizedBox(height: 8),
         Text(
           hiddenOnly
-              ? 'Turn off Hidden only to return to your full local library.'
-              : 'This source has no imported categories or items yet.',
+              ? 'Turn off Hidden only to see everything.'
+              : 'Nothing imported from this source yet.',
           textAlign: TextAlign.center,
           style: const TextStyle(color: _quietText, fontSize: 16),
         ),

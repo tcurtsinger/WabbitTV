@@ -15,7 +15,7 @@ void main() {
 
     expect(controller.state, StartupPreferencesState.loadFailed);
     expect(controller.displayedTarget, StartupTarget.home);
-    expect(controller.recovery, contains('will use Home'));
+    expect(controller.recovery, contains('using Home'));
 
     port.failLoad = false;
     await controller.retry();
@@ -61,7 +61,7 @@ void main() {
 
       expect(controller.state, StartupPreferencesState.saveFailed);
       expect(controller.displayedTarget, StartupTarget.home);
-      expect(controller.recovery, contains('previous choice is unchanged'));
+      expect(controller.recovery, contains("Couldn't save"));
 
       port.failTargetSave = false;
       await controller.retry();

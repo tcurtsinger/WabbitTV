@@ -8,20 +8,18 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../focus_edge.dart';
+import '../../cinema.dart';
 import 'source_editor.dart';
 import 'source_models.dart';
 import 'source_setup_controller.dart';
 import 'xtream_connector.dart';
 
-const _graphite = Color(0xFF111212);
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
-const _amberInk = Color(0xFF17120A);
+const _graphite = Cinema.ink;
+const _surface = Color(0xFF141419);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.faint;
+const _amber = Cinema.amber;
+const _errorText = Color(0xFFFFC1B3);
 
 class SourceSetupScreen extends StatefulWidget {
   const SourceSetupScreen({
@@ -272,10 +270,10 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
               final narrow = constraints.maxWidth < 760;
               return Padding(
                 padding: EdgeInsets.fromLTRB(
-                  narrow ? 24 : 48,
+                  narrow ? 24 : 32,
                   22,
                   narrow ? 24 : 32,
-                  narrow ? 24 : 34,
+                  narrow ? 24 : 28,
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -283,70 +281,66 @@ class _SourceSetupScreenState extends State<SourceSetupScreen> {
                     _SourceHeader(editing: _editing),
                     Expanded(
                       child: SingleChildScrollView(
-                        padding: const EdgeInsets.symmetric(vertical: 28),
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            minHeight: (constraints.maxHeight - 188).clamp(
-                              280,
-                              double.infinity,
-                            ),
-                          ),
-                          child: Center(
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 648),
-                              child: _loadingEditor
-                                  ? const _EditorLoading()
-                                  : _editing && _editorDraft == null
-                                  ? const _EditorUnavailable()
-                                  : _controller.ready == null || _editing
-                                  ? _SourceForm(
-                                      controller: _controller,
-                                      kind: _kind,
-                                      editing: _editing,
-                                      name: _name,
-                                      server: _server,
-                                      username: _username,
-                                      password: _password,
-                                      nameFocus: widget.initialFocus,
-                                      serverFocus: _serverFocus,
-                                      usernameFocus: _usernameFocus,
-                                      passwordFocus: _passwordFocus,
-                                      visibilityFocus: _visibilityFocus,
-                                      pickerFocus: _pickerFocus,
-                                      connectFocus: _connectFocus,
-                                      cancelFocus: _cancelFocus,
-                                      showPassword: _showPassword,
-                                      onShowPassword: () => setState(
-                                        () => _showPassword = !_showPassword,
-                                      ),
-                                      onFocused: widget.onContentFocus,
-                                      onSubmit: _submit,
-                                      onSelectKind: _selectKind,
-                                      onPickM3uFile: _pickM3uFile,
-                                      pickerAvailable:
-                                          widget.m3uFilePicker != null,
-                                      pickerBusy: _selectingM3uFile,
-                                      pickerFailed: _m3uFilePickerFailed,
-                                      onCancel: _controller.isImporting
-                                          ? _controller.cancel
-                                          : widget.onExit,
-                                    )
-                                  : _SourceReady(
-                                      ready: _controller.ready!,
-                                      onBrowse: widget.onBrowse,
-                                      onFocused: widget.onContentFocus,
-                                      focusNodes: _browseFocus,
+                        padding: const EdgeInsets.only(top: 20, bottom: 24),
+                        child: Align(
+                          alignment: Alignment.topLeft,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 600),
+                            child: _loadingEditor
+                                ? const _EditorLoading()
+                                : _editing && _editorDraft == null
+                                ? const _EditorUnavailable()
+                                : _controller.ready == null || _editing
+                                ? _SourceForm(
+                                    controller: _controller,
+                                    kind: _kind,
+                                    editing: _editing,
+                                    name: _name,
+                                    server: _server,
+                                    username: _username,
+                                    password: _password,
+                                    nameFocus: widget.initialFocus,
+                                    serverFocus: _serverFocus,
+                                    usernameFocus: _usernameFocus,
+                                    passwordFocus: _passwordFocus,
+                                    visibilityFocus: _visibilityFocus,
+                                    pickerFocus: _pickerFocus,
+                                    connectFocus: _connectFocus,
+                                    cancelFocus: _cancelFocus,
+                                    showPassword: _showPassword,
+                                    onShowPassword: () => setState(
+                                      () => _showPassword = !_showPassword,
                                     ),
-                            ),
+                                    onFocused: widget.onContentFocus,
+                                    onSubmit: _submit,
+                                    onSelectKind: _selectKind,
+                                    onPickM3uFile: _pickM3uFile,
+                                    pickerAvailable:
+                                        widget.m3uFilePicker != null,
+                                    pickerBusy: _selectingM3uFile,
+                                    pickerFailed: _m3uFilePickerFailed,
+                                    onCancel: _controller.isImporting
+                                        ? _controller.cancel
+                                        : widget.onExit,
+                                  )
+                                : _SourceReady(
+                                    ready: _controller.ready!,
+                                    onBrowse: widget.onBrowse,
+                                    onFocused: widget.onContentFocus,
+                                    focusNodes: _browseFocus,
+                                  ),
                           ),
                         ),
                       ),
                     ),
-                    _StageDock(
-                      stages: _controller.stages,
-                      counts: _controller.ready?.counts,
-                      narrow: narrow,
-                    ),
+                    if (_controller.stages.values.any(
+                      (stage) => stage != ImportStageStatus.waiting,
+                    ))
+                      _StageDock(
+                        stages: _controller.stages,
+                        counts: _controller.ready?.counts,
+                        narrow: narrow,
+                      ),
                   ],
                 ),
               );
@@ -369,17 +363,24 @@ class _SourceHeader extends StatelessWidget {
       children: [
         Text(
           editing ? 'Edit source' : 'Add source',
-          style: TextStyle(
+          style: const TextStyle(
             color: _warmWhite,
-            fontSize: 31,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.7,
+            fontFamily: Cinema.display,
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.6,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 4),
         Text(
-          editing ? 'Update this local connector, then refresh its catalog.' : 'Connect an Xtream account or M3U playlist to build your local library.',
-          style: TextStyle(color: _quietText, fontSize: 16, height: 1.45),
+          editing
+              ? 'Update the details, then refresh.'
+              : 'Connect an Xtream account or M3U playlist.',
+          style: const TextStyle(
+            color: Cinema.quiet,
+            fontSize: 14,
+            height: 1.4,
+          ),
         ),
       ],
     );
@@ -411,13 +412,14 @@ class _EditorUnavailable extends StatelessWidget {
         'Source details are unavailable',
         style: TextStyle(
           color: _warmWhite,
+          fontFamily: Cinema.display,
           fontSize: 22,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w800,
         ),
       ),
       SizedBox(height: 8),
       Text(
-        'The saved connector details could not be opened. Return to Sources and try again.',
+        "Couldn't open this source's details.",
         style: TextStyle(color: _quietText, height: 1.4),
       ),
     ],
@@ -441,49 +443,49 @@ class _ConnectorPicker extends StatelessWidget {
   final ValueChanged<SourceEditorKind> onSelected;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) => Wrap(
+    spacing: 10,
+    runSpacing: 10,
+    crossAxisAlignment: WrapCrossAlignment.center,
     children: [
-      const Text(
-        'Connector type',
-        style: TextStyle(
-          color: _warmWhite,
-          fontSize: 14,
-          fontWeight: FontWeight.w700,
+      const Padding(
+        padding: EdgeInsets.only(right: 6),
+        child: Text(
+          'Connector type',
+          style: TextStyle(
+            color: _warmWhite,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
-      const SizedBox(height: 8),
-      Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        children: [
-          for (final candidate in SourceEditorKind.values)
-            if (candidate != SourceEditorKind.m3uFile ||
-                showLocalFile ||
-                candidate == kind)
-              OutlinedButton(
-                key: ValueKey('source-connector-${candidate.name}'),
-                onPressed: enabled ? () => onSelected(candidate) : null,
-                style:
-                    OutlinedButton.styleFrom(
-                      foregroundColor: candidate == kind
-                          ? _warmWhite
-                          : _quietText,
-                      backgroundColor: candidate == kind ? _raised : _surface,
-                      disabledForegroundColor: candidate == kind
-                          ? _warmWhite
-                          : _quietText,
-                      minimumSize: const Size(0, 42),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                    ).copyWith(
-                      side: focusEdge(rest: const BorderSide(color: _line)),
-                    ),
-                child: Text(candidate.label),
+      for (final candidate in SourceEditorKind.values)
+        if (candidate != SourceEditorKind.m3uFile ||
+            showLocalFile ||
+            candidate == kind)
+          OutlinedButton(
+            key: ValueKey('source-connector-${candidate.name}'),
+            onPressed: enabled ? () => onSelected(candidate) : null,
+            style: Cinema.pillButton().copyWith(
+              minimumSize: const WidgetStatePropertyAll(Size(0, 40)),
+              // The chosen type reads amber, even while the type is fixed.
+              foregroundColor: WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.focused)
+                    ? Cinema.amberInk
+                    : candidate == kind
+                    ? _amber
+                    : states.contains(WidgetState.disabled)
+                    ? _quietText
+                    : _warmWhite,
               ),
-        ],
-      ),
+              side: WidgetStatePropertyAll(
+                candidate == kind
+                    ? const BorderSide(color: _amber, width: 1.5)
+                    : BorderSide.none,
+              ),
+            ),
+            child: Text(candidate.label),
+          ),
     ],
   );
 }
@@ -562,38 +564,32 @@ class _SourceForm extends StatelessWidget {
                   : 'Source details',
               style: const TextStyle(
                 color: _warmWhite,
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
+                fontFamily: Cinema.display,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Text(
               controller.isImporting
-                  ? 'This stays in the foreground until it finishes or you cancel.'
+                  ? 'This can take a minute.'
                   : editing
-                  ? 'Save refreshes this source immediately. Its previous local catalog stays available if refresh fails.'
-                  : 'Your account credentials are stored securely on this device after the import succeeds.',
+                  ? 'Saving refreshes the catalog.'
+                  : 'Your login stays on this device.',
               style: const TextStyle(
-                color: _quietText,
-                fontSize: 14,
+                color: Cinema.quiet,
+                fontSize: 13,
                 height: 1.4,
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             _ConnectorPicker(
               kind: kind,
               enabled: !disabled && !editing,
               showLocalFile: pickerAvailable,
               onSelected: onSelectKind,
             ),
-            if (editing) ...[
-              const SizedBox(height: 8),
-              const Text(
-                'Connector type is fixed for this source.',
-                style: TextStyle(color: _quietText, fontSize: 13),
-              ),
-            ],
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
             _Field(
               label: 'Source name',
               controller: name,
@@ -604,7 +600,7 @@ class _SourceForm extends StatelessWidget {
               onFocused: onFocused,
               textInputAction: TextInputAction.next,
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
             if (kind == SourceEditorKind.xtream) ...[
               _Field(
                 label: 'Server URL',
@@ -617,7 +613,7 @@ class _SourceForm extends StatelessWidget {
                 keyboardType: TextInputType.url,
                 textInputAction: TextInputAction.next,
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
               _Field(
                 label: 'Username',
                 controller: username,
@@ -627,7 +623,7 @@ class _SourceForm extends StatelessWidget {
                 onFocused: onFocused,
                 textInputAction: TextInputAction.next,
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
               _Field(
                 label: 'Password',
                 controller: password,
@@ -643,7 +639,17 @@ class _SourceForm extends StatelessWidget {
                   focusNode: visibilityFocus,
                   tooltip: showPassword ? 'Hide password' : 'Show password',
                   onPressed: disabled ? null : onShowPassword,
-                  style: ButtonStyle(side: focusEdge()),
+                  style: ButtonStyle(
+                    backgroundColor: WidgetStateProperty.resolveWith(
+                      (states) =>
+                          states.contains(WidgetState.focused) ? _amber : null,
+                    ),
+                    foregroundColor: WidgetStateProperty.resolveWith(
+                      (states) => states.contains(WidgetState.focused)
+                          ? Cinema.amberInk
+                          : _quietText,
+                    ),
+                  ),
                   icon: Icon(
                     showPassword
                         ? Icons.visibility_off_outlined
@@ -690,7 +696,7 @@ class _SourceForm extends StatelessWidget {
                   Semantics(
                     liveRegion: true,
                     child: const Text(
-                      'Opening the Windows file picker…',
+                      'Opening the file picker…',
                       key: ValueKey('source-m3u-picker-status'),
                       style: TextStyle(color: _quietText, fontSize: 13),
                     ),
@@ -700,9 +706,9 @@ class _SourceForm extends StatelessWidget {
                   Semantics(
                     liveRegion: true,
                     child: const Text(
-                      'The file picker could not be opened. Try again.',
+                      "Couldn't open the file picker.",
                       key: ValueKey('source-m3u-picker-failure'),
-                      style: TextStyle(color: Color(0xFFFFC1B3), fontSize: 13),
+                      style: TextStyle(color: _errorText, fontSize: 13),
                     ),
                   ),
                 ],
@@ -712,7 +718,7 @@ class _SourceForm extends StatelessWidget {
               const SizedBox(height: 18),
               _FailureNotice(failure: controller.failure!),
             ],
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
             FocusTraversalGroup(
               policy: OrderedTraversalPolicy(),
               child: Row(
@@ -885,24 +891,29 @@ class _FieldState extends State<_Field> {
               errorText: widget.errorText,
               suffixIcon: widget.suffix,
               filled: true,
-              fillColor: _raised,
+              fillColor: _surface,
               labelStyle: const TextStyle(color: _quietText),
+              floatingLabelStyle: const TextStyle(color: _amber),
               hintStyle: const TextStyle(color: _quietText),
-              errorStyle: const TextStyle(color: Color(0xFFFFC1B3)),
+              errorStyle: const TextStyle(color: _errorText),
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(6),
-                borderSide: const BorderSide(color: _line),
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide.none,
+              ),
+              disabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide.none,
               ),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(14),
                 borderSide: const BorderSide(color: _amber, width: 2),
               ),
               errorBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(6),
-                borderSide: const BorderSide(color: Color(0xFFFFC1B3)),
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: _errorText),
               ),
               focusedErrorBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(14),
                 borderSide: const BorderSide(color: _amber, width: 2),
               ),
             ),
@@ -941,32 +952,13 @@ class _SourceButton extends StatelessWidget {
           ? FilledButton(
               focusNode: focusNode,
               onPressed: enabled ? onPressed : null,
-              style: FilledButton.styleFrom(
-                backgroundColor: _amber,
-                foregroundColor: _amberInk,
-                disabledBackgroundColor: _raised,
-                disabledForegroundColor: _quietText,
-                minimumSize: const Size(0, 46),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ).copyWith(side: focusEdge(onAmber: true)),
+              style: Cinema.pillButton(primary: true),
               child: Text(label),
             )
           : OutlinedButton(
               focusNode: focusNode,
               onPressed: enabled ? onPressed : null,
-              style:
-                  OutlinedButton.styleFrom(
-                    foregroundColor: _warmWhite,
-                    disabledForegroundColor: _quietText,
-                    minimumSize: const Size(92, 46),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                  ).copyWith(
-                    side: focusEdge(rest: const BorderSide(color: _line)),
-                  ),
+              style: Cinema.pillButton(),
               child: Text(label),
             ),
     );
@@ -981,24 +973,25 @@ class _FailureNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = switch (failure) {
-      SourceImportFailureKind.authentication => 'We could not verify that account. Check the username and password, then try again.',
-      SourceImportFailureKind.unreachable => 'Wabbit TV could not reach that provider. Check the server URL and your connection, then try again.',
-      SourceImportFailureKind.emptyResponse => 'That provider did not return a usable catalog. Check the server URL and try again.',
+      SourceImportFailureKind.authentication =>
+        "Couldn't sign in. Check the username and password.",
+      SourceImportFailureKind.unreachable =>
+        "Couldn't reach the provider. Check the server URL.",
+      SourceImportFailureKind.emptyResponse =>
+        'The provider sent no catalog. Check the server URL.',
       SourceImportFailureKind.tooLarge =>
-        'That provider catalog is too large to import safely.',
-      SourceImportFailureKind.timedOut => 'That provider took too long to respond. Check the connection and try again.',
-      SourceImportFailureKind.localPersistence => 'Wabbit TV could not save those source changes. The editor is still open; try again.',
-      SourceImportFailureKind.cancelled => 'The import was cancelled.',
+        'That catalog is too large to import.',
+      SourceImportFailureKind.timedOut =>
+        'The provider took too long to respond.',
+      SourceImportFailureKind.localPersistence =>
+        "Couldn't save the changes. Try again.",
+      SourceImportFailureKind.cancelled => 'Import cancelled.',
     };
     return Semantics(
       liveRegion: true,
       child: Text(
         copy,
-        style: const TextStyle(
-          color: Color(0xFFFFC1B3),
-          fontSize: 14,
-          height: 1.4,
-        ),
+        style: const TextStyle(color: _errorText, fontSize: 14, height: 1.4),
       ),
     );
   }
@@ -1030,14 +1023,10 @@ class _SourceReady extends StatelessWidget {
               'Source ready',
               style: TextStyle(
                 color: _warmWhite,
+                fontFamily: Cinema.display,
                 fontSize: 22,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w800,
               ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Your local catalog is ready to browse.',
-              style: TextStyle(color: _quietText, fontSize: 16),
             ),
             const SizedBox(height: 22),
             for (final kind in SourceMediaKind.values) ...[
@@ -1082,23 +1071,16 @@ class _ReadyAction extends StatelessWidget {
       child: OutlinedButton(
         focusNode: focusNode,
         onPressed: () => onBrowse(kind),
-        style:
-            OutlinedButton.styleFrom(
-              alignment: Alignment.centerLeft,
-              foregroundColor: _warmWhite,
-              minimumSize: const Size(double.infinity, 52),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(6),
-              ),
-            ).copyWith(
-              side: focusEdge(rest: const BorderSide(color: _line)),
-            ),
+        style: Cinema.pillButton().copyWith(
+          alignment: Alignment.centerLeft,
+          minimumSize: const WidgetStatePropertyAll(Size(double.infinity, 52)),
+        ),
         child: Row(
           children: [
             Expanded(child: Text('Browse ${kind.label}')),
             Text(
               '${_formatCount(count)} items',
-              style: const TextStyle(color: _quietText),
+              style: const TextStyle(fontWeight: FontWeight.w500),
             ),
           ],
         ),
@@ -1128,34 +1110,11 @@ class _StageDock extends StatelessWidget {
       key: const ValueKey('source-stage-dock'),
       decoration: BoxDecoration(
         color: _surface,
-        border: Border.all(color: _line),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: narrow
-          ? Column(
-              children: [
-                for (var index = 0; index < cells.length; index++) ...[
-                  cells[index],
-                  if (index < cells.length - 1)
-                    const Divider(height: 1, color: _line),
-                ],
-              ],
-            )
-          : IntrinsicHeight(
-              child: Row(
-                children: [
-                  for (var index = 0; index < cells.length; index++) ...[
-                    Expanded(child: cells[index]),
-                    if (index < cells.length - 1)
-                      const VerticalDivider(
-                        width: 1,
-                        thickness: 1,
-                        color: _line,
-                      ),
-                  ],
-                ],
-              ),
-            ),
+          ? Column(children: cells)
+          : Row(children: [for (final cell in cells) Expanded(child: cell)]),
     );
   }
 }

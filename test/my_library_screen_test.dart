@@ -20,11 +20,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('My Library'), findsOneWidget);
-    expect(find.text('Your saved library'), findsOneWidget);
-    expect(find.text('Library'), findsOneWidget);
+    expect(find.text('Groups'), findsOneWidget);
     expect(find.text('Favorites'), findsNWidgets(2));
     expect(find.text('World News Now'), findsOneWidget);
-    expect(find.text('MOVIE   |   Weekend playlist'), findsOneWidget);
+    expect(find.text('Movie · Weekend playlist'), findsOneWidget);
     expect(find.byKey(const ValueKey('my-library-directory')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('my-library-items-favorites')),
@@ -34,7 +33,8 @@ void main() {
     final artwork = find.byKey(
       const ValueKey('my-library-artwork-favorites-0'),
     );
-    expect(tester.getSize(artwork), const Size(50, 36));
+    // A channel logo tile; movie and series posters are 34x50.
+    expect(tester.getSize(artwork), const Size(88, 50));
     expect(find.byType(Image), findsNothing);
     expect(find.textContaining('Create group'), findsNothing);
     expect(find.textContaining('Edit'), findsNothing);
@@ -46,7 +46,7 @@ void main() {
     final ledger = tester.getRect(
       find.byKey(const ValueKey('my-library-items-favorites')),
     );
-    expect(directory.width, 270);
+    expect(directory.width, 220);
     expect(ledger.width, greaterThan(directory.width * 2));
   });
 
@@ -76,7 +76,7 @@ void main() {
       tester.getSize(
         find.byKey(const ValueKey('my-library-artwork-favorites-0')),
       ),
-      const Size(50, 36),
+      const Size(88, 50),
     );
     expect(deliberateFocusStates, contains(false));
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
@@ -278,10 +278,7 @@ void main() {
         find.byKey(const ValueKey('continuation-error-copy')),
         findsOneWidget,
       );
-      expect(
-        find.text('This item cannot be opened from the imported catalog.'),
-        findsOneWidget,
-      );
+      expect(find.text("This item can't be opened."), findsOneWidget);
       expect(handoffs, isEmpty);
     },
   );
@@ -406,11 +403,9 @@ void main() {
       _harness(data: _FakeLibraryData.empty(), onOpenRail: () => railOpens++),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Your saved library is empty'), findsOneWidget);
+    expect(find.text('Nothing saved yet'), findsOneWidget);
     expect(
-      find.text(
-        'Favorites and custom groups will appear here when you save them.',
-      ),
+      find.text('Save channels, movies and series with the bookmark button.'),
       findsOneWidget,
     );
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
@@ -423,7 +418,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Nothing saved here yet'), findsOneWidget);
+    expect(find.text('Nothing here yet'), findsOneWidget);
     expect(find.text('0 items'), findsOneWidget);
   });
 
@@ -436,7 +431,7 @@ void main() {
       _harness(data: data, onOpenRail: () => railOpens++),
     );
     await tester.pumpAndSettle();
-    expect(find.text('My Library could not be loaded'), findsOneWidget);
+    expect(find.text("Can't load My Library"), findsOneWidget);
     expect(find.textContaining('sqlite'), findsNothing);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -471,12 +466,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('World News Now'), findsOneWidget);
-    expect(
-      find.text(
-        'My Library could not refresh. Your last loaded library is unchanged.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text("Couldn't refresh My Library."), findsOneWidget);
   });
 
   testWidgets('failed section selection leaves the current list unchanged', (
@@ -491,12 +481,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('World News Now'), findsOneWidget);
-    expect(
-      find.text(
-        'That saved list could not be opened. Your current list is unchanged.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text("Couldn't open that group."), findsOneWidget);
     expect(find.text('Favorites'), findsNWidgets(2));
 
     data.failingSections.remove('living');

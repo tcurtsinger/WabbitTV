@@ -64,6 +64,7 @@ class ImportedCatalogItem {
     required this.categoryKey,
     required this.playbackRef,
     this.artworkLocator,
+    this.guideKey,
   });
 
   final String providerKey;
@@ -72,12 +73,17 @@ class ImportedCatalogItem {
   final String playbackRef;
   final String? artworkLocator;
 
+  /// The provider's guide identity for a live channel (Xtream
+  /// `epg_channel_id`); null when the provider publishes no schedule for it.
+  final String? guideKey;
+
   Map<String, Object?> toJson() => {
     'providerKey': providerKey,
     'title': title,
     'categoryKey': categoryKey,
     'playbackRef': playbackRef,
     'artworkLocator': artworkLocator,
+    'guideKey': guideKey,
   };
 
   factory ImportedCatalogItem.fromJson(Map<String, Object?> json) =>
@@ -87,6 +93,7 @@ class ImportedCatalogItem {
         categoryKey: json['categoryKey'] as String?,
         playbackRef: json['playbackRef']! as String,
         artworkLocator: json['artworkLocator'] as String?,
+        guideKey: json['guideKey'] as String?,
       );
 }
 
@@ -457,19 +464,35 @@ enum BrowseCategorySelectionKind { all, sourceGroup, uncategorized }
 /// not a provider key. It is only meaningful alongside the source and kind
 /// passed to the browse query.
 class BrowseCategorySelection {
-  const BrowseCategorySelection.all()
+  const BrowseCategorySelection.all({this.scheduledOnly = false})
     : kind = BrowseCategorySelectionKind.all,
       sourceGroupId = null;
 
-  const BrowseCategorySelection.uncategorized()
+  const BrowseCategorySelection.uncategorized({this.scheduledOnly = false})
     : kind = BrowseCategorySelectionKind.uncategorized,
       sourceGroupId = null;
 
-  const BrowseCategorySelection.sourceGroup(this.sourceGroupId)
-    : kind = BrowseCategorySelectionKind.sourceGroup;
+  const BrowseCategorySelection.sourceGroup(
+    this.sourceGroupId, {
+    this.scheduledOnly = false,
+  }) : kind = BrowseCategorySelectionKind.sourceGroup;
 
   final BrowseCategorySelectionKind kind;
   final int? sourceGroupId;
+
+  /// Narrows the category to channels with a provider guide identity. The
+  /// Guide's "With schedule" filter; it never changes which category this is.
+  final bool scheduledOnly;
+
+  BrowseCategorySelection withScheduledOnly(bool value) => switch (kind) {
+    BrowseCategorySelectionKind.all => BrowseCategorySelection.all(
+      scheduledOnly: value,
+    ),
+    BrowseCategorySelectionKind.uncategorized =>
+      BrowseCategorySelection.uncategorized(scheduledOnly: value),
+    BrowseCategorySelectionKind.sourceGroup =>
+      BrowseCategorySelection.sourceGroup(sourceGroupId, scheduledOnly: value),
+  };
 }
 
 class BrowseCategorySummary {

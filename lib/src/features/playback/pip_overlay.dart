@@ -1,15 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../cinema.dart';
 import 'playback_manager.dart';
 
-const _graphite = Color(0xFF111212);
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF252624);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
+const _surface = Color(0xFF141419);
+const _raised = Color(0xFF1E1E23);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.faint;
+const _amber = Cinema.amber;
 
 enum PipCorner { topLeft, topRight, bottomRight, bottomLeft }
 
@@ -128,9 +127,8 @@ class PipOverlay extends StatelessWidget {
                 child: Container(
                   key: const ValueKey('corner-signal-pip'),
                   decoration: BoxDecoration(
-                    color: _graphite,
-                    border: Border.all(color: _line),
-                    borderRadius: BorderRadius.circular(8),
+                    color: _surface,
+                    borderRadius: BorderRadius.circular(18),
                     boxShadow: const [
                       BoxShadow(
                         color: Color(0x66000000),
@@ -171,23 +169,28 @@ class PipOverlay extends StatelessWidget {
                                   ),
                                 ),
                               Positioned(
-                                left: 10,
-                                right: 10,
-                                bottom: 8,
-                                child: Text(
-                                  snapshot.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: _warmWhite,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                    shadows: [
-                                      Shadow(
-                                        color: Colors.black,
-                                        blurRadius: 4,
-                                      ),
-                                    ],
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    20,
+                                    12,
+                                    8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    gradient: Cinema.scrim(fromTop: false),
+                                  ),
+                                  child: Text(
+                                    snapshot.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: _warmWhite,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -198,7 +201,7 @@ class PipOverlay extends StatelessWidget {
                           Container(
                             key: const ValueKey('corner-signal-status'),
                             width: double.infinity,
-                            padding: const EdgeInsets.fromLTRB(10, 7, 10, 6),
+                            padding: const EdgeInsets.fromLTRB(12, 7, 12, 6),
                             color: _raised,
                             child: Text(
                               statusMessage!,
@@ -213,7 +216,7 @@ class PipOverlay extends StatelessWidget {
                           ),
                         Container(
                           color: _surface,
-                          padding: const EdgeInsets.all(6),
+                          padding: const EdgeInsets.all(8),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -319,21 +322,21 @@ class _PipActionState extends State<_PipAction> {
                 }
               : null,
           child: Container(
-            width: 48,
+            width: 44,
             height: 44,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: _focused ? _raised : Colors.transparent,
-              border: Border.all(
-                color: _focused ? _amber : Colors.transparent,
-                width: 2,
-              ),
-              borderRadius: BorderRadius.circular(6),
+              color: _focused ? _amber : Colors.transparent,
+              shape: BoxShape.circle,
             ),
             child: Icon(
               widget.icon,
               size: 20,
-              color: widget.enabled ? _warmWhite : _quietText,
+              color: _focused
+                  ? Cinema.amberInk
+                  : widget.enabled
+                  ? _warmWhite
+                  : _quietText,
             ),
           ),
         ),
@@ -350,15 +353,18 @@ class _PipStatus extends StatelessWidget {
   @override
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
-      color: const Color(0xDD191A1A),
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(6),
+      color: Cinema.card,
+      borderRadius: BorderRadius.circular(999),
     ),
     child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
       child: Text(
         label,
-        style: const TextStyle(color: _warmWhite, fontSize: 12),
+        style: const TextStyle(
+          color: _warmWhite,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     ),
   );
@@ -405,11 +411,10 @@ class PipStopConfirmation extends StatelessWidget {
                   key: const ValueKey('pip-stop-confirmation'),
                   width: 420,
                   constraints: const BoxConstraints(maxWidth: 420),
-                  padding: const EdgeInsets.all(22),
+                  padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
-                    color: _surface,
-                    border: Border.all(color: _line),
-                    borderRadius: BorderRadius.circular(8),
+                    color: _raised,
+                    borderRadius: BorderRadius.circular(22),
                   ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -419,18 +424,9 @@ class PipStopConfirmation extends StatelessWidget {
                         'Stop playback and continue?',
                         style: TextStyle(
                           color: _warmWhite,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.2,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Settings and library management keep playback out of sensitive or dense controls.',
-                        style: TextStyle(
-                          color: _quietText,
-                          fontSize: 14,
-                          height: 1.4,
+                          fontFamily: Cinema.display,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
                       const SizedBox(height: 20),
@@ -490,6 +486,8 @@ class _ConfirmationAction extends StatefulWidget {
 class _ConfirmationActionState extends State<_ConfirmationAction> {
   bool _focused = false;
 
+  bool get _filled => widget.primary || _focused;
+
   @override
   Widget build(BuildContext context) => Focus(
     focusNode: widget.focusNode,
@@ -517,21 +515,23 @@ class _ConfirmationActionState extends State<_ConfirmationAction> {
               }
             : null,
         child: Container(
-          constraints: const BoxConstraints(minWidth: 124, minHeight: 44),
+          constraints: const BoxConstraints(minWidth: 96, minHeight: 44),
           alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
           decoration: BoxDecoration(
-            color: widget.primary ? _amber : _raised,
+            color: _filled ? _amber : Cinema.glass,
+            // A constant width so focus never resizes the pill.
             border: Border.all(
-              color: _focused ? _amber : _line,
-              width: _focused ? 2 : 1,
+              color: _focused ? _warmWhite : const Color(0x00000000),
+              width: 2,
             ),
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: _focused ? [Cinema.focusGlow.last] : null,
           ),
           child: Text(
             widget.label,
             style: TextStyle(
-              color: widget.primary ? const Color(0xFF17120A) : _warmWhite,
+              color: _filled ? Cinema.amberInk : _warmWhite,
               fontSize: 14,
               fontWeight: FontWeight.w700,
             ),

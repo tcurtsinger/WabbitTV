@@ -102,7 +102,7 @@ class StartupPreferencesController extends ChangeNotifier {
       _pendingTarget = null;
       _failedTarget = target;
       state = StartupPreferencesState.saveFailed;
-      recovery = 'The startup choice could not be saved. Your previous choice is unchanged.';
+      recovery = "Couldn't save your choice.";
     } finally {
       if (generation == _targetGeneration) _notify();
     }
@@ -148,8 +148,7 @@ class StartupPreferencesController extends ChangeNotifier {
     } catch (_) {
       preference = const StartupPreference.defaults();
       state = StartupPreferencesState.loadFailed;
-      recovery =
-          'The startup choice could not be loaded. Wabbit will use Home.';
+      recovery = "Couldn't load your choice · using Home";
     } finally {
       _notify();
     }

@@ -6,20 +6,25 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import '../../cinema.dart';
+import '../artwork/artwork_loader.dart';
+import '../artwork/source_artwork.dart';
 import '../browse/playback_handoff.dart';
 import '../sources/epg_models.dart';
 import '../sources/source_models.dart';
 import 'guide_data.dart';
 
-const _graphite = Color(0xFF111212);
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
+const _graphite = Cinema.ink;
+const _raised = Color(0xFF1E1E23);
+const _line = Color(0x1AF5F1E8);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.faint;
+const _amber = Cinema.amber;
+
+/// Opaque fill under a focus ring, so the ring stays a ring.
+const _focusFill = Color(0xFF26262D);
 const _guideRowExtent = 66.0;
-const _rulerExtent = 46.0;
+const _rulerExtent = 34.0;
 const _hourWidth = 180.0;
 const _guideHours = 9;
 const _guideEpgViewportHistoryLimit = 3;
@@ -70,6 +75,10 @@ class GuideSession {
   double horizontalOffset = 0;
   DateTime? windowStartUtc;
   double? focusedChannelViewportOffset;
+
+  /// "With schedule": list only channels that carry a provider guide ID.
+  /// It applies once the source has saved any (see GuideScheduleDataPort).
+  bool scheduledOnly = true;
 }
 
 class GuideScreen extends StatefulWidget {
@@ -85,6 +94,7 @@ class GuideScreen extends StatefulWidget {
     required this.onOpenSettings,
     this.now,
     this.localize,
+    this.artworkLoader,
   });
 
   final FocusNode initialFocus;
@@ -97,6 +107,7 @@ class GuideScreen extends StatefulWidget {
   final VoidCallback onOpenSettings;
   final DateTime Function()? now;
   final GuideLocalInstant Function(DateTime utc)? localize;
+  final ArtworkProvider? artworkLoader;
 
   @override
   State<GuideScreen> createState() => _GuideScreenState();
@@ -106,6 +117,14 @@ class _GuideScreenState extends State<GuideScreen> {
   final _sourceFocus = FocusNode(debugLabel: 'guide source');
   final _categoryFocus = FocusNode(debugLabel: 'guide category');
   final _goNowFocus = FocusNode(debugLabel: 'guide go to now');
+  final _scheduleFocus = FocusNode(debugLabel: 'guide schedule filter');
+
+  /// Whether the source has saved any guide IDs; only then can the
+  /// "With schedule" filter apply.
+  bool _hasSchedules = false;
+  bool get _scheduledOnly => _hasSchedules && widget.session.scheduledOnly;
+  BrowseCategorySelection _query(BrowseCategorySelection selection) =>
+      selection.withScheduledOnly(_scheduledOnly);
   final _retryFocus = FocusNode(debugLabel: 'guide retry');
   final _vertical = ScrollController();
   final _timeline = ScrollController();
@@ -212,12 +231,7 @@ class _GuideScreenState extends State<GuideScreen> {
     _visualFocusProgramStartUtcMs = widget.session.focusedProgramStartUtcMs;
     _visualFocusProgramEndUtcMs = widget.session.focusedProgramEndUtcMs;
     _resetTimeWindow();
-    for (final node in [
-      _sourceFocus,
-      _categoryFocus,
-      _goNowFocus,
-      _retryFocus,
-    ]) {
+    for (final node in _headerFocusNodes) {
       node.addListener(_reportHeaderFocus);
     }
     _vertical.addListener(_onVerticalScroll);
@@ -243,6 +257,7 @@ class _GuideScreenState extends State<GuideScreen> {
     _sourceFocus.dispose();
     _categoryFocus.dispose();
     _goNowFocus.dispose();
+    _scheduleFocus.dispose();
     _retryFocus.dispose();
     super.dispose();
   }
@@ -272,13 +287,17 @@ class _GuideScreenState extends State<GuideScreen> {
     return hour.subtract(const Duration(minutes: 30));
   }
 
+  /// Header controls whose focus the shell remembers for the rail and PiP.
+  List<FocusNode> get _headerFocusNodes => [
+    _sourceFocus,
+    _categoryFocus,
+    _scheduleFocus,
+    _goNowFocus,
+    _retryFocus,
+  ];
+
   void _reportHeaderFocus() {
-    for (final node in [
-      _sourceFocus,
-      _categoryFocus,
-      _goNowFocus,
-      _retryFocus,
-    ]) {
+    for (final node in _headerFocusNodes) {
       if (node.hasFocus) {
         widget.onContentFocus(node);
         return;
@@ -383,6 +402,13 @@ class _GuideScreenState extends State<GuideScreen> {
       final sourceFellBack =
           requestedSourceId != null && requestedSourceId != source.id;
       widget.session.sourceId = source.id;
+      final schedules = widget.data;
+      _hasSchedules =
+          schedules is GuideScheduleDataPort &&
+          await (schedules as GuideScheduleDataPort).hasScheduledChannels(
+            source.id,
+          );
+      if (!mounted || generation != _generation) return;
       final categories = await widget.data.loadCategories(source.id);
       if (!mounted || generation != _generation) return;
       var category = categories.firstOrNull;
@@ -397,11 +423,10 @@ class _GuideScreenState extends State<GuideScreen> {
           !_sameCategory(requestedCategory, category.selection);
       final scopeFallbackMessage = switch ((sourceFellBack, categoryFellBack)) {
         (true, true) =>
-          'Saved Guide source and category are unavailable · showing ${source.name} · ${category?.name ?? 'All Live'}.',
-        (true, false) =>
-          'Saved Guide source is unavailable · showing ${source.name}.',
+          'Saved source and category unavailable · showing ${source.name} · ${category?.name ?? 'All Live'}.',
+        (true, false) => 'Saved source unavailable · showing ${source.name}.',
         (false, true) =>
-          'Saved Guide category is unavailable · showing ${category?.name ?? 'All Live'}.',
+          'Saved category unavailable · showing ${category?.name ?? 'All Live'}.',
         (false, false) => null,
       };
       if (category != null) widget.session.category = category.selection;
@@ -409,7 +434,7 @@ class _GuideScreenState extends State<GuideScreen> {
           ? const BrowsePage(items: [], nextCursor: null)
           : await widget.data.loadChannels(
               sourceId: source.id,
-              selection: category.selection,
+              selection: _query(category.selection),
               limit: guideChannelPageSize,
             );
       if (!mounted || generation != _generation) return;
@@ -423,7 +448,7 @@ class _GuideScreenState extends State<GuideScreen> {
           final window = await (restoration as GuideRestorationDataPort)
               .loadChannelWindow(
                 sourceId: source.id,
-                selection: category.selection,
+                selection: _query(category.selection),
                 catalogItemId: savedChannelId,
                 limit: guideChannelPageSize,
               );
@@ -517,8 +542,8 @@ class _GuideScreenState extends State<GuideScreen> {
     _visualFocusProgramStartUtcMs = null;
     _visualFocusProgramEndUtcMs = null;
     _focusContext = fallback == null
-        ? 'Saved Guide channel is no longer available.'
-        : 'Saved Guide channel is no longer available · showing ${fallback.title}.';
+        ? 'Saved channel unavailable'
+        : 'Saved channel unavailable · showing ${fallback.title}.';
     _focusAnnouncement = true;
     _fallbackAnnouncementChannelId = fallback?.id;
     _fallbackAnnouncementFocusNode = null;
@@ -527,12 +552,34 @@ class _GuideScreenState extends State<GuideScreen> {
 
   Future<void> _chooseSource(String sourceId) async {
     if (sourceId == widget.session.sourceId) return;
-    final releaseGeneration = ++_generation;
-    _windowRequest += 1;
     _rememberPosition();
     widget.session
       ..sourceId = sourceId
-      ..category = const BrowseCategorySelection.all()
+      ..category = const BrowseCategorySelection.all();
+    await _reloadFromTop(
+      refocus: _sourceFocus,
+      stillCurrent: () => widget.session.sourceId == sourceId,
+    );
+  }
+
+  Future<void> _setScheduledOnly(bool value) async {
+    if (widget.session.scheduledOnly == value) return;
+    widget.session.scheduledOnly = value;
+    await _reloadFromTop(
+      refocus: _scheduleFocus,
+      stillCurrent: () => widget.session.scheduledOnly == value,
+    );
+  }
+
+  /// Clears the matrix, reloads the Guide from its first channel, then
+  /// returns focus to [refocus], the control that asked for the reload.
+  Future<void> _reloadFromTop({
+    required FocusNode refocus,
+    required bool Function() stillCurrent,
+  }) async {
+    final releaseGeneration = ++_generation;
+    _windowRequest += 1;
+    widget.session
       ..focusedChannelId = null
       ..focusedProgramStartUtcMs = null
       ..focusedProgramEndUtcMs = null
@@ -571,15 +618,13 @@ class _GuideScreenState extends State<GuideScreen> {
       _refreshFailed = false;
     });
     await widget.data.cancelActiveEpgRefresh();
-    if (!mounted ||
-        releaseGeneration != _generation ||
-        widget.session.sourceId != sourceId) {
+    if (!mounted || releaseGeneration != _generation || !stillCurrent()) {
       return;
     }
     await _loadGuide();
-    if (!mounted || widget.session.sourceId != sourceId) return;
+    if (!mounted || !stillCurrent()) return;
     if (_loadError == null) {
-      _sourceFocus.requestFocus();
+      refocus.requestFocus();
     } else {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _loadError != null) widget.initialFocus.requestFocus();
@@ -616,7 +661,7 @@ class _GuideScreenState extends State<GuideScreen> {
       if (!mounted || generation != _generation) return;
       final page = await widget.data.loadChannels(
         sourceId: source.id,
-        selection: category.selection,
+        selection: _query(category.selection),
         limit: guideChannelPageSize,
       );
       if (!mounted || generation != _generation) return;
@@ -728,7 +773,7 @@ class _GuideScreenState extends State<GuideScreen> {
     try {
       final page = await restorationPort.loadPreviousChannels(
         sourceId: source.id,
-        selection: category.selection,
+        selection: _query(category.selection),
         cursor: cursor,
         limit: guideChannelPageSize,
       );
@@ -827,7 +872,7 @@ class _GuideScreenState extends State<GuideScreen> {
     try {
       final page = await widget.data.loadChannels(
         sourceId: source.id,
-        selection: category.selection,
+        selection: _query(category.selection),
         cursor: cursor,
         limit: guideChannelPageSize,
       );
@@ -1107,6 +1152,7 @@ class _GuideScreenState extends State<GuideScreen> {
         EpgAvailability.available when window.programs.isEmpty =>
           const Duration(minutes: 30),
         EpgAvailability.unsupported => const Duration(hours: 6),
+        EpgAvailability.providerBlocked => const Duration(hours: 1),
         EpgAvailability.available => null,
       };
       if (fallbackDelay != null) {
@@ -1538,8 +1584,7 @@ class _GuideScreenState extends State<GuideScreen> {
       if (failedCategory != null) {
         return _GuideMessage(
           title: 'Guide category unavailable',
-          message:
-              '${failedCategory.name} could not be loaded. Your previous Guide category is unchanged.',
+          message: "Couldn't load ${failedCategory.name}",
           primaryLabel: 'Retry',
           primaryAction: _retryFailedCategory,
           secondaryLabel: 'Keep current category',
@@ -1551,7 +1596,7 @@ class _GuideScreenState extends State<GuideScreen> {
       }
       return _GuideMessage(
         title: 'Guide unavailable',
-        message: 'The saved guide could not be loaded. Live TV is unchanged.',
+        message: "Couldn't load the guide",
         primaryLabel: 'Try again',
         primaryAction: _loadGuide,
         secondaryLabel: 'Browse Live',
@@ -1565,7 +1610,7 @@ class _GuideScreenState extends State<GuideScreen> {
     if (sources != null && sources.isEmpty) {
       return _GuideMessage(
         title: 'Guide needs an Xtream source',
-        message: 'Add or enable an Xtream source to use the Live Guide. M3U channels remain available in Live.',
+        message: 'The Guide needs an Xtream source.',
         primaryLabel: 'Open Settings',
         primaryAction: widget.onOpenSettings,
         secondaryLabel: 'Browse Live',
@@ -1585,33 +1630,33 @@ class _GuideScreenState extends State<GuideScreen> {
             left: false,
             child: Padding(
               padding: EdgeInsets.fromLTRB(
-                narrow ? 20 : 32,
+                narrow ? 20 : 24,
                 22,
                 narrow ? 20 : 32,
-                28,
+                0,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildHeader(context, narrow),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 8),
                   _buildStatus(context),
-                  const SizedBox(height: 6),
-                  Semantics(
-                    liveRegion: _focusAnnouncement,
-                    child: Text(
-                      _focusContext ??
-                          'Select a channel or program to tune Live.',
-                      key: const ValueKey('guide-focus-context'),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: _quietText, fontSize: 13),
-                    ),
-                  ),
+                  const SizedBox(height: 10),
+                  _buildFocusPanel(context),
                   const SizedBox(height: 10),
                   Expanded(
                     child: _loadingPage && _channels.isEmpty
                         ? const _GuideSkeleton()
+                        : _channels.isEmpty && _scheduledOnly
+                        ? _GuideScheduleEmpty(
+                            categoryName: _category?.name ?? 'All Live',
+                            focusNode: widget.initialFocus,
+                            onFocused: widget.onContentFocus,
+                            onLeft: widget.onOpenRail,
+                            onShowAll: () =>
+                                unawaited(_setScheduledOnly(false)),
+                            onChangeCategory: _categoryFocus.requestFocus,
+                          )
                         : _channels.isEmpty
                         ? _GuideEmpty(
                             focusNode: widget.initialFocus,
@@ -1650,7 +1695,7 @@ class _GuideScreenState extends State<GuideScreen> {
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         SizedBox(
-          width: narrow ? 210 : 230,
+          width: narrow ? 180 : 190,
           child: _GuideDropdown<String>(
             key: const ValueKey('guide-source-selector'),
             focusNode: _sourceFocus,
@@ -1663,7 +1708,7 @@ class _GuideScreenState extends State<GuideScreen> {
           ),
         ),
         SizedBox(
-          width: narrow ? 210 : 250,
+          width: narrow ? 180 : 210,
           child: _GuideDropdown<int>(
             key: const ValueKey('guide-category-selector'),
             focusNode: _categoryFocus,
@@ -1675,6 +1720,19 @@ class _GuideScreenState extends State<GuideScreen> {
             onDown: () => _focusRememberedMatrixTarget(),
           ),
         ),
+        if (_hasSchedules)
+          _GuideButton(
+            key: const ValueKey('guide-schedule-filter'),
+            label: 'With schedule',
+            icon: widget.session.scheduledOnly
+                ? Icons.check_circle_rounded
+                : Icons.circle_outlined,
+            toggled: widget.session.scheduledOnly,
+            focusNode: _scheduleFocus,
+            onPressed: () =>
+                unawaited(_setScheduledOnly(!widget.session.scheduledOnly)),
+            onDown: _focusRememberedMatrixTarget,
+          ),
         if (_awayFromNow)
           _GuideButton(
             key: const ValueKey('guide-go-now'),
@@ -1686,39 +1744,223 @@ class _GuideScreenState extends State<GuideScreen> {
           ),
       ],
     );
-    final title = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final title = Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
       children: [
         const Text(
           'Guide',
           style: TextStyle(
             color: _warmWhite,
-            fontSize: 31,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.7,
+            fontFamily: Cinema.display,
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.6,
           ),
         ),
-        const SizedBox(height: 4),
-        Text(
-          subtitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: _quietText, fontSize: 14),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Text(
+            subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: _quietText, fontSize: 13),
+          ),
         ),
       ],
     );
-    if (narrow) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [title, const SizedBox(height: 14), selectors],
+    // Pills sit beside the title when they fit and drop below when not.
+    return Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 16,
+      runSpacing: 10,
+      children: [title, selectors],
+    );
+  }
+
+  /// The highlighted program (or channel) at a glance. Its semantics carry
+  /// the same focus context and announcements the Guide has always spoken.
+  Widget _buildFocusPanel(BuildContext context) {
+    final channelId = _visualFocusChannelId;
+    final channel = channelId == null
+        ? null
+        : _channels.where((candidate) => candidate.id == channelId).firstOrNull;
+    final startMs = _visualFocusProgramStartUtcMs;
+    final endMs = _visualFocusProgramEndUtcMs;
+    final program = channel == null || startMs == null || endMs == null
+        ? null
+        : _windows[channel.id]?.programs
+              .where(
+                (candidate) =>
+                    candidate.startUtc.millisecondsSinceEpoch == startMs &&
+                    candidate.endUtc.millisecondsSinceEpoch == endMs,
+              )
+              .firstOrNull;
+    final contextText = _focusContext ?? 'Pick a channel or program.';
+    final now = _nowUtc;
+    String? overline;
+    String? title;
+    String? range;
+    String? remaining;
+    double? progress;
+    if (program != null) {
+      final upcoming = program.startUtc.isAfter(now);
+      final current = !upcoming && program.endUtc.isAfter(now);
+      overline = current
+          ? 'ON NOW'
+          : upcoming
+          ? 'LATER'
+          : 'EARLIER';
+      title = program.title;
+      range = _formatGuideRange(
+        MaterialLocalizations.of(context),
+        _localize(program.startUtc),
+        _localize(program.endUtc),
+        includeZone: _visibleRangeCrossesOffsetTransition,
       );
+      if (current) {
+        final span = program.endUtc.difference(program.startUtc).inSeconds;
+        if (span > 0) {
+          progress = (now.difference(program.startUtc).inSeconds / span).clamp(
+            0.0,
+            1.0,
+          );
+        }
+        remaining =
+            '${_formatGuideDuration(program.endUtc.difference(now))} left';
+      } else if (upcoming) {
+        remaining =
+            'Starts in ${_formatGuideDuration(program.startUtc.difference(now))}';
+      }
+    } else if (channel != null) {
+      overline = 'CHANNEL';
+      title = channel.title;
     }
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(child: title),
-        selectors,
-      ],
+    const detailStyle = TextStyle(color: Cinema.quiet, fontSize: 13);
+    final Widget detail = _focusAnnouncement || title == null
+        ? Text(
+            contextText,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: detailStyle,
+          )
+        : Row(
+            children: [
+              if (range != null)
+                Flexible(
+                  child: Text(
+                    range,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: detailStyle,
+                  ),
+                ),
+              if (progress != null) ...[
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 96,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 3,
+                      backgroundColor: const Color(0x2EF5F1E8),
+                      color: Cinema.amber,
+                    ),
+                  ),
+                ),
+              ],
+              if (remaining != null) ...[
+                const SizedBox(width: 10),
+                Text(
+                  remaining,
+                  maxLines: 1,
+                  style: const TextStyle(color: _quietText, fontSize: 13),
+                ),
+              ],
+              if (program != null && channel != null) ...[
+                const SizedBox(width: 10),
+                Flexible(
+                  child: Text(
+                    channel.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: _quietText, fontSize: 13),
+                  ),
+                ),
+              ],
+            ],
+          );
+    return Semantics(
+      key: const ValueKey('guide-focus-context'),
+      container: true,
+      liveRegion: _focusAnnouncement,
+      label: contextText,
+      excludeSemantics: true,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 92),
+        padding: const EdgeInsets.fromLTRB(16, 10, 20, 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1A1A20), Color(0xFF131317)],
+          ),
+        ),
+        child: Row(
+          children: [
+            if (channel != null) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SourceArtwork(
+                  locator: channel.artworkLocator,
+                  kind: SourceMediaKind.live,
+                  loader: widget.artworkLoader,
+                  loadWhenVisible: true,
+                  width: 88,
+                  height: 50,
+                ),
+              ),
+              const SizedBox(width: 16),
+            ],
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (overline != null)
+                    Text(
+                      overline,
+                      style: const TextStyle(
+                        color: Cinema.amber,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                  if (title != null)
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Cinema.text,
+                        fontFamily: Cinema.display,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4,
+                        height: 1.2,
+                      ),
+                    ),
+                  const SizedBox(height: 3),
+                  detail,
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1740,6 +1982,9 @@ class _GuideScreenState extends State<GuideScreen> {
     final anyFailure = windows.any(
       (window) => window.availability == EpgAvailability.temporarilyUnavailable,
     );
+    final providerBlocked = windows.any(
+      (window) => window.availability == EpgAvailability.providerBlocked,
+    );
     final allUnsupported =
         _activeEpgIds.isNotEmpty &&
         _activeEpgIds.every(
@@ -1758,17 +2003,19 @@ class _GuideScreenState extends State<GuideScreen> {
     final hasEpgFailure = _refreshFailed || anyFailure;
     String text;
     if (pageFailure == _GuidePageFailure.earlier) {
-      text = 'Earlier channels could not be loaded · current channels remain available';
+      text = "Couldn't load earlier channels";
     } else if (pageFailure == _GuidePageFailure.more) {
-      text = 'More channels could not be loaded · current channels remain available';
+      text = "Couldn't load more channels";
+    } else if (providerBlocked) {
+      text = "Your provider isn't sending guide data";
     } else if (hasEpgFailure && anySaved) {
       text = 'Guide update failed · showing saved schedule';
     } else if (hasEpgFailure && !anySaved) {
-      text = 'Schedule unavailable · channels remain ready to tune';
+      text = 'Schedule unavailable';
     } else if (allUnsupported) {
-      text = 'This source does not expose a short Live guide · channels remain ready to tune';
+      text = 'This source has no guide';
     } else if (allEmpty) {
-      text = 'No schedule for these channels · channels remain ready to tune';
+      text = 'No schedule for these channels';
     } else if (anyPreparing && !anySaved) {
       text = 'Preparing schedule…';
     } else {
@@ -1780,7 +2027,7 @@ class _GuideScreenState extends State<GuideScreen> {
       children: [
         Expanded(
           child: Semantics(
-            liveRegion: pageFailure != null || hasEpgFailure,
+            liveRegion: pageFailure != null || hasEpgFailure || providerBlocked,
             child: Text(
               text,
               key: const ValueKey('guide-status'),
@@ -1790,7 +2037,7 @@ class _GuideScreenState extends State<GuideScreen> {
             ),
           ),
         ),
-        if (pageFailure != null || hasEpgFailure) ...[
+        if (pageFailure != null || hasEpgFailure || providerBlocked) ...[
           const SizedBox(width: 12),
           _GuideButton(
             key: const ValueKey('guide-retry'),
@@ -1823,35 +2070,14 @@ class _GuideScreenState extends State<GuideScreen> {
 
   Widget _buildMatrix(BuildContext context, double channelWidth) {
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
-        borderRadius: BorderRadius.circular(8),
-      ),
+      decoration: const BoxDecoration(),
       child: Column(
         children: [
           SizedBox(
             height: _rulerExtent,
             child: Row(
               children: [
-                SizedBox(
-                  width: channelWidth,
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 14),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'CHANNEL',
-                        style: TextStyle(
-                          color: _quietText,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const VerticalDivider(width: 1, color: _line),
+                SizedBox(width: channelWidth + 1),
                 Expanded(
                   child: SingleChildScrollView(
                     key: const ValueKey('guide-time-ruler-scroll'),
@@ -1872,7 +2098,6 @@ class _GuideScreenState extends State<GuideScreen> {
               ],
             ),
           ),
-          const Divider(height: 1, color: _line),
           Expanded(
             child: Listener(
               onPointerSignal: (signal) {
@@ -1926,6 +2151,7 @@ class _GuideScreenState extends State<GuideScreen> {
                     channel: channel,
                     window: window,
                     row: row,
+                    artworkLoader: widget.artworkLoader,
                     channelWidth: channelWidth,
                     timelineWidth: _timelineWidth,
                     timelineOffset: _timeline.hasClients ? _timeline.offset : 0,
@@ -2184,6 +2410,7 @@ class _GuideRow extends StatelessWidget {
     required this.channel,
     required this.window,
     required this.row,
+    required this.artworkLoader,
     required this.channelWidth,
     required this.timelineWidth,
     required this.timelineOffset,
@@ -2219,6 +2446,7 @@ class _GuideRow extends StatelessWidget {
   final BrowseCatalogItem channel;
   final EpgChannelWindow? window;
   final int row;
+  final ArtworkProvider? artworkLoader;
   final double channelWidth;
   final double timelineWidth;
   final double timelineOffset;
@@ -2258,21 +2486,21 @@ class _GuideRow extends StatelessWidget {
       null ||
       EpgAvailability.unknown ||
       EpgAvailability.refreshing => 'Preparing schedule…',
-      EpgAvailability.temporarilyUnavailable => 'Schedule unavailable',
+      EpgAvailability.temporarilyUnavailable ||
+      EpgAvailability.providerBlocked => 'Schedule unavailable',
       EpgAvailability.available ||
       EpgAvailability.empty ||
       EpgAvailability.unsupported => 'No schedule available',
     };
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: _line)),
-      ),
+      decoration: const BoxDecoration(),
       child: Row(
         children: [
           SizedBox(
             width: channelWidth,
             child: _GuideChannelCell(
               channel: channel,
+              artworkLoader: artworkLoader,
               focusNode:
                   initialProgramStartUtcMs == null ||
                       initialProgramEndUtcMs == null
@@ -2288,7 +2516,7 @@ class _GuideRow extends StatelessWidget {
               onDown: onDownFromChannel,
             ),
           ),
-          const VerticalDivider(width: 1, color: _line),
+          const SizedBox(width: 1),
           Expanded(
             child: ClipRect(
               child: Listener(
@@ -2337,7 +2565,7 @@ class _GuideRow extends StatelessWidget {
                               top: 0,
                               bottom: 0,
                               child: IgnorePointer(
-                                child: Container(width: 1, color: _quietText),
+                                child: Container(width: 2, color: _amber),
                               ),
                             ),
                         ],
@@ -2426,6 +2654,7 @@ class _GuideRow extends StatelessWidget {
     );
     final current =
         !program.startUtc.isAfter(nowUtc) && program.endUtc.isAfter(nowUtc);
+    final span = program.endUtc.difference(program.startUtc).inSeconds;
     final focused =
         focusedProgramStartUtcMs == program.startUtc.millisecondsSinceEpoch &&
         focusedProgramEndUtcMs == program.endUtc.millisecondsSinceEpoch;
@@ -2441,6 +2670,10 @@ class _GuideRow extends StatelessWidget {
         title: program.title,
         timeLabel: time,
         current: current,
+        past: !program.endUtc.isAfter(nowUtc),
+        progress: current && span > 0
+            ? nowUtc.difference(program.startUtc).inSeconds / span
+            : null,
         focused: focused,
         onActivate: () => onVisualProgramActivate(program, index),
       ),
@@ -2505,6 +2738,7 @@ class _GuideRow extends StatelessWidget {
 class _GuideChannelCell extends StatefulWidget {
   const _GuideChannelCell({
     required this.channel,
+    required this.artworkLoader,
     required this.focusNode,
     required this.onMounted,
     required this.onUnmounted,
@@ -2517,6 +2751,7 @@ class _GuideChannelCell extends StatefulWidget {
   });
 
   final BrowseCatalogItem channel;
+  final ArtworkProvider? artworkLoader;
   final FocusNode? focusNode;
   final ValueChanged<FocusNode> onMounted;
   final ValueChanged<FocusNode> onUnmounted;
@@ -2578,10 +2813,21 @@ class _GuideChannelCellState extends State<_GuideChannelCell> {
     onUp: widget.onUp,
     onDown: widget.onDown,
     child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
-          const Icon(Icons.live_tv_outlined, color: _quietText, size: 19),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SourceArtwork(
+              locator: widget.channel.artworkLocator,
+              kind: SourceMediaKind.live,
+              loader: widget.artworkLoader,
+              focused: _focused,
+              loadWhenVisible: true,
+              width: 56,
+              height: 32,
+            ),
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -2590,8 +2836,9 @@ class _GuideChannelCellState extends State<_GuideChannelCell> {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: _warmWhite,
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: FontWeight.w600,
+                height: 1.25,
               ),
             ),
           ),
@@ -2625,6 +2872,8 @@ class _GuideProgramVisual extends StatelessWidget {
     required this.title,
     required this.timeLabel,
     required this.current,
+    required this.past,
+    required this.progress,
     required this.focused,
     required this.onActivate,
   });
@@ -2632,6 +2881,10 @@ class _GuideProgramVisual extends StatelessWidget {
   final String title;
   final String timeLabel;
   final bool current;
+  final bool past;
+
+  /// Elapsed share of an airing program, drawn as an amber underline.
+  final double? progress;
   final bool focused;
   final VoidCallback onActivate;
 
@@ -2640,40 +2893,64 @@ class _GuideProgramVisual extends StatelessWidget {
     behavior: HitTestBehavior.opaque,
     excludeFromSemantics: true,
     onTap: onActivate,
-    child: AnimatedContainer(
-      duration: const Duration(milliseconds: 160),
-      curve: Curves.easeOutCubic,
-      decoration: BoxDecoration(
-        color: current ? _raised : const Color(0xFF1D1E1D),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: focused ? _amber : Colors.transparent,
-          width: focused ? 2 : 1,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: focused
+              ? _focusFill
+              : current
+              ? const Color(0xFF1C1C22)
+              : past
+              ? const Color(0xFF111115)
+              : const Color(0xFF16161B),
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: focused ? Cinema.focusGlow : const [],
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Stack(
           children: [
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: _warmWhite,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: past && !focused ? Cinema.quiet : _warmWhite,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    timeLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.clip,
+                    style: const TextStyle(color: _quietText, fontSize: 11.5),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 2),
-            Text(
-              timeLabel,
-              maxLines: 1,
-              overflow: TextOverflow.clip,
-              style: const TextStyle(color: _quietText, fontSize: 11),
-            ),
+            if (progress != null)
+              Positioned(
+                left: 0,
+                bottom: 0,
+                right: 0,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: progress!.clamp(0.0, 1.0),
+                    child: Container(height: 3, color: _amber),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -2831,20 +3108,22 @@ class _FocusableCell extends StatelessWidget {
           focusNode.requestFocus();
           onActivate();
         },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOutCubic,
-          decoration: BoxDecoration(
-            color: focused && !preserveFillOnFocus
-                ? _raised
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: focused && showFocusBorder ? _amber : Colors.transparent,
-              width: focused && showFocusBorder ? 2 : 1,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+            decoration: BoxDecoration(
+              color: focused && !preserveFillOnFocus
+                  ? _focusFill
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: focused && showFocusBorder
+                  ? Cinema.focusGlow
+                  : const [],
             ),
+            child: child,
           ),
-          child: child,
         ),
       ),
     ),
@@ -2889,7 +3168,12 @@ class _TimeRuler extends StatelessWidget {
           : time;
     }
 
+    final nowX =
+        nowUtc.difference(startUtc).inSeconds /
+        Duration.secondsPerHour *
+        hourWidth;
     return Stack(
+      clipBehavior: Clip.none,
       children: [
         for (var index = 0; index <= _guideHours; index++)
           Positioned(
@@ -2898,8 +3182,8 @@ class _TimeRuler extends StatelessWidget {
             bottom: 0,
             child: Row(
               children: [
-                Container(width: 1, color: _line),
-                const SizedBox(width: 10),
+                Container(width: 1, height: 12, color: _line),
+                const SizedBox(width: 8),
                 SizedBox(
                   width: math.max(0, hourWidth - 12),
                   child: Text(
@@ -2909,12 +3193,47 @@ class _TimeRuler extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: _quietText,
-                      fontSize: 12,
+                      fontSize: 11.5,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
               ],
+            ),
+          ),
+        if (nowX >= 0 && nowX <= _guideHours * hourWidth)
+          Positioned(
+            left: nowX - 30,
+            width: 60,
+            top: 0,
+            bottom: 0,
+            child: IgnorePointer(
+              child: Column(
+                children: [
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7),
+                    height: 19,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: _amber,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      MaterialLocalizations.of(context).formatTimeOfDay(
+                        TimeOfDay.fromDateTime(localize(nowUtc).wallTime),
+                      ),
+                      maxLines: 1,
+                      style: const TextStyle(
+                        color: Cinema.amberInk,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Container(width: 2, height: 6, color: _amber),
+                ],
+              ),
             ),
           ),
       ],
@@ -2963,22 +3282,24 @@ class _GuideDropdown<T> extends StatelessWidget {
         dropdownColor: _raised,
         iconEnabledColor: _quietText,
         style: const TextStyle(
-          color: _warmWhite,
-          fontSize: 14,
+          color: Cinema.quiet,
+          fontSize: 13,
           fontWeight: FontWeight.w600,
         ),
         decoration: InputDecoration(
-          labelText: label,
-          labelStyle: const TextStyle(color: _quietText, fontSize: 12),
           isDense: true,
           filled: true,
-          fillColor: _surface,
+          fillColor: Cinema.glass,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 11,
+          ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(6),
-            borderSide: const BorderSide(color: _line),
+            borderRadius: BorderRadius.circular(20),
+            borderSide: BorderSide.none,
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(20),
             borderSide: const BorderSide(color: _amber, width: 2),
           ),
         ),
@@ -3009,6 +3330,7 @@ class _GuideButton extends StatefulWidget {
     required this.onPressed,
     required this.onDown,
     this.focusNode,
+    this.toggled,
   });
 
   final String label;
@@ -3016,6 +3338,9 @@ class _GuideButton extends StatefulWidget {
   final VoidCallback onPressed;
   final VoidCallback onDown;
   final FocusNode? focusNode;
+
+  /// Set for an on/off filter; on shows amber.
+  final bool? toggled;
 
   @override
   State<_GuideButton> createState() => _GuideButtonState();
@@ -3043,31 +3368,41 @@ class _GuideButtonState extends State<_GuideButton> {
     },
     child: Semantics(
       button: true,
+      toggled: widget.toggled,
       label: widget.label,
       child: GestureDetector(
         onTap: widget.onPressed,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
-          height: 46,
-          padding: const EdgeInsets.symmetric(horizontal: 13),
+          height: 40,
+          padding: const EdgeInsets.fromLTRB(12, 0, 16, 0),
           decoration: BoxDecoration(
-            color: _surface,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: _focused ? _amber : _line,
-              width: _focused ? 2 : 1,
-            ),
+            color: _focused ? _amber : Cinema.glass,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: _focused ? [Cinema.focusGlow.last] : const [],
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(widget.icon, size: 17, color: _quietText),
-              const SizedBox(width: 8),
+              Icon(
+                widget.icon,
+                size: 17,
+                color: _focused
+                    ? Cinema.amberInk
+                    : widget.toggled ?? false
+                    ? _amber
+                    : Cinema.quiet,
+              ),
+              const SizedBox(width: 7),
               Text(
                 widget.label,
-                style: const TextStyle(
-                  color: _warmWhite,
-                  fontSize: 14,
+                style: TextStyle(
+                  color: _focused
+                      ? Cinema.amberInk
+                      : widget.toggled ?? false
+                      ? _amber
+                      : Cinema.quiet,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -3118,8 +3453,9 @@ class _GuideMessage extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: _warmWhite,
-                  fontSize: 25,
-                  fontWeight: FontWeight.w700,
+                  fontFamily: Cinema.display,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
               const SizedBox(height: 10),
@@ -3217,25 +3553,23 @@ class _GuideMessageActionState extends State<_GuideMessageAction> {
     },
     child: GestureDetector(
       onTap: widget.onPressed,
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
         constraints: const BoxConstraints(minHeight: 44),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         decoration: BoxDecoration(
-          color: widget.primary ? _amber : _surface,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-            color: _focused
-                ? _amber
-                : widget.primary
-                ? _amber
-                : _line,
-            width: _focused ? 2 : 1,
-          ),
+          color: widget.primary || _focused ? _amber : Cinema.glass,
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: !_focused
+              ? const []
+              : widget.primary
+              ? Cinema.focusGlow
+              : [Cinema.focusGlow.last],
         ),
         child: Text(
           widget.label,
           style: TextStyle(
-            color: widget.primary ? const Color(0xFF17120A) : _warmWhite,
+            color: widget.primary || _focused ? Cinema.amberInk : _warmWhite,
             fontSize: 14,
             fontWeight: FontWeight.w700,
           ),
@@ -3250,11 +3584,7 @@ class _GuideSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      color: _surface,
-      borderRadius: BorderRadius.circular(8),
-      border: Border.all(color: _line),
-    ),
+    decoration: const BoxDecoration(),
     child: ListView.builder(
       itemExtent: _guideRowExtent,
       itemCount: 8,
@@ -3271,9 +3601,24 @@ class _GuideRowSkeleton extends StatelessWidget {
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
     child: Row(
       children: [
-        Container(width: 150, height: 16, color: _raised),
+        Container(
+          width: 150,
+          height: 16,
+          decoration: BoxDecoration(
+            color: _raised,
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
         const SizedBox(width: 28),
-        Expanded(child: Container(height: 38, color: _raised)),
+        Expanded(
+          child: Container(
+            height: 38,
+            decoration: BoxDecoration(
+              color: _raised,
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        ),
       ],
     ),
   );
@@ -3302,6 +3647,80 @@ class _GuideEmpty extends StatelessWidget {
       onLeft: onLeft,
     ),
   );
+}
+
+/// "With schedule" found nothing in this category.
+class _GuideScheduleEmpty extends StatelessWidget {
+  const _GuideScheduleEmpty({
+    required this.categoryName,
+    required this.focusNode,
+    required this.onFocused,
+    required this.onLeft,
+    required this.onShowAll,
+    required this.onChangeCategory,
+  });
+
+  final String categoryName;
+  final FocusNode focusNode;
+  final ValueChanged<FocusNode> onFocused;
+  final VoidCallback onLeft;
+  final VoidCallback onShowAll;
+  final VoidCallback onChangeCategory;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'No schedules in $categoryName',
+          key: const ValueKey('guide-schedule-empty'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: _warmWhite,
+            fontFamily: Cinema.display,
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          "These channels don't publish a guide.",
+          style: TextStyle(color: Cinema.quiet, fontSize: 14),
+        ),
+        const SizedBox(height: 18),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          alignment: WrapAlignment.center,
+          children: [
+            _GuideMessageAction(
+              focusNode: focusNode,
+              label: 'Show all channels',
+              primary: true,
+              onPressed: onShowAll,
+              onFocused: onFocused,
+              onLeft: onLeft,
+            ),
+            _GuideMessageAction(
+              label: 'Change category',
+              onPressed: onChangeCategory,
+              onFocused: onFocused,
+              onLeft: onLeft,
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+/// "48 min", "1 h 18 m": the coarse wording the info panel uses.
+String _formatGuideDuration(Duration value) {
+  final minutes = (value.inSeconds / 60).ceil();
+  if (minutes < 60) return '$minutes min';
+  final rest = minutes % 60;
+  return rest == 0 ? '${minutes ~/ 60} h' : '${minutes ~/ 60} h $rest m';
 }
 
 String _formatGuideTime(

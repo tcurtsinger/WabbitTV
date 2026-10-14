@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:wabbit_tv/main.dart';
 import 'package:wabbit_tv/src/app_shell.dart';
+import 'package:wabbit_tv/src/cinema.dart';
 import 'package:wabbit_tv/src/features/browse/catalog_scope_controller.dart';
 import 'package:wabbit_tv/src/features/home/home_screen.dart';
 import 'package:wabbit_tv/src/home_fixture_mode.dart';
@@ -187,18 +188,17 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const ValueKey('rail-selected-location-marker')),
-        findsOneWidget,
+      // Collapsed, each destination is a 44 px circle; the selected one
+      // (Home) wears amber.
+      final homePill = find.byKey(
+        const ValueKey('shell-destination-pill-home'),
       );
-      final collapsedMarkerRect = tester.getRect(
-        find.byKey(const ValueKey('rail-selected-location-marker')),
-      );
-      final collapsedIconRect = tester.getRect(
-        find.byKey(const ValueKey('shell-destination-icon-home')),
-      );
-      expect(collapsedMarkerRect.width, 2);
-      expect(collapsedMarkerRect.right, lessThan(collapsedIconRect.left));
+      Color? iconColor(String name) => tester
+          .widget<Icon>(find.byKey(ValueKey('shell-destination-icon-$name')))
+          .color;
+      expect(tester.getRect(homePill), const Rect.fromLTWH(14, 91, 44, 44));
+      expect(iconColor('home'), Cinema.amber);
+      expect(iconColor('live'), Cinema.faint);
       final collapsedHome = tester.widget<FocusableActionDetector>(
         find.byKey(const ValueKey('shell-destination-home')),
       );
@@ -210,20 +210,18 @@ void main() {
       await mouse.moveTo(const Offset(20, 20));
       await tester.pump(const Duration(milliseconds: 200));
       expect(find.text('Wabbit TV'), findsOneWidget);
-      final expandedMarkerRect = tester.getRect(
-        find.byKey(const ValueKey('rail-selected-location-marker')),
-      );
-      final expandedIconRect = tester.getRect(
-        find.byKey(const ValueKey('shell-destination-icon-home')),
-      );
-      expect(expandedMarkerRect.width, 2);
-      expect(expandedMarkerRect.right, lessThan(expandedIconRect.left));
+      // Open, it becomes a full-width pill with the label.
+      expect(tester.getSize(homePill).width, 196);
+      expect(iconColor('home'), Cinema.amber);
       await mouse.moveTo(const Offset(1000, 700));
       await tester.pump(const Duration(milliseconds: 200));
       await mouse.removePointer();
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
+      // Focus turns the pill solid amber, so its icon goes dark to stay
+      // readable.
+      expect(iconColor('home'), Cinema.amberInk);
 
       final homeSemantics = tester
           .getSemantics(find.byKey(const ValueKey('shell-destination-home')))
@@ -305,10 +303,7 @@ void main() {
     expect(find.text('Live'), findsAtLeastNWidgets(1));
     expect(find.text('Movies'), findsAtLeastNWidgets(1));
     expect(find.text('Series'), findsAtLeastNWidgets(1));
-    expect(
-      find.text('Favorite something or create a group to make Home personal.'),
-      findsOneWidget,
-    );
+    expect(find.text('Favorites and groups show up here.'), findsOneWidget);
     expect(find.text('All sources · local fixture'), findsOneWidget);
     expect(find.textContaining('This local source fixture'), findsOneWidget);
   });
@@ -394,12 +389,7 @@ void main() {
       expect(controller.initializations, 1);
       expect(find.text('Start with what you want to watch'), findsOneWidget);
       expect(find.text('All sources'), findsOneWidget);
-      expect(
-        find.text(
-          'Your library has no Favorites, groups, or watch history yet.',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('Nothing saved or watched yet.'), findsOneWidget);
       expect(find.textContaining('fixture'), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
       controller.dispose();

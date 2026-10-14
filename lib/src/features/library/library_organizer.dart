@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../focus_edge.dart';
+import '../../cinema.dart';
 import '../artwork/artwork_loader.dart';
 import '../artwork/source_artwork.dart';
 import '../sources/source_models.dart';
@@ -17,12 +17,12 @@ import 'library_organization_service.dart';
 // FIRST VIEWPORT: ledger remains dominant; a 320 px right drawer owns changes.
 // FORM: A — Direct Organizer Drawer; phase4-library-organization-a.
 
-const _graphite = Color(0xFF111212);
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
+/// The side panel's ground: a step above the ink so it reads as a sheet.
+const _panel = Color(0xFF141419);
+const _raised = Color(0xFF1E1E23);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.faint;
+const _amber = Cinema.amber;
 
 class LibraryOrganizerRequest {
   const LibraryOrganizerRequest({
@@ -142,7 +142,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
         setState(() {
           _loading = false;
           _failed = true;
-          _recovery = 'This item is no longer available in the local library.';
+          _recovery = "This item isn't available.";
         });
         _focusAfterBuild(_retryFocus);
         return;
@@ -168,7 +168,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
       setState(() {
         _loading = false;
         _failed = true;
-        _recovery = 'Could not load local organization. Try again.';
+        _recovery = "Couldn't load groups.";
       });
       _focusAfterBuild(_retryFocus);
     }
@@ -209,10 +209,10 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
         _saving = false;
         _recovery = switch (result.outcome) {
           PersonalLibraryMutationOutcome.missingItem =>
-            'This item is no longer available in the local library.',
+            "This item isn't available.",
           PersonalLibraryMutationOutcome.missingGroup =>
-            'A selected group is no longer available. Reload and try again.',
-          _ => 'Organization was not changed. Try again.',
+            'A group was removed. Try again.',
+          _ => 'Not saved. Try again.',
         };
       });
       widget.onBusyChanged(false);
@@ -221,7 +221,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _recovery = 'Organization was not changed. Try again.';
+        _recovery = 'Not saved. Try again.';
       });
       widget.onBusyChanged(false);
       _focusAfterBuild(_saveFocus);
@@ -264,20 +264,16 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
     child: FocusTraversalGroup(
       policy: WidgetOrderTraversalPolicy(),
       child: Material(
-        color: _graphite,
+        color: _panel,
         child: DecoratedBox(
-          decoration: const BoxDecoration(
-            border: Border(left: BorderSide(color: _line)),
-          ),
+          decoration: const BoxDecoration(),
           child: SafeArea(
             left: false,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _header(),
-                const Divider(height: 1, color: _line),
                 _itemSummary(),
-                const Divider(height: 1, color: _line),
                 Expanded(child: _body()),
               ],
             ),
@@ -296,16 +292,27 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
             'Organize item',
             style: TextStyle(
               color: _warmWhite,
+              fontFamily: Cinema.display,
               fontSize: 20,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ),
         IconButton(
           tooltip: _saving ? 'Wait for the local save' : 'Close organizer',
           onPressed: _saving ? null : _close,
-          style: ButtonStyle(side: focusEdge()),
-          icon: const Icon(Icons.close, color: _warmWhite),
+          style: ButtonStyle(
+            backgroundColor: WidgetStateProperty.resolveWith(
+              (states) =>
+                  states.contains(WidgetState.focused) ? Cinema.amber : null,
+            ),
+            iconColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.focused)
+                  ? Cinema.amberInk
+                  : _warmWhite,
+            ),
+          ),
+          icon: const Icon(Icons.close_rounded),
         ),
       ],
     ),
@@ -358,7 +365,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
     if (_loading) return const _OrganizerLoading();
     if (_failed || _loaded == null) {
       return _OrganizerFailure(
-        message: _recovery ?? 'Could not load local organization.',
+        message: _recovery ?? "Couldn't load groups.",
         retryFocus: _retryFocus,
         onRetry: _load,
       );
@@ -379,7 +386,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
               ? () => _cancelFocus.requestFocus()
               : () => _focusGroup(0),
         ),
-        const Divider(height: 1, color: _line),
+        const Divider(height: 1, color: Cinema.glass),
         const Padding(
           padding: EdgeInsets.fromLTRB(20, 18, 20, 8),
           child: Text(
@@ -403,7 +410,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
               ? const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                   child: Text(
-                    'Create a custom group in My Library to add this item.',
+                    'Make a group in My Library first.',
                     style: TextStyle(color: _quietText, fontSize: 14),
                   ),
                 )
@@ -539,6 +546,7 @@ class _OrganizerCheckRowState extends State<_OrganizerCheckRow> {
       enabled: widget.enabled,
       label: widget.label,
       child: InkWell(
+        borderRadius: BorderRadius.circular(14),
         onTap: widget.enabled
             ? () {
                 widget.focusNode.requestFocus();
@@ -548,14 +556,12 @@ class _OrganizerCheckRowState extends State<_OrganizerCheckRow> {
         child: Container(
           height: 48,
           margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: _focused ? _raised : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: _focused ? _amber : Colors.transparent,
-              width: 2,
-            ),
+            // Opaque when focused so the ring stays a ring.
+            color: _focused ? _raised : const Color(0x00000000),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: _focused ? Cinema.focusGlow : const [],
           ),
           child: Row(
             children: [
@@ -642,6 +648,7 @@ class _OrganizerActionState extends State<_OrganizerAction> {
       enabled: widget.enabled,
       label: widget.label,
       child: InkWell(
+        borderRadius: BorderRadius.circular(21),
         onTap: widget.enabled
             ? () {
                 widget.focusNode.requestFocus();
@@ -652,22 +659,22 @@ class _OrganizerActionState extends State<_OrganizerAction> {
           height: 42,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: widget.primary && widget.enabled ? _amber : _raised,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: _focused
-                  ? _warmWhite
-                  : widget.primary && widget.enabled
-                  ? _amber
-                  : _line,
-              width: 2,
-            ),
+            // A pill: amber when primary or focused; a primary one gains a
+            // warm edge on focus.
+            color: (widget.primary || _focused) && widget.enabled
+                ? _amber
+                : Cinema.glass,
+            borderRadius: BorderRadius.circular(21),
+            border: widget.primary && _focused
+                ? Border.all(color: _warmWhite, width: 2)
+                : null,
+            boxShadow: _focused ? [Cinema.focusGlow.last] : const [],
           ),
           child: Text(
             widget.label,
             style: TextStyle(
-              color: widget.primary && widget.enabled
-                  ? _graphite
+              color: (widget.primary || _focused) && widget.enabled
+                  ? Cinema.amberInk
                   : widget.enabled
                   ? _warmWhite
                   : _quietText,
@@ -712,7 +719,7 @@ class _OrganizerSkeleton extends StatelessWidget {
       height: 40,
       decoration: BoxDecoration(
         color: _raised,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(12),
       ),
     ),
   );
@@ -739,8 +746,9 @@ class _OrganizerFailure extends StatelessWidget {
           'Organization unavailable',
           style: TextStyle(
             color: _warmWhite,
+            fontFamily: Cinema.display,
             fontSize: 18,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w800,
           ),
         ),
         const SizedBox(height: 8),

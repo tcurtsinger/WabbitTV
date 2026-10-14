@@ -4,12 +4,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wabbit_tv/src/features/browse/basic_browse_screen.dart';
+import 'package:wabbit_tv/src/features/browse/minimal_continuations.dart';
 import 'package:wabbit_tv/src/features/browse/playback_handoff.dart';
 import 'package:wabbit_tv/src/features/browse/series_info_loader.dart';
 import 'package:wabbit_tv/src/features/sources/source_catalog_database.dart';
 import 'package:wabbit_tv/src/features/sources/source_models.dart';
 
 void main() {
+  test('episode rows drop the repeated series title', () {
+    expect(
+      episodeLabel('Show (2020) - S01E01 - Pilot', 'Show (2020)'),
+      'S01E01 - Pilot',
+    );
+    expect(episodeLabel('S01E01 - Pilot', 'Show'), 'S01E01 - Pilot');
+    expect(episodeLabel('Showtime Tonight', 'Show'), 'Showtime Tonight');
+    expect(episodeLabel('Show', 'Show'), 'Show');
+  });
+
   testWidgets(
     'live, movie, series, retry, and Back use the continuation seam',
     (tester) async {
@@ -38,12 +49,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('browse-item-movies-row')));
       await tester.pump();
       expect(find.byKey(const ValueKey('movie-play')), findsOneWidget);
-      expect(
-        tester.getSize(
-          find.byKey(const ValueKey('movie-continuation-artwork')),
-        ),
-        const Size(120, 84),
+      final poster = tester.getSize(
+        find.byKey(const ValueKey('movie-continuation-artwork')),
       );
+      expect(poster.height / poster.width, closeTo(1.5, 0.01));
       expect(loader.calls, 0);
       await tester.tap(find.byKey(const ValueKey('movie-play')));
       expect(handoffs.last, isA<MoviePlaybackHandoff>());
@@ -62,12 +71,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('browse-item-series-row')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('series-retry')), findsOneWidget);
-      expect(
-        tester.getSize(
-          find.byKey(const ValueKey('series-continuation-artwork')),
-        ),
-        const Size(120, 84),
+      final seriesPoster = tester.getSize(
+        find.byKey(const ValueKey('series-continuation-artwork')),
       );
+      expect(seriesPoster.height / seriesPoster.width, closeTo(1.5, 0.01));
       final callsBeforeRetry = loader.calls;
       loader.failure = null;
       await tester.tap(find.byKey(const ValueKey('series-retry')));
@@ -144,7 +151,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('browse-item-movies-row')));
     await tester.pumpAndSettle();
     final play = tester.getRect(find.byKey(const ValueKey('movie-play')));
-    expect(play.height, 42);
+    expect(play.height, 44);
     expect(play.width, lessThan(200));
     expect(play.bottom, lessThanOrEqualTo(713));
     expect(
@@ -284,6 +291,40 @@ void main() {
       );
     },
   );
+
+  testWidgets('focus moves from Back to the first season once episodes load', (
+    tester,
+  ) async {
+    final loader = _CompletingSeriesLoader();
+    await tester.pumpWidget(
+      _screen(kind: SourceMediaKind.series, loader: loader),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('browse-item-series-row')));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Loading episodes…'), findsOneWidget);
+
+    loader.completeWith(
+      const SeriesInfo(
+        seasons: [
+          SeriesSeason(
+            name: '1',
+            episodes: [
+              SeriesEpisode(
+                providerItemId: 'episode-1',
+                title: 'Episode one',
+                extension: 'mp4',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'series season 0');
+  });
 
   testWidgets('late series result is ignored after Back', (tester) async {
     final loader = _CompletingSeriesLoader();
@@ -492,6 +533,8 @@ class _CompletingSeriesLoader implements SeriesInfoLoader {
   }
 
   void complete() => _completer.complete(const SeriesInfo(seasons: []));
+
+  void completeWith(SeriesInfo info) => _completer.complete(info);
 }
 
 class _ManySeasonLoader implements SeriesInfoLoader {

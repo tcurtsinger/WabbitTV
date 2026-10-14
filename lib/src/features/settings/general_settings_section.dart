@@ -3,16 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../focus_edge.dart';
+import '../../cinema.dart';
 import '../sources/startup_models.dart';
 import 'startup_preferences_controller.dart';
 
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.faint;
+const _amber = Cinema.amber;
 
 /// App-level settings that remain separate from every source-specific ledger.
 class GeneralSettingsSection extends StatefulWidget {
@@ -129,90 +126,76 @@ class GeneralSettingsSectionState extends State<GeneralSettingsSection> {
         'General settings. Start Wabbit on ${_label(controller.displayedTarget)}.',
         ?status,
       ].join(' '),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: _surface,
-          border: Border.all(color: _line),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'General',
+            style: TextStyle(
+              color: _quietText,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const Text(
-                'General',
-                style: TextStyle(
-                  color: _warmWhite,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Start Wabbit on',
-                style: TextStyle(color: _quietText, fontSize: 15),
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  for (final target in StartupTarget.values)
-                    _StartupChoice(
-                      key: ValueKey('startup-choice-${target.name}'),
-                      label: _label(target),
-                      selected: controller.displayedTarget == target,
-                      focusNode: _choices[target]!,
-                      onMoveLeft: () => _moveChoice(target, -1),
-                      onMoveRight: () => _moveChoice(target, 1),
-                      onMoveDown: widget.onMoveToSources,
-                      onMoveUp: widget.onMoveAbove,
-                      onPressed: busy
-                          ? null
-                          : () => unawaited(controller.setTarget(target)),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'If the previous screen or channel is unavailable, Wabbit opens Home.',
-                style: TextStyle(color: _quietText, fontSize: 14, height: 1.35),
-              ),
-              if (status != null) ...[
-                const SizedBox(height: 10),
-                Text(
-                  status,
-                  key: const ValueKey('startup-settings-status'),
+              const Padding(
+                padding: EdgeInsets.only(right: 6),
+                child: Text(
+                  'Start Wabbit on',
                   style: TextStyle(
-                    color: failed ? _warmWhite : _quietText,
-                    fontSize: 14,
-                    height: 1.35,
+                    color: _warmWhite,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-              ],
-              if (failed) ...[
-                const SizedBox(height: 10),
-                OutlinedButton(
-                  key: const ValueKey('startup-settings-retry'),
-                  focusNode: _retryFocus,
-                  onPressed: () => unawaited(controller.retry()),
-                  style:
-                      OutlinedButton.styleFrom(
-                        foregroundColor: _warmWhite,
-                        minimumSize: const Size(0, 44),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                      ).copyWith(
-                        side: focusEdge(rest: const BorderSide(color: _line)),
-                      ),
-                  child: const Text('Retry'),
+              ),
+              for (final target in StartupTarget.values)
+                _StartupChoice(
+                  key: ValueKey('startup-choice-${target.name}'),
+                  label: _label(target),
+                  selected: controller.displayedTarget == target,
+                  focusNode: _choices[target]!,
+                  onMoveLeft: () => _moveChoice(target, -1),
+                  onMoveRight: () => _moveChoice(target, 1),
+                  onMoveDown: widget.onMoveToSources,
+                  onMoveUp: widget.onMoveAbove,
+                  onPressed: busy
+                      ? null
+                      : () => unawaited(controller.setTarget(target)),
                 ),
-              ],
             ],
           ),
-        ),
+          // Saving is near-instant, so only a failure gets a visible line;
+          // a flash of "Saving…" shoved the page down and back up.
+          if (failed && status != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              status,
+              key: const ValueKey('startup-settings-status'),
+              style: TextStyle(
+                color: failed ? _warmWhite : _quietText,
+                fontSize: 13,
+                height: 1.35,
+              ),
+            ),
+          ],
+          if (failed) ...[
+            const SizedBox(height: 10),
+            OutlinedButton(
+              key: const ValueKey('startup-settings-retry'),
+              focusNode: _retryFocus,
+              onPressed: () => unawaited(controller.retry()),
+              style: Cinema.pillButton(),
+              child: const Text('Retry'),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -298,52 +281,57 @@ class _StartupChoice extends StatelessWidget {
             button: true,
             selected: selected,
             label: '$label startup choice',
-            child: Material(
-              color: selected ? _raised : Colors.transparent,
-              shape: RoundedRectangleBorder(
-                side: BorderSide(
-                  color: focused
-                      ? _amber
-                      : selected
-                      ? _quietText
-                      : _line,
-                  width: focused ? 2 : 1,
+            child: GestureDetector(
+              onTap: onPressed == null
+                  ? null
+                  : () {
+                      focusNode.requestFocus();
+                      onPressed!();
+                    },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                constraints: const BoxConstraints(minWidth: 96, minHeight: 40),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 9,
                 ),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: onPressed == null
-                    ? null
-                    : () {
-                        focusNode.requestFocus();
-                        onPressed!();
-                      },
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    minWidth: 148,
-                    minHeight: 48,
+                decoration: BoxDecoration(
+                  // Focus fills the pill solid amber; the glow ring would
+                  // show through the translucent rest fill.
+                  color: focused ? _amber : Cinema.glass,
+                  borderRadius: BorderRadius.circular(20),
+                  // Every pill carries the border so choosing one never
+                  // changes any pill's width.
+                  border: Border.all(
+                    color: selected && !focused
+                        ? _amber
+                        : const Color(0x00000000),
+                    width: 1.5,
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    child: Center(
-                      widthFactor: 1,
-                      child: Text(
-                        label,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: onPressed == null ? _quietText : _warmWhite,
-                          fontSize: 14,
-                          fontWeight: selected
-                              ? FontWeight.w700
-                              : FontWeight.w600,
-                        ),
+                  boxShadow: focused ? [Cinema.focusGlow.last] : const [],
+                ),
+                // No checkmark: it widened the chosen pill and shifted
+                // its neighbors whenever the choice moved.
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: focused
+                            ? Cinema.amberInk
+                            : onPressed == null
+                            ? _quietText
+                            : selected
+                            ? _amber
+                            : _warmWhite,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ),
             ),

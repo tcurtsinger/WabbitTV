@@ -601,15 +601,15 @@ void main() {
         'My Library',
       ]) {
         await _activateRailDestinationWithRemote(tester, destination);
-        final destinationMarker = destination == 'My Library'
-            ? 'My Library could not be loaded'
-            : destination;
-        await _pumpUntil(
-          tester,
-          () => find.text(destinationMarker).evaluate().isNotEmpty,
-        );
+        // Home has no page title, so it is recognized by its screen.
+        final destinationMarker = switch (destination) {
+          'Home' => find.byType(HomeScreen),
+          'My Library' => find.text("Can't load My Library"),
+          _ => find.text(destination),
+        };
+        await _pumpUntil(tester, () => destinationMarker.evaluate().isNotEmpty);
         expect(find.byType(PipOverlay), findsOneWidget);
-        expect(find.text(destinationMarker), findsAtLeastNWidgets(1));
+        expect(destinationMarker, findsAtLeastNWidgets(1));
       }
       expect(fixture.manager.sessions, hasLength(1));
       expect(fixture.transports.created, hasLength(1));
@@ -631,6 +631,22 @@ void main() {
     tester.widget<PlayerScreen>(find.byType(PlayerScreen)).onEnterPip!();
     await tester.pumpAndSettle();
 
+    // A card shows its organize button while a mouse is over it.
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(
+      location: tester.getCenter(
+        find
+            .descendant(
+              of: find.byKey(
+                const PageStorageKey('home-recently-watched-carousel'),
+              ),
+              matching: find.byType(AspectRatio),
+            )
+            .first,
+      ),
+    );
+    await tester.pump();
     await tester.tap(find.byIcon(Icons.bookmark_add_outlined).first);
     await tester.pump();
     expect(find.byType(PipStopConfirmation), findsOneWidget);
@@ -643,6 +659,9 @@ void main() {
     expect(find.byType(PipStopConfirmation), findsNothing);
     expect(find.byType(PipOverlay), findsOneWidget);
 
+    // The confirmation covered the card; moving the mouse hovers it again.
+    await mouse.moveBy(const Offset(1, 0));
+    await tester.pump();
     await tester.tap(find.byIcon(Icons.bookmark_add_outlined).first);
     await tester.pump();
     tester
@@ -801,10 +820,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('multiview-second-tile')));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Audio stayed with the current channel. Try again.'),
-      findsOneWidget,
-    );
+    expect(find.text("Couldn't switch audio."), findsOneWidget);
     expect(manager.sessions.first.isAudible, isTrue);
     expect(manager.sessions.last.isAudible, isFalse);
     expect(
@@ -873,11 +889,14 @@ void main() {
       FocusManager.instance.primaryFocus?.debugLabel,
       'multiview second stream',
     );
-    expect(find.text('MULTIVIEW · SELECTED'), findsOneWidget);
     expect(
-      find.text('No channel is audible. Select a channel to restore audio.'),
-      findsNothing,
+      find.descendant(
+        of: find.byKey(const ValueKey('multiview-shared-deck')),
+        matching: find.text('Channel Two'),
+      ),
+      findsOneWidget,
     );
+    expect(find.text('Muted. Pick a channel to hear it.'), findsNothing);
   });
 
   testWidgets(
@@ -931,15 +950,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(manager.sessions.where((session) => session.isAudible), isEmpty);
-      expect(find.text('MULTIVIEW · AUDIO OFF'), findsOneWidget);
-      expect(
-        find.text('No channel is audible. Select a channel to restore audio.'),
-        findsOneWidget,
-      );
-      expect(
-        find.text('Audio stayed with the current channel. Try again.'),
-        findsNothing,
-      );
+      expect(find.text('Muted. Pick a channel to hear it.'), findsOneWidget);
+      expect(find.text("Couldn't switch audio."), findsNothing);
       expect(
         FocusManager.instance.primaryFocus?.debugLabel,
         'multiview original stream',
@@ -995,21 +1007,14 @@ void main() {
     await _pumpUntil(
       tester,
       () => find
-          .text(
-            'This source currently allows 1 stream. Cancel adding a second channel, then open Settings to change the local limit.',
-          )
+          .text('This source allows 1 stream at once')
           .evaluate()
           .isNotEmpty,
     );
 
     expect(find.byType(MultiviewScreen), findsNothing);
     expect(find.byType(PipOverlay), findsOneWidget);
-    expect(
-      find.text(
-        'This source currently allows 1 stream. Cancel adding a second channel, then open Settings to change the local limit.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('This source allows 1 stream at once'), findsOneWidget);
     expect(fixture.manager.sessions, hasLength(1));
     expect(fixture.transports.created, hasLength(1));
 
@@ -1039,22 +1044,12 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('browse-row-live-two')));
     await _pumpUntil(
       tester,
-      () => find
-          .text(
-            'The second channel could not start. The current channel is still playing.',
-          )
-          .evaluate()
-          .isNotEmpty,
+      () => find.text("Second channel couldn't start").evaluate().isNotEmpty,
     );
 
     expect(find.byType(MultiviewScreen), findsNothing);
     expect(find.byType(PipOverlay), findsOneWidget);
-    expect(
-      find.text(
-        'The second channel could not start. The current channel is still playing.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text("Second channel couldn't start"), findsOneWidget);
     expect(fixture.manager.sessions, hasLength(1));
     expect(fixture.manager.sessions.single.title, 'Channel One');
     expect(fixture.manager.sessions.single.isAudible, isTrue);

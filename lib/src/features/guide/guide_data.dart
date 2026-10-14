@@ -61,7 +61,14 @@ abstract interface class GuideRestorationDataPort {
   });
 }
 
-class DatabaseGuideDataPort implements GuideDataPort, GuideRestorationDataPort {
+/// Optional "With schedule" seam: whether a source has saved any guide
+/// identities. Without it, the Guide offers no schedule filter.
+abstract interface class GuideScheduleDataPort {
+  Future<bool> hasScheduledChannels(String sourceId);
+}
+
+class DatabaseGuideDataPort
+    implements GuideDataPort, GuideRestorationDataPort, GuideScheduleDataPort {
   const DatabaseGuideDataPort({
     required this.database,
     required this.epgService,
@@ -85,6 +92,10 @@ class DatabaseGuideDataPort implements GuideDataPort, GuideRestorationDataPort {
       ),
     );
   }
+
+  @override
+  Future<bool> hasScheduledChannels(String sourceId) =>
+      database.hasScheduledChannels(sourceId);
 
   @override
   Future<List<BrowseCategorySummary>> loadCategories(String sourceId) =>

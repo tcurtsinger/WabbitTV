@@ -154,7 +154,7 @@ void main() {
     await tester.tap(find.text('Delete'));
     await tester.pump();
     expect(find.text('Delete Family Room?'), findsOneWidget);
-    expect(find.textContaining('items remain in Wabbit'), findsOneWidget);
+    expect(find.textContaining('items stay in Wabbit'), findsOneWidget);
     expect(
       FocusManager.instance.primaryFocus?.debugLabel,
       isNot('group manager secondary'),
@@ -192,7 +192,7 @@ void main() {
     await tester.pumpWidget(_host(port, _manageRequest()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Could not load this local group.'), findsOneWidget);
+    expect(find.text("Couldn't load this group."), findsOneWidget);
     expect(find.text('Retry items'), findsOneWidget);
     expect(find.textContaining('group is empty'), findsNothing);
 
@@ -393,10 +393,7 @@ void main() {
       // 1 initial, 2 Load more, 3 reload reset, 4 failed refill, 5 the one
       // bounded fetch for the selected item. Never a retry loop.
       expect(port.loadGroupItemsCalls, 5);
-      expect(
-        find.text('Could not load more items. Try again.'),
-        findsOneWidget,
-      );
+      expect(find.text("Couldn't load more."), findsOneWidget);
     },
   );
 
@@ -493,7 +490,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(port.groupMoveCalls, 1);
-    expect(find.textContaining('saved locally'), findsOneWidget);
+    expect(find.textContaining("view didn't refresh"), findsOneWidget);
     expect(find.text('Retry view'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Retry view'));
@@ -518,7 +515,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Group moved down.'), findsNothing);
-    expect(find.text('Already in that position or state.'), findsOneWidget);
+    expect(find.text('Already there.'), findsOneWidget);
   });
 }
 

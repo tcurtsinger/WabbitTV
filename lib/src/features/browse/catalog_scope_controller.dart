@@ -141,7 +141,7 @@ class CatalogScopeController extends ChangeNotifier {
           previousSourceId != null &&
           _scope.sourceId == null &&
           !enabled.any((source) => source.id == previousSourceId)) {
-        _announcement = 'Source unavailable. Showing All sources.';
+        _announcement = 'Source unavailable · showing all sources';
       }
       _revision++;
       notifyListeners();
@@ -153,8 +153,7 @@ class CatalogScopeController extends ChangeNotifier {
         // Existing local data remains a valid Browse/Search snapshot. Do not
         // replace it with the global unavailable state just because a refresh
         // roster read collided with a large write transaction.
-        _announcement =
-            'Could not update sources. Showing the last local catalog.';
+        _announcement = "Couldn't update sources · showing saved list";
       }
       notifyListeners();
     }
@@ -188,7 +187,7 @@ class CatalogScopeController extends ChangeNotifier {
       _scope = saved;
       _error = null;
       if (sourceId != null && saved.sourceId != sourceId) {
-        _announcement = 'Source unavailable. Showing All sources.';
+        _announcement = 'Source unavailable · showing all sources';
       } else {
         _announcement = null;
       }
@@ -202,7 +201,7 @@ class CatalogScopeController extends ChangeNotifier {
         _revision++;
       }
       _error = Object();
-      _announcement = 'Could not change source. Try again.';
+      _announcement = "Couldn't change source.";
       notifyListeners();
     }
   }

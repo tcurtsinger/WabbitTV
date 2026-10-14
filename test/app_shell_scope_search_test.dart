@@ -138,10 +138,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 220));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('search-item-live-b')));
-    await _pumpUntil(tester, () => find.text('Retry').evaluate().isNotEmpty);
+    await _pumpUntil(
+      tester,
+      () => find.text('Try again').evaluate().isNotEmpty,
+    );
 
     expect(transportCalls, 0);
-    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
     expect(find.text('Open Settings'), findsNothing);
   });
 

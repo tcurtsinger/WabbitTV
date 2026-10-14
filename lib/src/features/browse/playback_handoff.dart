@@ -217,17 +217,15 @@ enum ContinuationFailure {
 
 extension ContinuationFailureCopy on ContinuationFailure {
   String get message => switch (this) {
-    ContinuationFailure.invalidReference =>
-      'This item cannot be opened from the imported catalog.',
+    ContinuationFailure.invalidReference => "This item can't be opened.",
     ContinuationFailure.credentialsUnavailable =>
-      'This source needs its saved account details restored in Settings.',
-    ContinuationFailure.timedOut => 'The series details took too long to load.',
+      'Sign in to this source again in Settings.',
+    ContinuationFailure.timedOut => 'Series details took too long.',
     ContinuationFailure.unavailable =>
       'Series details are unavailable right now.',
     ContinuationFailure.responseTooLarge =>
-      'Series details were larger than this step can safely load.',
-    ContinuationFailure.malformedResponse =>
-      'Series details could not be read from this source.',
+      'Series details are too large to load.',
+    ContinuationFailure.malformedResponse => "Couldn't read series details.",
     ContinuationFailure.cancelled => 'Series details were cancelled.',
   };
 }

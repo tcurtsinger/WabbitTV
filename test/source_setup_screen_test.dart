@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wabbit_tv/src/cinema.dart';
 import 'package:wabbit_tv/main.dart';
 import 'package:wabbit_tv/src/features/sources/credential_store.dart';
 import 'package:wabbit_tv/src/features/sources/source_editor.dart';
@@ -23,10 +24,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Source details'), findsOneWidget);
-    expect(find.byKey(const ValueKey('source-stage-dock')), findsOneWidget);
-    expect(find.text('Live'), findsOneWidget);
-    expect(find.text('Movies'), findsOneWidget);
-    expect(find.text('Series'), findsOneWidget);
+    // The stage dock waits for an import; before one it would only say
+    // "Waiting" three times.
+    expect(find.byKey(const ValueKey('source-stage-dock')), findsNothing);
   });
 
   testWidgets('Source Ledger Escape restores the no-source Home launcher', (
@@ -147,9 +147,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text(
-        'That provider did not return a usable catalog. Check the server URL and try again.',
-      ),
+      find.text('The provider sent no catalog. Check the server URL.'),
       findsOneWidget,
     );
     expect(
@@ -208,6 +206,9 @@ void main() {
           ),
         ),
       );
+      await tester.pumpAndSettle();
+      await _enterSource(tester);
+      await _tapConnect(tester);
       await tester.pumpAndSettle();
 
       final dock = tester.getRect(
@@ -427,9 +428,7 @@ void main() {
       expect(saved, isFalse);
       expect(find.text('Source details'), findsOneWidget);
       expect(
-        find.text(
-          'Wabbit TV could not save those source changes. The editor is still open; try again.',
-        ),
+        find.text("Couldn't save the changes. Try again."),
         findsOneWidget,
       );
     },
@@ -622,7 +621,7 @@ void main() {
     );
   });
 
-  testWidgets('connector picker and password toggle show the focus edge', (
+  testWidgets('connector picker and password toggle fill amber on focus', (
     tester,
   ) async {
     final initialFocus = FocusNode(debugLabel: 'source name');
@@ -650,15 +649,12 @@ void main() {
     final eye = tester.widget<IconButton>(
       find.widgetWithIcon(IconButton, Icons.visibility_outlined),
     );
-    for (final side in [
-      connector.style!.side!.resolve(focused)!,
-      eye.style!.side!.resolve(focused)!,
-    ]) {
-      expect(side.color, const Color(0xFFFFB347));
-      expect(side.width, 2);
+    for (final style in [connector.style!, eye.style!]) {
+      expect(style.backgroundColor!.resolve(focused), Cinema.amber);
+      expect(style.foregroundColor!.resolve(focused), Cinema.amberInk);
     }
-    expect(connector.style!.side!.resolve({})!.width, 1);
-    expect(eye.style!.side!.resolve({}), BorderSide.none);
+    expect(connector.style!.backgroundColor!.resolve({}), Cinema.glass);
+    expect(eye.style!.backgroundColor!.resolve({}), isNull);
   });
 
   testWidgets(
@@ -896,10 +892,7 @@ void main() {
     await tester.tap(find.text('Choose M3U file'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('The file picker could not be opened. Try again.'),
-      findsOneWidget,
-    );
+    expect(find.text("Couldn't open the file picker."), findsOneWidget);
     expect(find.textContaining('provider-secret'), findsNothing);
     expect(find.text('Choose M3U file'), findsOneWidget);
     expect(

@@ -162,6 +162,35 @@ void main() {
     expect(image.height, 360);
   });
 
+  testWidgets('channel logos show whole while posters fill the box', (
+    tester,
+  ) async {
+    final loader = _FakeArtworkProvider(focusDwell: Duration.zero);
+    Future<BoxFit?> fitFor(SourceMediaKind kind) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Center(
+            child: SourceArtwork(
+              key: ValueKey(kind),
+              locator: 'https://art.example/${kind.name}',
+              kind: kind,
+              loader: loader,
+              explicitlyActivated: true,
+              width: 176,
+              height: 99,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      return tester.widget<Image>(find.byType(Image)).fit;
+    }
+
+    expect(await fitFor(SourceMediaKind.live), BoxFit.contain);
+    expect(await fitFor(SourceMediaKind.movies), BoxFit.cover);
+  });
+
   testWidgets('expanded artwork omits non-finite decode cache dimensions', (
     tester,
   ) async {

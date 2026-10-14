@@ -359,6 +359,128 @@ void main() {
   );
 
   test(
+    "a provider's HTML refusal pauses guide requests for an hour, source-wide",
+    () async {
+      final now = DateTime.utc(2026, 8, 19, 12);
+      var requests = 0;
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        requests++;
+        request.response
+          ..statusCode = HttpStatus.forbidden
+          ..headers.contentType = ContentType.html
+          ..write('<html><body>403 Forbidden</body></html>');
+        await request.response.close();
+      });
+      final fixture = await _ImportFixture.create(server, itemCount: 2);
+      addTearDown(fixture.dispose);
+      final service = XtreamEpgService(
+        database: fixture.database,
+        credentialStore: fixture.credentials,
+        now: () => now,
+      );
+
+      await service.refreshCatalogItems(const ['source:live:item-0']);
+      expect(
+        (await service.refreshCatalogItems(const ['source:live:item-1']))
+            .claimed,
+        0,
+      );
+      // The quick request, then the full-day fallback; both refused.
+      expect(requests, 2);
+      final window = (await fixture.database.loadEpgWindow(
+        catalogItemIds: const ['source:live:item-1'],
+        windowStartUtc: now,
+        windowEndUtc: now.add(const Duration(hours: 2)),
+        atUtc: now,
+      )).single;
+      expect(window.availability, EpgAvailability.providerBlocked);
+
+      final db = sqlite3.open(fixture.path);
+      addTearDown(db.close);
+      final state = db
+          .select('SELECT retry_after_utc_ms, last_error FROM epg_source_state')
+          .single;
+      expect(state['last_error'], EpgRefreshFailure.providerBlocked.name);
+      expect(
+        state['retry_after_utc_ms'],
+        now.add(xtreamEpgBlockedRetry).millisecondsSinceEpoch,
+      );
+    },
+  );
+
+  test(
+    'a blocked quick request falls back to the full-day schedule per source',
+    () async {
+      final now = DateTime.utc(2026, 8, 19, 12);
+      final actions = <String?>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        final action = request.uri.queryParameters['action'];
+        actions.add(action);
+        if (action == 'get_short_epg') {
+          request.response
+            ..statusCode = HttpStatus.forbidden
+            ..headers.contentType = ContentType.html
+            ..write('<html><body>403 Forbidden</body></html>');
+        } else {
+          request.response.write(
+            jsonEncode({
+              'epg_listings': [
+                {
+                  'title': base64.encode(utf8.encode('Full Day')),
+                  'start_timestamp': now.millisecondsSinceEpoch ~/ 1000,
+                  'stop_timestamp':
+                      now
+                          .add(const Duration(hours: 1))
+                          .millisecondsSinceEpoch ~/
+                      1000,
+                },
+              ],
+            }),
+          );
+        }
+        await request.response.close();
+      });
+      final fixture = await _ImportFixture.create(server, itemCount: 2);
+      addTearDown(fixture.dispose);
+      final service = XtreamEpgService(
+        database: fixture.database,
+        credentialStore: fixture.credentials,
+        now: () => now,
+      );
+
+      expect(
+        (await service.refreshCatalogItems(const ['source:live:item-0']))
+            .refreshed,
+        1,
+      );
+      expect(actions, ['get_short_epg', 'get_simple_data_table']);
+      // The source now goes straight to the full-day request.
+      expect(
+        (await service.refreshCatalogItems(const ['source:live:item-1']))
+            .refreshed,
+        1,
+      );
+      expect(actions.last, 'get_simple_data_table');
+      expect(
+        actions.where((action) => action == 'get_short_epg'),
+        hasLength(1),
+      );
+      final window = (await fixture.database.loadEpgWindow(
+        catalogItemIds: const ['source:live:item-1'],
+        windowStartUtc: now,
+        windowEndUtc: now.add(const Duration(hours: 2)),
+        atUtc: now,
+      )).single;
+      expect(window.availability, EpgAvailability.available);
+      expect(window.nowNext.current?.title, 'Full Day');
+    },
+  );
+
+  test(
     'explicit manual retry bypasses persisted authentication backoff',
     () async {
       final now = DateTime.utc(2026, 8, 19, 12);
