@@ -30,12 +30,7 @@ void main() {
     await tester.pumpWidget(_guideApp(data: data));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text(
-        "Your provider isn't sending guide data right now · channels remain ready to tune",
-      ),
-      findsOneWidget,
-    );
+    expect(find.text("Your provider isn't sending guide data"), findsOneWidget);
     expect(find.byKey(const ValueKey('guide-retry')), findsOneWidget);
   });
 
@@ -355,10 +350,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Guide needs an Xtream source'), findsOneWidget);
-    expect(
-      find.textContaining('M3U channels remain available'),
-      findsOneWidget,
-    );
+    expect(find.text('The Guide needs an Xtream source.'), findsOneWidget);
     await tester.tap(find.text('Open Settings'));
     await tester.tap(find.text('Browse Live'));
     expect(settings, isTrue);
@@ -378,10 +370,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining('does not expose a short Live guide'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('This source has no guide'), findsOneWidget);
     expect(find.text('No schedule available'), findsNWidgets(2));
     await tester.tap(find.byKey(const ValueKey('guide-channel-channel-2')));
     expect((tuned! as LivePlaybackHandoff).providerItemId, '202');
@@ -440,12 +429,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Preparing schedule…'), findsNothing);
     expect(find.text('No schedule available'), findsNWidgets(2));
-    expect(
-      find.text(
-        'No schedule for these channels · channels remain ready to tune',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('No schedule for these channels'), findsOneWidget);
   });
 
   testWidgets('40 settled empty channels report only the active viewport', (
@@ -459,12 +443,7 @@ void main() {
     await tester.pumpWidget(_guideApp(data: data));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text(
-        'No schedule for these channels · channels remain ready to tune',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('No schedule for these channels'), findsOneWidget);
     expect(find.text('Preparing schedule…'), findsNothing);
     expect(data.loadedWindowIds, isNotEmpty);
     expect(data.loadedWindowIds.length, lessThanOrEqualTo(20));
@@ -501,12 +480,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Preparing schedule…'), findsNothing);
-    expect(
-      find.text(
-        'No schedule for these channels · channels remain ready to tune',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('No schedule for these channels'), findsOneWidget);
     expect(data.refreshCalls, refreshesAfterDown);
 
     reverseRead.complete();
@@ -552,12 +526,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Preparing schedule…'), findsNothing);
-    expect(
-      find.text(
-        'No schedule for these channels · channels remain ready to tune',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('No schedule for these channels'), findsOneWidget);
     expect(data.refreshCalls, refreshesAfterC);
 
     returningA.complete();
@@ -611,12 +580,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Preparing schedule…'), findsNothing);
-    expect(
-      find.text(
-        'No schedule for these channels · channels remain ready to tune',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('No schedule for these channels'), findsOneWidget);
     expect(data.refreshCalls, refreshesAfterC);
 
     returningA.complete();
@@ -660,12 +624,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(_inGrid(find.text('Channel 001')), findsOneWidget);
     expect(find.text('Preparing schedule…'), findsNothing);
-    expect(
-      find.text(
-        'No schedule for these channels · channels remain ready to tune',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('No schedule for these channels'), findsOneWidget);
   });
 
   testWidgets('tall viewport gives every mounted row a bounded local result', (
@@ -718,10 +677,7 @@ void main() {
     await tester.pumpWidget(_guideApp(data: data));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Schedule unavailable · channels remain ready to tune'),
-      findsOneWidget,
-    );
+    expect(find.text('Schedule unavailable'), findsOneWidget);
     expect(find.byKey(const ValueKey('guide-retry')), findsOneWidget);
     expect(data.refreshCalls, 1);
     expect(data.refreshManualRetries, const [false]);
@@ -731,12 +687,7 @@ void main() {
 
     expect(data.refreshCalls, 2);
     expect(data.refreshManualRetries, const [false, true]);
-    expect(
-      find.text(
-        'No schedule for these channels · channels remain ready to tune',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('No schedule for these channels'), findsOneWidget);
   });
 
   testWidgets(
@@ -756,12 +707,7 @@ void main() {
       list.controller!.jumpTo(list.controller!.position.maxScrollExtent);
       await tester.pumpAndSettle();
 
-      expect(
-        find.text(
-          'More channels could not be loaded · current channels remain available',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text("Couldn't load more channels"), findsOneWidget);
       expect(find.text('Retry more channels'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('guide-channel-channel-040')),
@@ -804,12 +750,7 @@ void main() {
       list.controller!.jumpTo(0);
       await tester.pumpAndSettle();
 
-      expect(
-        find.text(
-          'Earlier channels could not be loaded · current channels remain available',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text("Couldn't load earlier channels"), findsOneWidget);
       expect(find.text('Retry earlier channels'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('guide-channel-channel-045')),
@@ -1678,10 +1619,7 @@ void main() {
 
     expect(session.focusedChannelId, 'channel-001');
     expect(session.focusedProgramStartUtcMs, isNull);
-    expect(
-      find.textContaining('Saved Guide channel is no longer available'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Saved channel unavailable'), findsOneWidget);
     final first = tester.widget<Focus>(
       find
           .descendant(
@@ -1694,10 +1632,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
     expect(_focusContext(tester), 'Channel 003 · Live channel');
-    expect(
-      find.textContaining('Saved Guide channel is no longer available'),
-      findsNothing,
-    );
+    expect(find.textContaining('Saved channel unavailable'), findsNothing);
   });
 
   testWidgets(
@@ -1712,7 +1647,7 @@ void main() {
       await tester.pumpAndSettle();
 
       const message =
-          'Saved Guide source and category are unavailable · showing Fixture Xtream · All Live.';
+          'Saved source and category unavailable · showing Fixture Xtream · All Live.';
       expect(find.text(message), findsOneWidget);
       final announced = tester.getSemantics(
         find.byKey(const ValueKey('guide-focus-context')),
@@ -1743,10 +1678,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining('Saved Guide channel is no longer available'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Saved channel unavailable'), findsOneWidget);
     expect(
       find.textContaining('Saved Guide source and category'),
       findsNothing,

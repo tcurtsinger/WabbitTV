@@ -1378,7 +1378,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         scopeController.sources.isEmpty) {
       return _BrowseMessage(
         title: 'Catalog unavailable',
-        message: 'Could not load the local source list. Try again.',
+        message: "Couldn't load your sources.",
         actionLabel: 'Try again',
         focusNode: widget.initialFocus,
         onFocused: widget.onContentFocus,
@@ -1407,7 +1407,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
     if (_error != null && _items.isEmpty) {
       return _BrowseMessage(
         title: 'Catalog unavailable',
-        message: 'Could not load this local catalog. Try again or check this source in Settings.',
+        message: "Couldn't load this list.",
         actionLabel: 'Try again',
         focusNode: widget.initialFocus,
         onFocused: widget.onContentFocus,
@@ -1760,7 +1760,7 @@ class _BasicBrowseScreenState extends State<BasicBrowseScreen> {
         if (_pageError) _PageErrorFooter(onRetry: () => unawaited(_loadMore())),
         if (_error != null && _items.isNotEmpty)
           _PageErrorFooter(
-            label: 'Catalog update failed. Showing the last usable list.',
+            label: 'Update failed · showing saved list',
             onRetry: () => unawaited(_loadCatalog(resetSelection: false)),
           ),
       ],
@@ -1979,8 +1979,7 @@ class _SecondChannelBannerState extends State<_SecondChannelBanner> {
               ),
               const SizedBox(height: 3),
               Text(
-                widget.message ??
-                    'Your current channel keeps playing in Corner Signal.',
+                widget.message ?? 'Your channel keeps playing in the corner.',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -3402,7 +3401,7 @@ class _EmptyCategory extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'This provider category has no available items.',
+            'Nothing in this category.',
             style: TextStyle(color: _quietText),
           ),
           const SizedBox(height: 18),
@@ -3455,7 +3454,7 @@ class _EmptyUnifiedCatalog extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Choose a source to check its provider categories.',
+            'Choose a source to see its categories.',
             textAlign: TextAlign.center,
             style: TextStyle(color: _quietText),
           ),

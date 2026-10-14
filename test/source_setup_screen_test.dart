@@ -147,9 +147,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text(
-        'That provider did not return a usable catalog. Check the server URL and try again.',
-      ),
+      find.text('The provider sent no catalog. Check the server URL.'),
       findsOneWidget,
     );
     expect(
@@ -430,9 +428,7 @@ void main() {
       expect(saved, isFalse);
       expect(find.text('Source details'), findsOneWidget);
       expect(
-        find.text(
-          'Wabbit TV could not save those source changes. The editor is still open; try again.',
-        ),
+        find.text("Couldn't save the changes. Try again."),
         findsOneWidget,
       );
     },
@@ -896,10 +892,7 @@ void main() {
     await tester.tap(find.text('Choose M3U file'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('The file picker could not be opened. Try again.'),
-      findsOneWidget,
-    );
+    expect(find.text("Couldn't open the file picker."), findsOneWidget);
     expect(find.textContaining('provider-secret'), findsNothing);
     expect(find.text('Choose M3U file'), findsOneWidget);
     expect(

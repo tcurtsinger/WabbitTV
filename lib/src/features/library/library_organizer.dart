@@ -142,7 +142,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
         setState(() {
           _loading = false;
           _failed = true;
-          _recovery = 'This item is no longer available in the local library.';
+          _recovery = "This item isn't available.";
         });
         _focusAfterBuild(_retryFocus);
         return;
@@ -168,7 +168,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
       setState(() {
         _loading = false;
         _failed = true;
-        _recovery = 'Could not load local organization. Try again.';
+        _recovery = "Couldn't load groups.";
       });
       _focusAfterBuild(_retryFocus);
     }
@@ -209,10 +209,10 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
         _saving = false;
         _recovery = switch (result.outcome) {
           PersonalLibraryMutationOutcome.missingItem =>
-            'This item is no longer available in the local library.',
+            "This item isn't available.",
           PersonalLibraryMutationOutcome.missingGroup =>
-            'A selected group is no longer available. Reload and try again.',
-          _ => 'Organization was not changed. Try again.',
+            'A group was removed. Try again.',
+          _ => 'Not saved. Try again.',
         };
       });
       widget.onBusyChanged(false);
@@ -221,7 +221,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _recovery = 'Organization was not changed. Try again.';
+        _recovery = 'Not saved. Try again.';
       });
       widget.onBusyChanged(false);
       _focusAfterBuild(_saveFocus);
@@ -365,7 +365,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
     if (_loading) return const _OrganizerLoading();
     if (_failed || _loaded == null) {
       return _OrganizerFailure(
-        message: _recovery ?? 'Could not load local organization.',
+        message: _recovery ?? "Couldn't load groups.",
         retryFocus: _retryFocus,
         onRetry: _load,
       );
@@ -410,7 +410,7 @@ class _LibraryOrganizerPaneState extends State<LibraryOrganizerPane> {
               ? const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                   child: Text(
-                    'Create a custom group in My Library to add this item.',
+                    'Make a group in My Library first.',
                     style: TextStyle(color: _quietText, fontSize: 14),
                   ),
                 )

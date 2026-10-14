@@ -137,7 +137,7 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
-    expect(find.text('Home could not be loaded'), findsOneWidget);
+    expect(find.text("Couldn't load Home"), findsOneWidget);
 
     await tester.tap(find.text('Retry'));
     await tester.pump();

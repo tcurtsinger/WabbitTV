@@ -373,7 +373,9 @@ class _SourceHeader extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          editing ? 'Update this local connector, then refresh its catalog.' : 'Connect an Xtream account or M3U playlist to build your local library.',
+          editing
+              ? 'Update the details, then refresh.'
+              : 'Connect an Xtream account or M3U playlist.',
           style: const TextStyle(
             color: Cinema.quiet,
             fontSize: 14,
@@ -417,7 +419,7 @@ class _EditorUnavailable extends StatelessWidget {
       ),
       SizedBox(height: 8),
       Text(
-        'The saved connector details could not be opened. Return to Sources and try again.',
+        "Couldn't open this source's details.",
         style: TextStyle(color: _quietText, height: 1.4),
       ),
     ],
@@ -570,10 +572,10 @@ class _SourceForm extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               controller.isImporting
-                  ? 'This stays in the foreground until it finishes or you cancel.'
+                  ? 'This can take a minute.'
                   : editing
-                  ? 'Save refreshes this source immediately. Its previous local catalog stays available if refresh fails.'
-                  : 'Your account credentials are stored securely on this device after the import succeeds.',
+                  ? 'Saving refreshes the catalog.'
+                  : 'Your login stays on this device.',
               style: const TextStyle(
                 color: Cinema.quiet,
                 fontSize: 13,
@@ -587,13 +589,6 @@ class _SourceForm extends StatelessWidget {
               showLocalFile: pickerAvailable,
               onSelected: onSelectKind,
             ),
-            if (editing) ...[
-              const SizedBox(height: 8),
-              const Text(
-                'Connector type is fixed for this source.',
-                style: TextStyle(color: _quietText, fontSize: 13),
-              ),
-            ],
             const SizedBox(height: 16),
             _Field(
               label: 'Source name',
@@ -701,7 +696,7 @@ class _SourceForm extends StatelessWidget {
                   Semantics(
                     liveRegion: true,
                     child: const Text(
-                      'Opening the Windows file picker…',
+                      'Opening the file picker…',
                       key: ValueKey('source-m3u-picker-status'),
                       style: TextStyle(color: _quietText, fontSize: 13),
                     ),
@@ -711,7 +706,7 @@ class _SourceForm extends StatelessWidget {
                   Semantics(
                     liveRegion: true,
                     child: const Text(
-                      'The file picker could not be opened. Try again.',
+                      "Couldn't open the file picker.",
                       key: ValueKey('source-m3u-picker-failure'),
                       style: TextStyle(color: _errorText, fontSize: 13),
                     ),
@@ -978,14 +973,19 @@ class _FailureNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = switch (failure) {
-      SourceImportFailureKind.authentication => 'We could not verify that account. Check the username and password, then try again.',
-      SourceImportFailureKind.unreachable => 'Wabbit TV could not reach that provider. Check the server URL and your connection, then try again.',
-      SourceImportFailureKind.emptyResponse => 'That provider did not return a usable catalog. Check the server URL and try again.',
+      SourceImportFailureKind.authentication =>
+        "Couldn't sign in. Check the username and password.",
+      SourceImportFailureKind.unreachable =>
+        "Couldn't reach the provider. Check the server URL.",
+      SourceImportFailureKind.emptyResponse =>
+        'The provider sent no catalog. Check the server URL.',
       SourceImportFailureKind.tooLarge =>
-        'That provider catalog is too large to import safely.',
-      SourceImportFailureKind.timedOut => 'That provider took too long to respond. Check the connection and try again.',
-      SourceImportFailureKind.localPersistence => 'Wabbit TV could not save those source changes. The editor is still open; try again.',
-      SourceImportFailureKind.cancelled => 'The import was cancelled.',
+        'That catalog is too large to import.',
+      SourceImportFailureKind.timedOut =>
+        'The provider took too long to respond.',
+      SourceImportFailureKind.localPersistence =>
+        "Couldn't save the changes. Try again.",
+      SourceImportFailureKind.cancelled => 'Import cancelled.',
     };
     return Semantics(
       liveRegion: true,
@@ -1027,11 +1027,6 @@ class _SourceReady extends StatelessWidget {
                 fontSize: 22,
                 fontWeight: FontWeight.w800,
               ),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'Your local catalog is ready to browse.',
-              style: TextStyle(color: Cinema.quiet, fontSize: 14),
             ),
             const SizedBox(height: 22),
             for (final kind in SourceMediaKind.values) ...[

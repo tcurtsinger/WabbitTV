@@ -231,20 +231,14 @@ void main() {
         expect(controller.refreshing, isTrue);
         await controller.toggle();
         expect(controller.selected!.enabled, isTrue);
-        expect(
-          controller.recovery,
-          'Another source action is already in progress.',
-        );
+        expect(controller.recovery, 'Another action is running.');
         gate.complete();
         await refreshing;
 
         port.failToggle = true;
         await controller.toggle();
         expect(controller.selected!.enabled, isTrue);
-        expect(
-          controller.recovery,
-          'That source could not be updated. Your local catalog is unchanged.',
-        );
+        expect(controller.recovery, "Couldn't update this source.");
       },
     );
   });

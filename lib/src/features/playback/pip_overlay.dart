@@ -426,7 +426,7 @@ class PipStopConfirmation extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       const Text(
-                        'Settings and library management keep playback out of sensitive or dense controls.',
+                        "Playback stops while you're here.",
                         style: TextStyle(
                           color: _quietText,
                           fontSize: 14,

@@ -122,10 +122,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Manage visibility'), findsOneWidget);
-      expect(
-        find.textContaining('Strong · Local visibility only'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('Strong · this device only'), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('visibility-item-news-one')));
       await tester.pumpAndSettle();

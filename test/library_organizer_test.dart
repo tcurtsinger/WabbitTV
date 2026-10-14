@@ -69,7 +69,7 @@ void main() {
     await tester.ensureVisible(find.text('Save'));
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('try again'), findsOneWidget);
+    expect(find.textContaining('Try again'), findsOneWidget);
 
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();

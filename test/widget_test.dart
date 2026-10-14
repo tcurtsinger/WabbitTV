@@ -303,10 +303,7 @@ void main() {
     expect(find.text('Live'), findsAtLeastNWidgets(1));
     expect(find.text('Movies'), findsAtLeastNWidgets(1));
     expect(find.text('Series'), findsAtLeastNWidgets(1));
-    expect(
-      find.text('Favorite something or create a group to make Home personal.'),
-      findsOneWidget,
-    );
+    expect(find.text('Favorites and groups show up here.'), findsOneWidget);
     expect(find.text('All sources · local fixture'), findsOneWidget);
     expect(find.textContaining('This local source fixture'), findsOneWidget);
   });
@@ -392,12 +389,7 @@ void main() {
       expect(controller.initializations, 1);
       expect(find.text('Start with what you want to watch'), findsOneWidget);
       expect(find.text('All sources'), findsOneWidget);
-      expect(
-        find.text(
-          'Your library has no Favorites, groups, or watch history yet.',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('Nothing saved or watched yet.'), findsOneWidget);
       expect(find.textContaining('fixture'), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
       controller.dispose();

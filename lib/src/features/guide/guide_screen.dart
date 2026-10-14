@@ -424,11 +424,10 @@ class _GuideScreenState extends State<GuideScreen> {
           !_sameCategory(requestedCategory, category.selection);
       final scopeFallbackMessage = switch ((sourceFellBack, categoryFellBack)) {
         (true, true) =>
-          'Saved Guide source and category are unavailable · showing ${source.name} · ${category?.name ?? 'All Live'}.',
-        (true, false) =>
-          'Saved Guide source is unavailable · showing ${source.name}.',
+          'Saved source and category unavailable · showing ${source.name} · ${category?.name ?? 'All Live'}.',
+        (true, false) => 'Saved source unavailable · showing ${source.name}.',
         (false, true) =>
-          'Saved Guide category is unavailable · showing ${category?.name ?? 'All Live'}.',
+          'Saved category unavailable · showing ${category?.name ?? 'All Live'}.',
         (false, false) => null,
       };
       if (category != null) widget.session.category = category.selection;
@@ -544,8 +543,8 @@ class _GuideScreenState extends State<GuideScreen> {
     _visualFocusProgramStartUtcMs = null;
     _visualFocusProgramEndUtcMs = null;
     _focusContext = fallback == null
-        ? 'Saved Guide channel is no longer available.'
-        : 'Saved Guide channel is no longer available · showing ${fallback.title}.';
+        ? 'Saved channel unavailable'
+        : 'Saved channel unavailable · showing ${fallback.title}.';
     _focusAnnouncement = true;
     _fallbackAnnouncementChannelId = fallback?.id;
     _fallbackAnnouncementFocusNode = null;
@@ -1586,8 +1585,7 @@ class _GuideScreenState extends State<GuideScreen> {
       if (failedCategory != null) {
         return _GuideMessage(
           title: 'Guide category unavailable',
-          message:
-              '${failedCategory.name} could not be loaded. Your previous Guide category is unchanged.',
+          message: "Couldn't load ${failedCategory.name}",
           primaryLabel: 'Retry',
           primaryAction: _retryFailedCategory,
           secondaryLabel: 'Keep current category',
@@ -1599,7 +1597,7 @@ class _GuideScreenState extends State<GuideScreen> {
       }
       return _GuideMessage(
         title: 'Guide unavailable',
-        message: 'The saved guide could not be loaded. Live TV is unchanged.',
+        message: "Couldn't load the guide",
         primaryLabel: 'Try again',
         primaryAction: _loadGuide,
         secondaryLabel: 'Browse Live',
@@ -1613,7 +1611,7 @@ class _GuideScreenState extends State<GuideScreen> {
     if (sources != null && sources.isEmpty) {
       return _GuideMessage(
         title: 'Guide needs an Xtream source',
-        message: 'Add or enable an Xtream source to use the Live Guide. M3U channels remain available in Live.',
+        message: 'The Guide needs an Xtream source.',
         primaryLabel: 'Open Settings',
         primaryAction: widget.onOpenSettings,
         secondaryLabel: 'Browse Live',
@@ -1801,8 +1799,7 @@ class _GuideScreenState extends State<GuideScreen> {
                     candidate.endUtc.millisecondsSinceEpoch == endMs,
               )
               .firstOrNull;
-    final contextText =
-        _focusContext ?? 'Select a channel or program to tune Live.';
+    final contextText = _focusContext ?? 'Pick a channel or program.';
     final now = _nowUtc;
     String? overline;
     String? title;
@@ -2007,19 +2004,19 @@ class _GuideScreenState extends State<GuideScreen> {
     final hasEpgFailure = _refreshFailed || anyFailure;
     String text;
     if (pageFailure == _GuidePageFailure.earlier) {
-      text = 'Earlier channels could not be loaded · current channels remain available';
+      text = "Couldn't load earlier channels";
     } else if (pageFailure == _GuidePageFailure.more) {
-      text = 'More channels could not be loaded · current channels remain available';
+      text = "Couldn't load more channels";
     } else if (providerBlocked) {
-      text = "Your provider isn't sending guide data right now · channels remain ready to tune";
+      text = "Your provider isn't sending guide data";
     } else if (hasEpgFailure && anySaved) {
       text = 'Guide update failed · showing saved schedule';
     } else if (hasEpgFailure && !anySaved) {
-      text = 'Schedule unavailable · channels remain ready to tune';
+      text = 'Schedule unavailable';
     } else if (allUnsupported) {
-      text = 'This source does not expose a short Live guide · channels remain ready to tune';
+      text = 'This source has no guide';
     } else if (allEmpty) {
-      text = 'No schedule for these channels · channels remain ready to tune';
+      text = 'No schedule for these channels';
     } else if (anyPreparing && !anySaved) {
       text = 'Preparing schedule…';
     } else {

@@ -37,7 +37,7 @@ void main() {
     await tester.pumpWidget(app(port));
     await tester.pumpAndSettle();
     expect(find.text('Manage visibility'), findsOneWidget);
-    expect(find.textContaining('Local visibility only'), findsOneWidget);
+    expect(find.textContaining('this device only'), findsOneWidget);
     expect(find.text('Provider categories'), findsOneWidget);
     expect(find.text('Hide category'), findsOneWidget);
     expect(find.text('Film Select'), findsOneWidget);
@@ -441,20 +441,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('visibility-bulk-hide')));
       await tester.pump();
-      expect(
-        find.text(
-          'Hide all 3 Live categories from Strong? Individual item choices stay unchanged.',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('Hide all 3 Live categories?'), findsOneWidget);
       final confirmation = tester.widget<Semantics>(
         find.byKey(const ValueKey('visibility-bulk-confirmation-message')),
       );
       expect(confirmation.properties.liveRegion, isTrue);
-      expect(
-        confirmation.properties.label,
-        'Hide all 3 Live categories from Strong? Individual item choices stay unchanged.',
-      );
+      expect(confirmation.properties.label, 'Hide all 3 Live categories?');
       final cancelSemantics = tester.widget<Semantics>(
         find
             .descendant(
@@ -465,7 +457,7 @@ void main() {
       );
       expect(
         cancelSemantics.properties.hint,
-        'Cancel hiding all 3 Live categories from Strong. Individual item choices stay unchanged.',
+        'Cancel hiding all 3 Live categories.',
       );
       final confirmSemantics = tester.widget<Semantics>(
         find
@@ -477,7 +469,7 @@ void main() {
       );
       expect(
         confirmSemantics.properties.hint,
-        'Hide all 3 Live categories from Strong. Individual item choices stay unchanged.',
+        'Hide all 3 Live categories.',
       );
       expect(
         FocusManager.instance.primaryFocus?.debugLabel,
@@ -538,7 +530,7 @@ void main() {
         find.byKey(const ValueKey('visibility-bulk-confirm-hide')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Category visibility was not changed'), findsOneWidget);
+      expect(find.text('Nothing changed'), findsOneWidget);
       expect(
         FocusManager.instance.primaryFocus?.debugLabel,
         'library visibility bulk retry',
@@ -625,12 +617,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(port.bulkChanges, [(SourceMediaKind.live, false)]);
       expect(busyChanges, [true, false]);
-      expect(
-        find.text(
-          'Category visibility was saved locally; this view could not refresh',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text("Saved · view didn't refresh"), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('visibility-bulk-retry')));
       await tester.pumpAndSettle();
@@ -659,12 +646,7 @@ void main() {
       port.failFilteredAfterBulk = true;
       await tester.tap(find.byKey(const ValueKey('visibility-bulk-restore')));
       await tester.pumpAndSettle();
-      expect(
-        find.text(
-          'Category visibility was saved locally; this view could not refresh',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text("Saved · view didn't refresh"), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('visibility-bulk-cancel')));
       await tester.pumpAndSettle();
@@ -673,12 +655,7 @@ void main() {
       expect(find.text('News'), findsWidgets);
       expect(find.text('Sports'), findsWidgets);
       expect(find.text('Film Select'), findsOneWidget);
-      expect(
-        find.text(
-          'Category visibility was saved locally; this view could not refresh',
-        ),
-        findsNothing,
-      );
+      expect(find.text("Saved · view didn't refresh"), findsNothing);
     },
   );
 
@@ -832,12 +809,7 @@ void main() {
       await tester.tap(find.text('Hidden only'));
       await tester.pumpAndSettle();
       expect(find.text('News'), findsWidgets);
-      expect(
-        find.text(
-          'Visibility could not be updated. Showing your last local view.',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text("Couldn't update · showing last view"), findsOneWidget);
     },
   );
 
@@ -847,7 +819,7 @@ void main() {
     final port = _Port()..failCategories = true;
     await tester.pumpWidget(app(port));
     await tester.pumpAndSettle();
-    expect(find.text('Visibility could not be loaded'), findsOneWidget);
+    expect(find.text("Couldn't load visibility"), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
     expect(find.text('No provider categories'), findsNothing);
     port.failCategories = false;
@@ -864,7 +836,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Items could not be loaded'), findsOneWidget);
     expect(find.text('Retry items'), findsOneWidget);
-    expect(find.text('No available items in this category.'), findsNothing);
+    expect(find.text('Nothing in this category.'), findsNothing);
     port.failItems = false;
     await tester.tap(find.text('Retry items'));
     await tester.pumpAndSettle();
@@ -929,12 +901,7 @@ void main() {
     expect(find.text('Hidden only: on'), findsNothing);
     expect(find.text('News One'), findsOneWidget);
     expect(find.text('News Two'), findsOneWidget);
-    expect(
-      find.text(
-        'Visibility could not be updated. Showing your last local view.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text("Couldn't update · showing last view"), findsOneWidget);
   });
 
   testWidgets('failed kind item reload restores kind, selection, and items', (

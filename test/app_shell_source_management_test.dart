@@ -227,10 +227,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(controller.refreshes, ['weekend']);
-      expect(
-        find.text('Another source action is already in progress.'),
-        findsNothing,
-      );
+      expect(find.text('Another action is running.'), findsNothing);
     },
   );
 }

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -1448,7 +1447,7 @@ class _SavedHistoryNotice extends StatelessWidget {
   Widget build(BuildContext context) => const Padding(
     padding: EdgeInsets.fromLTRB(_rowBleed, 0, 32, 14),
     child: Text(
-      'Could not refresh Home. Showing saved local shelves.',
+      "Couldn't refresh Home · showing saved shelves",
       style: TextStyle(color: _quietText, fontSize: 13),
     ),
   );
@@ -1830,7 +1829,7 @@ class _PinnedHomeShelf extends StatelessWidget {
                 height: 82,
                 child: Center(
                   child: Text(
-                    'This pinned collection is empty.',
+                    'Nothing here yet.',
                     style: TextStyle(color: _quietText, fontSize: 14),
                   ),
                 ),
@@ -2144,17 +2143,12 @@ class _HomeReadFailure extends StatelessWidget {
               const Icon(Icons.history_toggle_off, color: _quietText, size: 34),
               const SizedBox(height: 20),
               const Text(
-                'Home could not be loaded',
+                "Couldn't load Home",
                 style: TextStyle(
                   color: _warmWhite,
                   fontSize: 30,
                   fontWeight: FontWeight.w700,
                 ),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'Your local catalog and watch history are unchanged.',
-                style: TextStyle(color: _quietText, fontSize: 16, height: 1.45),
               ),
               const SizedBox(height: 26),
               _FocusedAction(
@@ -2963,7 +2957,7 @@ class _NoPersonalizationHomeState extends State<_NoPersonalizationHome> {
                   Text(
                     widget.showFixtureCopy
                         ? 'This local source fixture has no Favorites, groups, or watch history yet.'
-                        : 'Your library has no Favorites, groups, or watch history yet.',
+                        : 'Nothing saved or watched yet.',
                     style: const TextStyle(
                       color: _quietText,
                       fontSize: 16,
@@ -3004,7 +2998,7 @@ class _NoPersonalizationHomeState extends State<_NoPersonalizationHome> {
                   ),
                   const SizedBox(height: 30),
                   const Text(
-                    'Favorite something or create a group to make Home personal.',
+                    'Favorites and groups show up here.',
                     style: TextStyle(color: _quietText, fontSize: 14),
                   ),
                 ],
@@ -3163,13 +3157,6 @@ class _NoSourceHome extends StatelessWidget {
                   onFocused: () => onContentFocus(focusNode),
                   onLeft: onOpenRail,
                   onPressed: onAddSource,
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  defaultTargetPlatform == TargetPlatform.android
-                      ? 'Press Back or Left to open navigation.'
-                      : 'Press Escape or Left to open navigation.',
-                  style: TextStyle(color: _quietText, fontSize: 13),
                 ),
               ],
             ),

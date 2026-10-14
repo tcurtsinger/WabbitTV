@@ -159,7 +159,7 @@ void main() {
       );
 
       expect(
-        find.text('Last channel is unavailable. Wabbit opened Home instead.'),
+        find.text('Last channel unavailable · opened Home'),
         findsOneWidget,
       );
       expect(find.textContaining('private-library-id'), findsNothing);

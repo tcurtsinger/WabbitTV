@@ -738,7 +738,7 @@ void main() {
 
     expect(fixture.controller.scope.isAll, isTrue);
     expect(
-      find.text('Source unavailable. Showing All sources.'),
+      find.text('Source unavailable · showing all sources'),
       findsOneWidget,
     );
     expect(find.text('Categories'), findsNothing);

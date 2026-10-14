@@ -351,7 +351,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.text('Source unavailable. Showing All sources.'),
+      find.text('Source unavailable · showing all sources'),
       findsOneWidget,
     );
 

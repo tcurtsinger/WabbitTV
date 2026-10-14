@@ -401,7 +401,7 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
         _loadingDirectory = false;
         if (hadUsableSnapshot) {
           _failedSection = null;
-          _recoveryMessage = 'My Library could not refresh. Your last loaded library is unchanged.';
+          _recoveryMessage = "Couldn't refresh My Library.";
         } else {
           _initialDirectoryFailure = true;
         }
@@ -483,7 +483,7 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
           _nextCursor = previousCursor;
           _totalCount = previousTotal;
           _failedSection = section;
-          _recoveryMessage = 'That saved list could not be opened. Your current list is unchanged.';
+          _recoveryMessage = "Couldn't open that group.";
         } else {
           _selected = section;
           _itemFailure = true;
@@ -904,9 +904,9 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
   void _announceUnavailable(MyLibraryItem item) {
     final message = switch (item.availability) {
       MyLibraryItemAvailability.sourceUnavailable =>
-        '${item.title} cannot be opened because its source is unavailable.',
+        '${item.title}: source unavailable.',
       MyLibraryItemAvailability.itemUnavailable =>
-        '${item.title} is no longer available from its source.',
+        "${item.title} isn't available anymore.",
       MyLibraryItemAvailability.available => '',
     };
     SemanticsService.sendAnnouncement(

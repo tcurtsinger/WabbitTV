@@ -585,7 +585,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _message = !outcome.seekSucceeded
           ? 'Could not start over.'
           : !outcome.progressSaved
-          ? 'Started over. Progress could not be saved.'
+          ? 'Started over · progress not saved'
           : 'Started over.';
     });
   }
@@ -754,7 +754,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     (snapshot.progressSaveFailed
                                         ? 'Progress could not be saved.'
                                         : snapshot.resume.loadFailed
-                                        ? 'Saved progress could not be loaded. Playing from the start.'
+                                        ? "Couldn't load progress · playing from the start"
                                         : 'Resumed at ${_time(snapshot.resume.appliedPosition)}.'),
                               ),
                             ),
@@ -1652,7 +1652,7 @@ class _FailureDeck extends StatelessWidget {
 
   String get failureMessage => switch (failure) {
     PlaybackSessionFailure.credentialsUnavailable =>
-      "This source's login needs to be entered again.",
+      "Sign in to this source again.",
     PlaybackSessionFailure.unavailable => "The stream isn't available.",
     PlaybackSessionFailure.timedOut => 'The stream took too long to start.',
   };

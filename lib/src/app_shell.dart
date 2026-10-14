@@ -45,8 +45,7 @@ import 'home_fixture_mode.dart';
 const _railOpen = Color(0xFF141419);
 const _line = Color(0xFF343534);
 const _warmWhite = Color(0xFFF4F0E7);
-const _lastChannelUnavailableNotice =
-    'Last channel is unavailable. Wabbit opened Home instead.';
+const _lastChannelUnavailableNotice = 'Last channel unavailable · opened Home';
 
 enum ShellDestination {
   home,
@@ -1184,7 +1183,7 @@ class _WabbitShellState extends State<WabbitShell> {
       if (!mounted) return;
       setState(() {
         _secondChannelBusy = false;
-        _secondChannelMessage = 'The second channel could not start. The current channel is still playing.';
+        _secondChannelMessage = "Second channel couldn't start";
       });
       return;
     }
@@ -1320,11 +1319,11 @@ class _WabbitShellState extends State<WabbitShell> {
       reason: PlaybackBlockReason.sourceLimit,
       :final effectiveLimit,
     ) =>
-      'This source currently allows ${effectiveLimit ?? 1} stream${effectiveLimit == 1 ? '' : 's'}. Cancel adding a second channel, then open Settings to change the local limit.',
+      "This source allows ${effectiveLimit ?? 1} stream${effectiveLimit == 1 ? '' : 's'} at once",
     PlaybackBlocked(reason: PlaybackBlockReason.globalMaximum) =>
-      'Two streams are already active. Close one before adding another.',
+      'Two streams already playing · close one first',
     PlaybackBlocked(reason: PlaybackBlockReason.managerClosed) =>
-      'Playback is unavailable until Wabbit TV restarts.',
+      'Restart Wabbit TV to play again',
     _ => 'Playback could not start.',
   };
 

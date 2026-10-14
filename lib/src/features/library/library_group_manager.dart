@@ -239,7 +239,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
         if (reset) {
           _initialItemLoadFailed = true;
         } else {
-          _message = 'Could not load more items. Try again.';
+          _message = "Couldn't load more.";
         }
       });
     }
@@ -279,7 +279,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
           _editingName = false;
           _postCommitRefreshFailed = !refreshed;
           _message = !refreshed
-              ? 'The name was saved locally; this view could not refresh.'
+              ? "Name saved · view didn't refresh"
               : result.outcome == PersonalLibraryMutationOutcome.unchanged
               ? 'Name unchanged.'
               : 'Group renamed.';
@@ -288,20 +288,20 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
         setState(
           () => _message = switch (result.outcome) {
             PersonalLibraryMutationOutcome.invalidName =>
-              'Use a group name between 1 and 80 characters.',
+              'Use 1 to 80 characters.',
             PersonalLibraryMutationOutcome.duplicateName =>
               'A group with that name already exists.',
             PersonalLibraryMutationOutcome.limitReached =>
-              'The local group limit has been reached.',
+              'Group limit reached.',
             PersonalLibraryMutationOutcome.missingGroup =>
-              'This group is no longer available.',
-            _ => 'The group was not changed. Try again.',
+              'This group is gone.',
+            _ => 'Group not changed.',
           },
         );
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _message = 'The group was not changed. Try again.');
+        setState(() => _message = 'Group not changed.');
       }
     } finally {
       if (mounted && _busy) {
@@ -329,14 +329,14 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
       if (!result.succeeded) {
         setState(() {
           _postCommitRefreshFailed = false;
-          _message = 'The local change was not saved. Try again.';
+          _message = 'Change not saved.';
         });
         return result;
       }
       if (result.outcome == PersonalLibraryMutationOutcome.unchanged) {
         setState(() {
           _postCommitRefreshFailed = false;
-          _message = 'Already in that position or state.';
+          _message = 'Already there.';
         });
         return result;
       }
@@ -346,9 +346,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
       if (!mounted) return null;
       setState(() {
         _postCommitRefreshFailed = !refreshed;
-        _message = refreshed
-            ? changedMessage
-            : 'The change was saved locally; this view could not refresh.';
+        _message = refreshed ? changedMessage : "Saved · view didn't refresh";
       });
       await afterChanged?.call();
       return result;
@@ -356,7 +354,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
       if (mounted) {
         setState(() {
           _postCommitRefreshFailed = false;
-          _message = 'The local change was not saved. Try again.';
+          _message = 'Change not saved.';
         });
       }
       return null;
@@ -377,8 +375,8 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
       setState(() {
         _postCommitRefreshFailed = !refreshed;
         _message = refreshed
-            ? 'View refreshed. The local change remains saved.'
-            : 'The change is saved locally; this view still could not refresh.';
+            ? 'View refreshed.'
+            : "Saved · view still didn't refresh";
       });
     } finally {
       if (mounted && _busy) {
@@ -392,7 +390,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
     final group = _group!;
     await _mutate(
       () => widget.port.deleteGroup(group.collectionId!),
-      changedMessage: 'Group removed. Its items remain in Wabbit.',
+      changedMessage: 'Group removed.',
       refreshGroup: false,
     );
     if (!mounted || _message?.startsWith('Group removed') != true) return;
@@ -598,7 +596,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
       ),
       const SizedBox(height: 8),
       const Text(
-        'Groups may contain Live, Movies, and Series together.',
+        'Mix channels, movies and series.',
         style: TextStyle(color: _quietText, fontSize: 14),
       ),
       const SizedBox(height: 18),
@@ -759,7 +757,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
                               pinned: !group.isPinned,
                             ),
                             changedMessage: group.isPinned
-                                ? 'Group removed from Home. Its items are unchanged.'
+                                ? 'Removed from Home.'
                                 : 'Group pinned to Home.',
                           ),
                         ),
@@ -912,7 +910,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
           groupId: group.collectionId!,
           libraryItemId: id,
         ),
-        'Item removed from this group. It remains in Wabbit.',
+        'Removed from group.',
         preserveIdentity: false,
       ),
     );
@@ -943,93 +941,92 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
     );
   }
 
-  Widget _manageFavoritesBody(
-    PersonalLibraryDirectoryEntry favorites,
-  ) => ListView(
-    padding: const EdgeInsets.all(20),
-    children: [
-      const Text(
-        'Favorites',
-        style: TextStyle(
-          color: _warmWhite,
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-      const SizedBox(height: 8),
-      Text(
-        '${favorites.itemCount} items · newest saved first',
-        style: const TextStyle(color: _quietText, fontSize: 14),
-      ),
-      const SizedBox(height: 8),
-      const Text(
-        'Pin Favorites to Home or change its place among pinned shelves. Favorite item order is automatic.',
-        style: TextStyle(color: _quietText, fontSize: 14, height: 1.4),
-      ),
-      const SizedBox(height: 20),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
+  Widget _manageFavoritesBody(PersonalLibraryDirectoryEntry favorites) =>
+      ListView(
+        padding: const EdgeInsets.all(20),
         children: [
-          _ManagerAction(
-            focusNode: _primaryFocus,
-            label: favorites.isPinned ? 'Unpin Home' : 'Pin to Home',
-            enabled: !_busy,
-            onPressed: () => _mutate(
-              () => widget.port.setPinned(
-                collection: favorites.reference,
-                pinned: !favorites.isPinned,
-              ),
-              changedMessage: favorites.isPinned
-                  ? 'Favorites removed from Home. Saved items are unchanged.'
-                  : 'Favorites pinned to Home.',
-              restoreFocus: _primaryFocus,
+          const Text(
+            'Favorites',
+            style: TextStyle(
+              color: _warmWhite,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          if (favorites.isPinned) ...[
-            _ManagerAction(
-              focusNode: _moveShelfUpFocus,
-              label: 'Home shelf up',
-              enabled: !_busy,
-              onPressed: () => _mutate(
-                () => widget.port.movePinned(
-                  collection: favorites.reference,
-                  direction: PersonalLibraryMoveDirection.up,
+          const SizedBox(height: 8),
+          Text(
+            '${favorites.itemCount} items · newest saved first',
+            style: const TextStyle(color: _quietText, fontSize: 14),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Pin Favorites to show it on Home.',
+            style: TextStyle(color: _quietText, fontSize: 14, height: 1.4),
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _ManagerAction(
+                focusNode: _primaryFocus,
+                label: favorites.isPinned ? 'Unpin Home' : 'Pin to Home',
+                enabled: !_busy,
+                onPressed: () => _mutate(
+                  () => widget.port.setPinned(
+                    collection: favorites.reference,
+                    pinned: !favorites.isPinned,
+                  ),
+                  changedMessage: favorites.isPinned
+                      ? 'Removed from Home.'
+                      : 'Favorites pinned to Home.',
+                  restoreFocus: _primaryFocus,
                 ),
-                changedMessage: 'Favorites shelf moved up.',
-                restoreFocus: _moveShelfUpFocus,
               ),
-            ),
-            _ManagerAction(
-              focusNode: _moveShelfDownFocus,
-              label: 'Home shelf down',
-              enabled: !_busy,
-              onPressed: () => _mutate(
-                () => widget.port.movePinned(
-                  collection: favorites.reference,
-                  direction: PersonalLibraryMoveDirection.down,
+              if (favorites.isPinned) ...[
+                _ManagerAction(
+                  focusNode: _moveShelfUpFocus,
+                  label: 'Home shelf up',
+                  enabled: !_busy,
+                  onPressed: () => _mutate(
+                    () => widget.port.movePinned(
+                      collection: favorites.reference,
+                      direction: PersonalLibraryMoveDirection.up,
+                    ),
+                    changedMessage: 'Favorites shelf moved up.',
+                    restoreFocus: _moveShelfUpFocus,
+                  ),
                 ),
-                changedMessage: 'Favorites shelf moved down.',
-                restoreFocus: _moveShelfDownFocus,
-              ),
+                _ManagerAction(
+                  focusNode: _moveShelfDownFocus,
+                  label: 'Home shelf down',
+                  enabled: !_busy,
+                  onPressed: () => _mutate(
+                    () => widget.port.movePinned(
+                      collection: favorites.reference,
+                      direction: PersonalLibraryMoveDirection.down,
+                    ),
+                    changedMessage: 'Favorites shelf moved down.',
+                    restoreFocus: _moveShelfDownFocus,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          if (_message != null) ...[
+            const SizedBox(height: 16),
+            _LiveMessage(_message!),
+          ],
+          if (_postCommitRefreshFailed) ...[
+            const SizedBox(height: 8),
+            _ManagerAction(
+              label: _busy ? 'Refreshing…' : 'Retry view',
+              enabled: !_busy,
+              onPressed: _retryCommittedRead,
             ),
           ],
         ],
-      ),
-      if (_message != null) ...[
-        const SizedBox(height: 16),
-        _LiveMessage(_message!),
-      ],
-      if (_postCommitRefreshFailed) ...[
-        const SizedBox(height: 8),
-        _ManagerAction(
-          label: _busy ? 'Refreshing…' : 'Retry view',
-          enabled: !_busy,
-          onPressed: _retryCommittedRead,
-        ),
-      ],
-    ],
-  );
+      );
 
   Widget _itemLedger(PersonalLibraryDirectoryEntry group) {
     if (_loading) {
@@ -1045,7 +1042,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                'Could not load this local group.',
+                "Couldn't load this group.",
                 textAlign: TextAlign.center,
                 style: TextStyle(color: _quietText, fontSize: 14),
               ),
@@ -1065,7 +1062,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
         child: Padding(
           padding: EdgeInsets.all(24),
           child: Text(
-            'This group is empty. Organize an item to add it here.',
+            'Empty. Add items with the bookmark button.',
             style: TextStyle(color: _quietText, fontSize: 14),
           ),
         ),
@@ -1121,7 +1118,7 @@ class _LibraryGroupManagerPaneState extends State<LibraryGroupManagerPane> {
         ),
         const SizedBox(height: 10),
         const Text(
-          'The group will be removed. Its items remain in Wabbit and in their sources.',
+          'Its items stay in Wabbit.',
           style: TextStyle(color: _quietText, fontSize: 14, height: 1.4),
         ),
         const SizedBox(height: 22),

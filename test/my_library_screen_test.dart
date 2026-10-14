@@ -278,10 +278,7 @@ void main() {
         find.byKey(const ValueKey('continuation-error-copy')),
         findsOneWidget,
       );
-      expect(
-        find.text('This item cannot be opened from the imported catalog.'),
-        findsOneWidget,
-      );
+      expect(find.text("This item can't be opened."), findsOneWidget);
       expect(handoffs, isEmpty);
     },
   );
@@ -469,12 +466,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('World News Now'), findsOneWidget);
-    expect(
-      find.text(
-        'My Library could not refresh. Your last loaded library is unchanged.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text("Couldn't refresh My Library."), findsOneWidget);
   });
 
   testWidgets('failed section selection leaves the current list unchanged', (
@@ -489,12 +481,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('World News Now'), findsOneWidget);
-    expect(
-      find.text(
-        'That saved list could not be opened. Your current list is unchanged.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text("Couldn't open that group."), findsOneWidget);
     expect(find.text('Favorites'), findsNWidgets(2));
 
     data.failingSections.remove('living');

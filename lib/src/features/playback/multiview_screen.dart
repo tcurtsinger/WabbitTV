@@ -148,9 +148,9 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
     final prior = previousOwner ?? _lastAudioOwner;
     final target = actual ?? prior ?? fallbackTarget ?? _deckTarget;
     final message = actual == null
-        ? 'No channel is audible. Select a channel to restore audio.'
+        ? 'Muted. Pick a channel to hear it.'
         : transferSucceeded == false && actual == prior
-        ? 'Audio stayed with the current channel. Try again.'
+        ? "Couldn't switch audio."
         : null;
     final ownerChanged = actual != _lastAudioOwner;
     setState(() {
@@ -419,7 +419,7 @@ class _MultiviewDeck extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              selected?.title ?? 'Select a channel to restore audio',
+              selected?.title ?? 'Pick a channel to hear it',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(

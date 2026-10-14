@@ -374,7 +374,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
         _initialLoadFailed = _categories.isEmpty;
         _failure = _initialLoadFailed
             ? null
-            : 'Visibility could not be updated. Showing your last local view.';
+            : "Couldn't update · showing last view";
       });
       return _DirectoryLoadResult.failed;
     }
@@ -431,7 +431,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
         _loadingItems = false;
         _loadingMore = false;
         _itemLoadFailed = reset && _items.isEmpty;
-        _failure = _itemLoadFailed ? null : 'Could not load more items. Your last local view is still available.';
+        _failure = _itemLoadFailed ? null : "Couldn't load more.";
       });
       return _ItemLoadResult.failed;
     }
@@ -532,8 +532,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
       _loadingItems = false;
       _loadingMore = false;
       _initialLoadFailed = false;
-      _failure =
-          'Visibility could not be updated. Showing your last local view.';
+      _failure = "Couldn't update · showing last view";
     });
     _lastUsableSnapshot = snapshot;
   }
@@ -616,10 +615,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
       }
     } catch (_) {
       if (!mounted || generation != _generation || kind != _kind) return;
-      setState(
-        () => _failure =
-            'Visibility could not be saved. No local change was made.',
-      );
+      setState(() => _failure = "Couldn't save.");
       _categoryActionFocus.requestFocus();
     }
   }
@@ -890,8 +886,8 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
     widget.onBusyChanged?.call(false);
     _announce(
       hidden
-          ? 'All ${kind.label} categories hidden locally. Individual item choices stay unchanged.'
-          : 'All ${kind.label} categories restored locally. Individual item choices stay unchanged.',
+          ? 'All ${kind.label} categories hidden.'
+          : 'All ${kind.label} categories restored.',
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && request == _bulkRequest && kind == _kind) {
@@ -904,8 +900,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
     });
   }
 
-  void _announceBulkWait() =>
-      _announce('Please wait while category visibility is updated.');
+  void _announceBulkWait() => _announce('Saving…');
 
   Future<void> _toggleItem(LibraryVisibilityItem item) async {
     if (_bulkSaving) {
@@ -913,7 +908,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
       return;
     }
     if (!_pendingItemWrites.add(item.catalogItemId)) {
-      _announce('Please wait while item visibility is updated.');
+      _announce('Saving…');
       return;
     }
     final targetHidden = !item.hidden;
@@ -965,10 +960,7 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
       if (!mounted || generation != _generation || _selected?.ref != category) {
         return;
       }
-      setState(
-        () => _failure =
-            'Visibility could not be saved. No local change was made.',
-      );
+      setState(() => _failure = "Couldn't save.");
       _requestItemFocus(item.catalogItemId);
     } finally {
       _pendingItemWrites.remove(item.catalogItemId);
@@ -1421,7 +1413,7 @@ class _Header extends StatelessWidget {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  '$sourceName · Local visibility only',
+                  '$sourceName · this device only',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: _quietText, fontSize: 14),
@@ -1738,8 +1730,8 @@ class _CategoryToolbar extends StatelessWidget {
             liveRegion: true,
             child: Text(
               failureSavedLocally
-                  ? 'Category visibility was saved locally; this view could not refresh'
-                  : 'Category visibility was not changed',
+                  ? "Saved · view didn't refresh"
+                  : 'Nothing changed',
               style: TextStyle(color: _amber, fontSize: 14),
             ),
           ),
@@ -1780,7 +1772,7 @@ class _CategoryToolbar extends StatelessWidget {
     }
     if (confirming) {
       final confirmation =
-          'Hide all ${_formatCount(providerCategoryCount)} ${kind.label} categories from $sourceName? Individual item choices stay unchanged.';
+          'Hide all ${_formatCount(providerCategoryCount)} ${kind.label} categories?';
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1809,7 +1801,7 @@ class _CategoryToolbar extends StatelessWidget {
                     label: 'Cancel',
                     focusNode: cancelFocus,
                     semanticHint:
-                        'Cancel hiding all ${_formatCount(providerCategoryCount)} ${kind.label} categories from $sourceName. Individual item choices stay unchanged.',
+                        'Cancel hiding all ${_formatCount(providerCategoryCount)} ${kind.label} categories.',
                     onPressed: onCancel,
                     onRight: confirmFocus.requestFocus,
                     onDown: onDown,
@@ -1822,7 +1814,7 @@ class _CategoryToolbar extends StatelessWidget {
                     label: 'Hide ${_formatCount(providerCategoryCount)}',
                     focusNode: confirmFocus,
                     semanticHint:
-                        'Hide all ${_formatCount(providerCategoryCount)} ${kind.label} categories from $sourceName. Individual item choices stay unchanged.',
+                        'Hide all ${_formatCount(providerCategoryCount)} ${kind.label} categories.',
                     onPressed: onConfirmHideAll,
                     primary: true,
                     onLeft: cancelFocus.requestFocus,
@@ -1855,7 +1847,7 @@ class _CategoryToolbar extends StatelessWidget {
                   focusNode: hideAllFocus,
                   enabled: canHideAll,
                   semanticHint: canHideAll
-                      ? 'Hide all provider categories for ${kind.label}. Individual item choices stay unchanged.'
+                      ? 'Hide all provider categories for ${kind.label}.'
                       : 'All provider categories are already hidden.',
                   onPressed: onRequestHideAll,
                   onRight: canRestoreAll
@@ -1872,7 +1864,7 @@ class _CategoryToolbar extends StatelessWidget {
                   focusNode: restoreAllFocus,
                   enabled: canRestoreAll,
                   semanticHint: canRestoreAll
-                      ? 'Restore all provider categories for ${kind.label}. Individual item choices stay unchanged.'
+                      ? 'Restore all provider categories for ${kind.label}.'
                       : 'All provider categories are already included.',
                   onPressed: onRestoreAll,
                   onLeft: canHideAll ? hideAllFocus.requestFocus : null,
@@ -2601,9 +2593,7 @@ class _NoItems extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
     child: Text(
-      hiddenOnly
-          ? 'No hidden items in this category.'
-          : 'No available items in this category.',
+      hiddenOnly ? 'Nothing hidden here.' : 'Nothing in this category.',
       style: const TextStyle(color: _quietText, fontSize: 16),
     ),
   );
@@ -2634,11 +2624,6 @@ class _InlineItemFailure extends StatelessWidget {
             fontWeight: FontWeight.w800,
           ),
         ),
-        const SizedBox(height: 8),
-        const Text(
-          'Try this local category again.',
-          style: TextStyle(color: _quietText, fontSize: 14),
-        ),
         const SizedBox(height: 16),
         _QuietAction(
           label: 'Retry items',
@@ -2668,19 +2653,13 @@ class _InitialLoadFailure extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         const Text(
-          'Visibility could not be loaded',
+          "Couldn't load visibility",
           style: TextStyle(
             color: _warmWhite,
             fontFamily: Cinema.display,
             fontSize: 22,
             fontWeight: FontWeight.w800,
           ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Try again. Your local visibility preferences are unchanged.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: _quietText, fontSize: 16),
         ),
         const SizedBox(height: 18),
         _QuietAction(
@@ -2720,8 +2699,8 @@ class _EmptyVisibility extends StatelessWidget {
         const SizedBox(height: 8),
         Text(
           hiddenOnly
-              ? 'Turn off Hidden only to return to your full local library.'
-              : 'This source has no imported categories or items yet.',
+              ? 'Turn off Hidden only to see everything.'
+              : 'Nothing imported from this source yet.',
           textAlign: TextAlign.center,
           style: const TextStyle(color: _quietText, fontSize: 16),
         ),
