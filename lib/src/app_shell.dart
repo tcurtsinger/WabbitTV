@@ -2345,16 +2345,20 @@ class _ShellBody extends StatelessWidget {
               item.artworkKey != null && data is DatabaseMyLibraryData
               ? data.artworkLocatorFor(item.id)
               : null;
-          return SourceArtwork(
-            locator: locator,
-            kind: switch (item.kind) {
-              MyLibraryMediaKind.live => SourceMediaKind.live,
-              MyLibraryMediaKind.movie => SourceMediaKind.movies,
-              MyLibraryMediaKind.series => SourceMediaKind.series,
-            },
-            loader: artworkProvider,
-            focused: focused,
-            loadWhenVisible: true,
+          return LayoutBuilder(
+            builder: (context, constraints) => SourceArtwork(
+              locator: locator,
+              kind: switch (item.kind) {
+                MyLibraryMediaKind.live => SourceMediaKind.live,
+                MyLibraryMediaKind.movie => SourceMediaKind.movies,
+                MyLibraryMediaKind.series => SourceMediaKind.series,
+              },
+              loader: artworkProvider,
+              focused: focused,
+              loadWhenVisible: true,
+              width: constraints.maxWidth,
+              height: constraints.maxHeight,
+            ),
           );
         },
       );

@@ -604,7 +604,7 @@ void main() {
         // Home has no page title, so it is recognized by its screen.
         final destinationMarker = switch (destination) {
           'Home' => find.byType(HomeScreen),
-          'My Library' => find.text('My Library could not be loaded'),
+          'My Library' => find.text("Can't load My Library"),
           _ => find.text(destination),
         };
         await _pumpUntil(tester, () => destinationMarker.evaluate().isNotEmpty);

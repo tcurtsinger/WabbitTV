@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart' show FrameCallback;
 import 'package:flutter/services.dart';
 
+import '../../cinema.dart';
 import '../artwork/artwork_loader.dart';
 import '../browse/minimal_continuations.dart';
 import '../browse/playback_handoff.dart';
@@ -19,22 +21,21 @@ import '../sources/source_models.dart';
 // FORM: matte graphite, Segoe UI hierarchy, 6 px forms, 1 px lines, and one
 // precise 2 px amber focus edge; no mutation controls or storefront furniture.
 
-const _graphite = Color(0xFF111212);
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
+const _graphite = Cinema.ink;
+const _surface = Color(0xFF141419);
+const _raised = Color(0xFF1E1E23);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.faint;
+const _amber = Cinema.amber;
 
 /// A read-only section in the user's saved library.
 enum MyLibrarySectionKind { favorites, customGroup }
 
 /// The media identity needed to hand a saved row back to the app shell.
 enum MyLibraryMediaKind {
-  live('LIVE'),
-  movie('MOVIE'),
-  series('SERIES');
+  live('Channel'),
+  movie('Movie'),
+  series('Series');
 
   const MyLibraryMediaKind(this.label);
   final String label;
@@ -207,8 +208,8 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
   static const _directoryLimit = 200;
   double get _textScale =>
       MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
-  double get _directoryRowExtent => 56 + (_textScale - 1) * 16;
-  double get _itemRowExtent => 64 + (_textScale - 1) * 28;
+  double get _directoryRowExtent => 44 + (_textScale - 1) * 16;
+  double get _itemRowExtent => 68 + (_textScale - 1) * 28;
 
   final ScrollController _directoryScroll = ScrollController();
   final ScrollController _itemScroll = ScrollController();
@@ -405,7 +406,7 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
           _initialDirectoryFailure = true;
         }
       });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      _afterNextFrame((_) {
         if (!mounted || request != _directoryRequest) return;
         if (_initialDirectoryFailure) _retryFocus.requestFocus();
       });
@@ -609,7 +610,7 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
     String? focusedItemId,
     String? focusedSectionId,
   }) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _afterNextFrame((_) {
       if (!mounted) return;
       if (_directoryScroll.hasClients) {
         _directoryScroll.jumpTo(
@@ -627,7 +628,7 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
           ),
         );
       }
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      _afterNextFrame((_) {
         if (!mounted) return;
         final focusedItem = focusedItemId ?? widget.session.focusedItemId;
         final itemIndex = _items.indexWhere((item) => item.id == focusedItem);
@@ -656,7 +657,7 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
   }
 
   void _focusEntryTarget() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _afterNextFrame((_) {
       if (!mounted) return;
       if (_initialDirectoryFailure) {
         _retryFocus.requestFocus();
@@ -717,23 +718,34 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
     }
   }
 
+  /// Scrolls row [index] into view, centered, only when it is not already
+  /// fully visible, so moving between visible rows never shifts the list.
+  void _reveal(ScrollController controller, int index, double extent) {
+    if (!controller.hasClients) return;
+    final position = controller.position;
+    final start = index * extent;
+    final top = controller.offset;
+    if (start >= top && start + extent <= top + position.viewportDimension) {
+      return;
+    }
+    controller.jumpTo(
+      (start - (position.viewportDimension - extent) / 2).clamp(
+        0,
+        position.maxScrollExtent,
+      ),
+    );
+  }
+
   void _requestSectionFocusAt(int index) {
     if (index < 0 || index >= _sections.length) return;
     final section = _sections[index];
-    if (_directoryScroll.hasClients) {
-      _directoryScroll.jumpTo(
-        (index * _directoryRowExtent).clamp(
-          0,
-          _directoryScroll.position.maxScrollExtent,
-        ),
-      );
-    }
+    _reveal(_directoryScroll, index, _directoryRowExtent);
     final mountedNode = _mountedSectionNodes[section.id];
     if (mountedNode != null) {
       mountedNode.requestFocus();
       return;
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _afterNextFrame((_) {
       if (mounted) _mountedSectionNodes[section.id]?.requestFocus();
     });
   }
@@ -741,17 +753,13 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
   void _requestItemFocusAt(int index) {
     if (index < 0 || index >= _items.length) return;
     final item = _items[index];
-    if (_itemScroll.hasClients) {
-      _itemScroll.jumpTo(
-        (index * _itemRowExtent).clamp(0, _itemScroll.position.maxScrollExtent),
-      );
-    }
+    _reveal(_itemScroll, index, _itemRowExtent);
     final mountedNode = _mountedItemNodes[item.id];
     if (mountedNode != null) {
       mountedNode.requestFocus();
       return;
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _afterNextFrame((_) {
       if (mounted) _mountedItemNodes[item.id]?.requestFocus();
     });
   }
@@ -781,8 +789,17 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
     _requestSectionFocusAt(index < 0 ? 0 : index);
   }
 
+  /// Runs [callback] after the next frame and makes sure that frame comes.
+  /// A key press alone schedules none, so a focus move would otherwise wait
+  /// for some unrelated repaint.
+  void _afterNextFrame(FrameCallback callback) {
+    WidgetsBinding.instance
+      ..addPostFrameCallback(callback)
+      ..ensureVisualUpdate();
+  }
+
   void _focusFirstLedgerTarget() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _afterNextFrame((_) {
       if (!mounted) return;
       if (_itemFailure) {
         _retryFocus.requestFocus();
@@ -797,7 +814,7 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
   void _openDirectory() {
     if (!_directoryOpen) setState(() => _directoryOpen = true);
     widget.session.directoryWasOpen = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _afterNextFrame((_) {
       if (!mounted) return;
       final index = _sections.indexWhere(
         (section) => section.id == _selected?.id,
@@ -1060,7 +1077,7 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
           builder: (context, constraints) {
             final narrow = constraints.maxWidth < 780;
             _isNarrow = narrow;
-            final horizontal = narrow ? 24.0 : 40.0;
+            final horizontal = narrow ? 24.0 : 32.0;
             return SafeArea(
               left: false,
               child: Padding(
@@ -1147,10 +1164,8 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
   Widget _buildWide() => Row(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      SizedBox(width: 270, child: _buildDirectory(includeHeader: true)),
+      SizedBox(width: 220, child: _buildDirectory(includeHeader: true)),
       const SizedBox(width: 24),
-      const VerticalDivider(width: 1, thickness: 1, color: _line),
-      const SizedBox(width: 34),
       Expanded(child: _buildLedger()),
     ],
   );
@@ -1191,40 +1206,41 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
   Widget _buildDirectory({required bool includeHeader}) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      if (includeHeader) ...[const _PageHeading(), const SizedBox(height: 42)],
+      if (includeHeader) ...[const _PageHeading(), const SizedBox(height: 22)],
       Row(
         children: [
           const Expanded(
             child: Text(
-              'Library',
-              style: TextStyle(color: _quietText, fontSize: 15),
+              'Groups',
+              style: TextStyle(
+                color: _quietText,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.3,
+              ),
             ),
           ),
           if (widget.onCreateGroup != null)
-            SizedBox(
-              width: 122,
-              child: _FocusableControl(
-                key: const ValueKey('my-library-create-group'),
-                focusNode: _createGroupFocus,
-                onFocused: _focusedOwned,
-                onPressed: widget.onCreateGroup!,
-                onLeft: widget.onOpenRail,
-                onDown: () => _requestSectionFocusAt(0),
-                child: const Center(
-                  child: Text(
-                    'Create group',
-                    style: TextStyle(
-                      color: _warmWhite,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
+            _FocusableControl(
+              key: const ValueKey('my-library-create-group'),
+              focusNode: _createGroupFocus,
+              onFocused: _focusedOwned,
+              onPressed: widget.onCreateGroup!,
+              onLeft: widget.onOpenRail,
+              onDown: () => _requestSectionFocusAt(0),
+              compact: true,
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add_rounded, size: 16),
+                  SizedBox(width: 4),
+                  Text('New group'),
+                ],
               ),
             ),
         ],
       ),
-      const SizedBox(height: 12),
+      const SizedBox(height: 8),
       Expanded(
         child: ListView.builder(
           key: const ValueKey('my-library-directory'),
@@ -1286,46 +1302,45 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: _warmWhite,
-                  fontSize: 27,
-                  fontWeight: FontWeight.w700,
+                  fontFamily: Cinema.display,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
                   letterSpacing: -0.4,
                 ),
               ),
             ),
             if (widget.onManageGroup != null) ...[
               const SizedBox(width: 12),
-              SizedBox(
-                width: 132,
-                child: _FocusableControl(
-                  key: const ValueKey('my-library-manage-group'),
-                  focusNode: _manageGroupFocus,
-                  onFocused: _focusedOwned,
-                  onPressed: () => widget.onManageGroup!(selected),
-                  onLeft: _focusSelectedSection,
-                  onDown: _focusFirstLedgerTarget,
-                  child: Center(
-                    child: Text(
+              _FocusableControl(
+                key: const ValueKey('my-library-manage-group'),
+                focusNode: _manageGroupFocus,
+                onFocused: _focusedOwned,
+                onPressed: () => widget.onManageGroup!(selected),
+                onLeft: _focusSelectedSection,
+                onDown: _focusFirstLedgerTarget,
+                compact: true,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.tune_rounded, size: 16),
+                    const SizedBox(width: 6),
+                    Text(
                       selected.kind == MyLibrarySectionKind.favorites
                           ? 'Manage Favorites'
                           : 'Manage group',
-                      style: TextStyle(
-                        color: _warmWhite,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                  ),
+                  ],
                 ),
               ),
             ],
           ],
         ),
-        const SizedBox(height: 5),
+        const SizedBox(height: 2),
         Text(
           '${_formatCount(_totalCount ?? selected.itemCount)} items',
-          style: const TextStyle(color: _quietText, fontSize: 15),
+          style: const TextStyle(color: _quietText, fontSize: 13),
         ),
         if (_recoveryMessage != null) ...[
           const SizedBox(height: 10),
@@ -1338,7 +1353,6 @@ class _MyLibraryScreenState extends State<MyLibraryScreen> {
           ),
         ],
         const SizedBox(height: 12),
-        const Divider(height: 1, color: _line),
         Expanded(
           child: _loadingItems
               ? const _LedgerSkeleton()
@@ -1439,24 +1453,17 @@ class _PageHeading extends StatelessWidget {
   const _PageHeading();
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        'My Library',
-        style: TextStyle(
-          color: _warmWhite,
-          fontSize: 31,
-          fontWeight: FontWeight.w700,
-          letterSpacing: -0.7,
-        ),
-      ),
-      SizedBox(height: 5),
-      Text(
-        'Your saved library',
-        style: TextStyle(color: _quietText, fontSize: 15),
-      ),
-    ],
+  Widget build(BuildContext context) => const Text(
+    'My Library',
+    maxLines: 1,
+    overflow: TextOverflow.ellipsis,
+    style: TextStyle(
+      color: _warmWhite,
+      fontFamily: Cinema.display,
+      fontSize: 28,
+      fontWeight: FontWeight.w800,
+      letterSpacing: -0.6,
+    ),
   );
 }
 
@@ -1510,6 +1517,12 @@ class _SectionRowState extends State<_SectionRow> {
     super.dispose();
   }
 
+  Color get ink => _focused
+      ? Cinema.amberInk
+      : widget.selected
+      ? _amber
+      : Cinema.quiet;
+
   @override
   Widget build(BuildContext context) => Focus(
     focusNode: _focusNode,
@@ -1545,21 +1558,26 @@ class _SectionRowState extends State<_SectionRow> {
       selected: widget.selected,
       label:
           '${widget.section.name}, ${_formatCount(widget.section.itemCount)} items',
-      child: InkWell(
+      child: GestureDetector(
         onTap: () {
           _focusNode.requestFocus();
           widget.onSelect();
         },
-        child: Container(
+        child: AnimatedContainer(
           key: ValueKey('my-library-section-row-${widget.section.id}'),
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          duration: const Duration(milliseconds: 120),
+          margin: const EdgeInsets.symmetric(vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: widget.selected ? _raised : Colors.transparent,
-            border: Border.all(
-              color: _focused ? _amber : Colors.transparent,
-              width: 2,
-            ),
-            borderRadius: BorderRadius.circular(6),
+            // Focus fills the pill solid amber: the glow ring would show
+            // through the selected pill's translucent fill.
+            color: _focused
+                ? _amber
+                : widget.selected
+                ? Cinema.glass
+                : const Color(0x00000000),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: _focused ? [Cinema.focusGlow.last] : const [],
           ),
           child: Row(
             children: [
@@ -1567,38 +1585,38 @@ class _SectionRowState extends State<_SectionRow> {
                 widget.section.kind == MyLibrarySectionKind.favorites
                     ? Icons.bookmark_border
                     : Icons.video_library_outlined,
-                size: 20,
-                color: widget.selected ? _warmWhite : _quietText,
+                size: 18,
+                color: ink,
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   widget.section.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: widget.selected ? _warmWhite : _quietText,
-                    fontSize: 16,
+                    color: ink,
+                    fontSize: 14,
                     fontWeight: widget.selected
-                        ? FontWeight.w600
-                        : FontWeight.w500,
+                        ? FontWeight.w700
+                        : FontWeight.w600,
                   ),
                 ),
               ),
               const SizedBox(width: 8),
               if (widget.pending)
-                const SizedBox(
+                SizedBox(
                   width: 14,
                   height: 14,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: _quietText,
-                  ),
+                  child: CircularProgressIndicator(strokeWidth: 2, color: ink),
                 )
               else
                 Text(
                   _formatCount(widget.section.itemCount),
-                  style: const TextStyle(color: _quietText, fontSize: 13),
+                  style: TextStyle(
+                    color: _focused ? Cinema.amberInk : _quietText,
+                    fontSize: 12,
+                  ),
                 ),
             ],
           ),
@@ -1639,6 +1657,7 @@ class _ItemRow extends StatefulWidget {
 class _ItemRowState extends State<_ItemRow> {
   late final FocusNode _focusNode;
   bool _focused = false;
+  bool _hovered = false;
 
   @override
   void initState() {
@@ -1704,111 +1723,133 @@ class _ItemRowState extends State<_ItemRow> {
                 const CustomSemanticsAction(label: 'Organize item'):
                     widget.onOrganize!,
               },
-        child: InkWell(
-          onTap: () {
-            _focusNode.requestFocus();
-            widget.onActivate();
-          },
-          child: Container(
-            key: ValueKey('my-library-item-${widget.item.id}'),
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            decoration: BoxDecoration(
-              color: _focused ? _raised : Colors.transparent,
-              border: Border.all(
-                color: _focused ? _amber : Colors.transparent,
-                width: 2,
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: GestureDetector(
+            onTap: () {
+              _focusNode.requestFocus();
+              widget.onActivate();
+            },
+            child: AnimatedContainer(
+              key: ValueKey('my-library-item-${widget.item.id}'),
+              duration: const Duration(milliseconds: 120),
+              margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              padding: const EdgeInsets.fromLTRB(6, 0, 10, 0),
+              decoration: BoxDecoration(
+                // Opaque when focused so the ring stays a ring.
+                color: _focused
+                    ? _raised
+                    : _hovered
+                    ? Cinema.glass
+                    : const Color(0x00000000),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: _focused ? Cinema.focusGlow : const [],
               ),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              children: [
-                SizedBox(
-                  key: ValueKey('my-library-artwork-${widget.item.id}'),
-                  width: 50,
-                  height: 36,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child:
-                        widget.artworkBuilder?.call(
-                          context,
-                          widget.item,
-                          _focused,
-                        ) ??
-                        _ArtworkPlaceholder(kind: widget.item.kind),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.item.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: widget.item.isAvailable
-                              ? _warmWhite
-                              : _quietText,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(text: widget.item.kind.label),
-                            const TextSpan(text: '   |   '),
-                            TextSpan(
-                              text: availability ?? widget.item.sourceLabel,
-                            ),
-                          ],
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: availability == null ? _quietText : _amber,
-                          fontSize: 12,
-                          fontWeight: availability == null
-                              ? FontWeight.w400
-                              : FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                if (widget.onOrganize != null) ...[
-                  Tooltip(
-                    message: 'Organize',
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () {
-                        _focusNode.requestFocus();
-                        widget.onOrganize!();
-                      },
-                      child: const Padding(
-                        padding: EdgeInsets.all(7),
-                        child: Icon(
-                          Icons.bookmark_add_outlined,
-                          size: 18,
-                          color: _quietText,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 88,
+                    child: Center(
+                      child: SizedBox(
+                        key: ValueKey('my-library-artwork-${widget.item.id}'),
+                        width: widget.item.kind == MyLibraryMediaKind.live
+                            ? 88
+                            : 34,
+                        height: 50,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(
+                            widget.item.kind == MyLibraryMediaKind.live
+                                ? 10
+                                : 6,
+                          ),
+                          child:
+                              widget.artworkBuilder?.call(
+                                context,
+                                widget.item,
+                                _focused,
+                              ) ??
+                              _ArtworkPlaceholder(kind: widget.item.kind),
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.item.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: widget.item.isAvailable
+                                ? _warmWhite
+                                : _quietText,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${widget.item.kind.label} · ${availability ?? widget.item.sourceLabel}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: availability == null ? Cinema.quiet : _amber,
+                            fontSize: 12.5,
+                            fontWeight: availability == null
+                                ? FontWeight.w400
+                                : FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (!widget.item.isAvailable) ...[
+                    const SizedBox(width: 8),
+                    const Icon(
+                      Icons.link_off_outlined,
+                      color: _quietText,
+                      size: 20,
+                    ),
+                  ],
+                  if (widget.onOrganize != null) ...[
+                    const SizedBox(width: 8),
+                    Visibility(
+                      visible: _focused || _hovered,
+                      maintainSize: true,
+                      maintainAnimation: true,
+                      maintainState: true,
+                      child: Tooltip(
+                        message: 'Organize',
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            _focusNode.requestFocus();
+                            widget.onOrganize!();
+                          },
+                          child: Container(
+                            width: 34,
+                            height: 34,
+                            decoration: const BoxDecoration(
+                              color: Color(0xB80B0B0E),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.bookmark_add_outlined,
+                              size: 17,
+                              color: _warmWhite,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-                Icon(
-                  widget.item.isAvailable
-                      ? Icons.chevron_right
-                      : Icons.link_off_outlined,
-                  color: _quietText,
-                  size: 23,
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -1823,7 +1864,7 @@ class _ArtworkPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ColoredBox(
-    color: _raised,
+    color: kind == MyLibraryMediaKind.live ? const Color(0xFF3A3A43) : _raised,
     child: Icon(
       switch (kind) {
         MyLibraryMediaKind.live => Icons.live_tv_outlined,
@@ -1862,35 +1903,28 @@ class _DirectoryLauncher extends StatelessWidget {
     onDown: onDown,
     child: Row(
       children: [
-        const Icon(Icons.bookmarks_outlined, color: _quietText, size: 19),
+        const Icon(Icons.bookmarks_outlined, size: 18),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             selected.name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _warmWhite,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-            ),
           ),
         ),
         Text(
           _formatCount(selected.itemCount),
-          style: const TextStyle(color: _quietText, fontSize: 12),
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
         ),
         const SizedBox(width: 8),
-        Icon(
-          open ? Icons.expand_less : Icons.expand_more,
-          color: _quietText,
-          size: 20,
-        ),
+        Icon(open ? Icons.expand_less : Icons.expand_more, size: 20),
       ],
     ),
   );
 }
 
+/// A pill control: glass at rest, solid amber when focused. Text and icons
+/// inside take its ink color.
 class _FocusableControl extends StatefulWidget {
   const _FocusableControl({
     super.key,
@@ -1901,6 +1935,7 @@ class _FocusableControl extends StatefulWidget {
     this.onLeft,
     this.onUp,
     this.onDown,
+    this.compact = false,
   });
   final FocusNode focusNode;
   final ValueChanged<FocusNode> onFocused;
@@ -1908,66 +1943,98 @@ class _FocusableControl extends StatefulWidget {
   final Widget child;
   final VoidCallback? onLeft, onUp, onDown;
 
+  /// A smaller pill for header actions.
+  final bool compact;
+
   @override
   State<_FocusableControl> createState() => _FocusableControlState();
 }
 
 class _FocusableControlState extends State<_FocusableControl> {
   bool _focused = false;
+  bool _hovered = false;
 
   @override
-  Widget build(BuildContext context) => Focus(
-    focusNode: widget.focusNode,
-    onFocusChange: (focused) {
-      setState(() => _focused = focused);
-      if (focused) widget.onFocused(widget.focusNode);
-    },
-    onKeyEvent: (_, event) {
-      if (event is! KeyDownEvent) return KeyEventResult.ignored;
-      switch (event.logicalKey) {
-        case LogicalKeyboardKey.enter:
-        case LogicalKeyboardKey.select:
-          widget.onPressed();
-          return KeyEventResult.handled;
-        case LogicalKeyboardKey.arrowLeft:
-          widget.onLeft?.call();
-          return widget.onLeft == null
-              ? KeyEventResult.ignored
-              : KeyEventResult.handled;
-        case LogicalKeyboardKey.arrowUp:
-          widget.onUp?.call();
-          return widget.onUp == null
-              ? KeyEventResult.ignored
-              : KeyEventResult.handled;
-        case LogicalKeyboardKey.arrowDown:
-          widget.onDown?.call();
-          return widget.onDown == null
-              ? KeyEventResult.ignored
-              : KeyEventResult.handled;
-        default:
-          return KeyEventResult.ignored;
-      }
-    },
-    child: Semantics(
-      button: true,
-      child: InkWell(
-        onTap: () {
-          widget.focusNode.requestFocus();
-          widget.onPressed();
-        },
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 42),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          decoration: BoxDecoration(
-            color: _surface,
-            border: Border.all(color: _focused ? _amber : _line, width: 2),
-            borderRadius: BorderRadius.circular(6),
+  Widget build(BuildContext context) {
+    final ink = _focused ? Cinema.amberInk : _warmWhite;
+    final height = widget.compact ? 36.0 : 44.0;
+    return Focus(
+      focusNode: widget.focusNode,
+      onFocusChange: (focused) {
+        setState(() => _focused = focused);
+        if (focused) widget.onFocused(widget.focusNode);
+      },
+      onKeyEvent: (_, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        switch (event.logicalKey) {
+          case LogicalKeyboardKey.enter:
+          case LogicalKeyboardKey.select:
+            widget.onPressed();
+            return KeyEventResult.handled;
+          case LogicalKeyboardKey.arrowLeft:
+            widget.onLeft?.call();
+            return widget.onLeft == null
+                ? KeyEventResult.ignored
+                : KeyEventResult.handled;
+          case LogicalKeyboardKey.arrowUp:
+            widget.onUp?.call();
+            return widget.onUp == null
+                ? KeyEventResult.ignored
+                : KeyEventResult.handled;
+          case LogicalKeyboardKey.arrowDown:
+            widget.onDown?.call();
+            return widget.onDown == null
+                ? KeyEventResult.ignored
+                : KeyEventResult.handled;
+          default:
+            return KeyEventResult.ignored;
+        }
+      },
+      child: Semantics(
+        button: true,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: GestureDetector(
+            onTap: () {
+              widget.focusNode.requestFocus();
+              widget.onPressed();
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              constraints: BoxConstraints(minHeight: height),
+              padding: EdgeInsets.symmetric(
+                horizontal: widget.compact ? 14 : 20,
+                vertical: 8,
+              ),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _focused
+                    ? _amber
+                    : _hovered
+                    ? Cinema.glassFocused
+                    : Cinema.glass,
+                borderRadius: BorderRadius.circular(height / 2),
+                boxShadow: _focused ? [Cinema.focusGlow.last] : const [],
+              ),
+              child: IconTheme.merge(
+                data: IconThemeData(color: ink),
+                child: DefaultTextStyle.merge(
+                  style: TextStyle(
+                    color: ink,
+                    fontSize: widget.compact ? 13 : 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  child: widget.child,
+                ),
+              ),
+            ),
           ),
-          child: widget.child,
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _InitialFailure extends StatelessWidget {
@@ -1990,40 +2057,24 @@ class _InitialFailure extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           const Text(
-            'My Library could not be loaded',
+            "Can't load My Library",
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: _warmWhite,
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-            ),
+            style: _messageTitle,
           ),
           const SizedBox(height: 8),
           const Text(
-            'Try again. Your saved library is unchanged.',
+            'Your saved items are safe.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: _quietText, fontSize: 15),
+            style: _messageBody,
           ),
-          const SizedBox(height: 18),
-          SizedBox(
-            width: 120,
-            child: _FocusableControl(
-              key: const ValueKey('my-library-initial-retry'),
-              focusNode: focusNode,
-              onFocused: onFocused,
-              onPressed: () => unawaited(onRetry()),
-              onLeft: onLeft,
-              child: const Center(
-                child: Text(
-                  'Retry',
-                  style: TextStyle(
-                    color: _warmWhite,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
+          const SizedBox(height: 20),
+          _FocusableControl(
+            key: const ValueKey('my-library-initial-retry'),
+            focusNode: focusNode,
+            onFocused: onFocused,
+            onPressed: () => unawaited(onRetry()),
+            onLeft: onLeft,
+            child: const Text('Try again'),
           ),
         ],
       ),
@@ -2049,19 +2100,15 @@ class _EmptyLibrary extends StatelessWidget {
                 Icon(Icons.bookmarks_outlined, color: _quietText, size: 32),
                 SizedBox(height: 14),
                 Text(
-                  'Your saved library is empty',
+                  'Nothing saved yet',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: _warmWhite,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: _messageTitle,
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'Favorites and custom groups will appear here when you save them.',
+                  'Save channels, movies and series with the bookmark button.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: _quietText, fontSize: 15),
+                  style: _messageBody,
                 ),
               ],
             ),
@@ -2103,19 +2150,12 @@ class _EmptySection extends StatelessWidget {
         children: [
           Icon(Icons.bookmark_border, color: _quietText, size: 28),
           SizedBox(height: 12),
-          Text(
-            'Nothing saved here yet',
-            style: TextStyle(
-              color: _warmWhite,
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          Text('Nothing here yet', style: _messageTitle),
           SizedBox(height: 6),
           Text(
-            'This saved list does not contain any available items.',
+            'Nothing in this group can play right now.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: _quietText, fontSize: 14),
+            style: _messageBody,
           ),
         ],
       ),
@@ -2143,39 +2183,18 @@ class _InlineFailure extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           const Text(
-            'This saved list could not be loaded',
+            "Can't load this group",
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: _warmWhite,
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-            ),
+            style: _messageTitle,
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'Try the local read again.',
-            style: TextStyle(color: _quietText, fontSize: 14),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: 110,
-            child: _FocusableControl(
-              key: const ValueKey('my-library-section-retry'),
-              focusNode: focusNode,
-              onFocused: onFocused,
-              onPressed: () => unawaited(onRetry()),
-              onLeft: onLeft,
-              child: const Center(
-                child: Text(
-                  'Retry',
-                  style: TextStyle(
-                    color: _warmWhite,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
+          const SizedBox(height: 20),
+          _FocusableControl(
+            key: const ValueKey('my-library-section-retry'),
+            focusNode: focusNode,
+            onFocused: onFocused,
+            onPressed: () => unawaited(onRetry()),
+            onLeft: onLeft,
+            child: const Text('Try again'),
           ),
         ],
       ),
@@ -2212,25 +2231,14 @@ class _RecoveryNotice extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
-        SizedBox(
-          width: 92,
-          child: _FocusableControl(
-            key: const ValueKey('my-library-recovery-retry'),
-            focusNode: focusNode,
-            onFocused: onFocused,
-            onPressed: () => unawaited(onRetry()),
-            onLeft: onLeft,
-            child: const Center(
-              child: Text(
-                'Retry',
-                style: TextStyle(
-                  color: _warmWhite,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ),
+        _FocusableControl(
+          key: const ValueKey('my-library-recovery-retry'),
+          focusNode: focusNode,
+          onFocused: onFocused,
+          onPressed: () => unawaited(onRetry()),
+          onLeft: onLeft,
+          compact: true,
+          child: const Text('Try again'),
         ),
       ],
     ),
@@ -2251,8 +2259,7 @@ class _PageFailureRow extends StatelessWidget {
   final VoidCallback onLeft, onUp;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 9),
+  Widget build(BuildContext context) => Center(
     child: _FocusableControl(
       key: const ValueKey('my-library-page-retry'),
       focusNode: focusNode,
@@ -2260,16 +2267,8 @@ class _PageFailureRow extends StatelessWidget {
       onPressed: () => unawaited(onRetry()),
       onLeft: onLeft,
       onUp: onUp,
-      child: const Center(
-        child: Text(
-          'More items could not be loaded · Retry',
-          style: TextStyle(
-            color: _warmWhite,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
+      compact: true,
+      child: const Text("Couldn't load more · Try again"),
     ),
   );
 }
@@ -2283,24 +2282,20 @@ class _LibrarySkeleton extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       const _Skeleton(width: 190, height: 32),
-      const SizedBox(height: 10),
-      const _Skeleton(width: 130, height: 16),
-      const SizedBox(height: 44),
+      const SizedBox(height: 34),
       Expanded(
         child: Row(
           children: [
             SizedBox(
-              width: 270,
+              width: 220,
               child: ListView.separated(
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: 6,
                 separatorBuilder: (_, _) => const SizedBox(height: 8),
-                itemBuilder: (_, _) => const _Skeleton(height: 48),
+                itemBuilder: (_, _) => const _Skeleton(height: 40),
               ),
             ),
-            const SizedBox(width: 36),
-            const VerticalDivider(width: 1, color: _line),
-            const SizedBox(width: 36),
+            const SizedBox(width: 24),
             Expanded(
               child: ListView.separated(
                 physics: const NeverScrollableScrollPhysics(),
@@ -2354,8 +2349,8 @@ class _Skeleton extends StatelessWidget {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: _raised,
-        borderRadius: BorderRadius.circular(7),
+        color: _surface,
+        borderRadius: BorderRadius.circular(12),
       ),
     ),
   );
@@ -2370,3 +2365,13 @@ String _formatCount(int value) {
   }
   return buffer.toString();
 }
+
+const _messageTitle = TextStyle(
+  color: _warmWhite,
+  fontFamily: Cinema.display,
+  fontSize: 22,
+  fontWeight: FontWeight.w800,
+  letterSpacing: -0.3,
+);
+
+const _messageBody = TextStyle(color: Cinema.quiet, fontSize: 15, height: 1.4);
