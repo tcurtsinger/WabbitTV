@@ -43,8 +43,6 @@ import 'features/sources/xtream_epg_service.dart';
 import 'home_fixture_mode.dart';
 
 const _railOpen = Color(0xFF141419);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
 const _lastChannelUnavailableNotice = 'Last channel unavailable · opened Home';
 
 enum ShellDestination {
@@ -1783,32 +1781,14 @@ class _WabbitShellState extends State<WabbitShell> {
                 if (_playbackStarting)
                   Positioned.fill(
                     child: BlockSemantics(
+                      // Matches the player's own starting mark, so the
+                      // hand-off to the player doesn't flicker.
                       child: ColoredBox(
                         key: const ValueKey('playback-starting-surface'),
-                        color: const Color(0xFF111212),
+                        color: Cinema.ink,
                         child: Center(
-                          child: Semantics(
-                            liveRegion: true,
-                            label: 'Starting playback',
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF191A1A),
-                                border: Border.all(color: _line),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                'Starting ${_pendingPlaybackTitle ?? 'playback'}',
-                                style: const TextStyle(
-                                  color: _warmWhite,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
+                          child: StatusMark(
+                            'Starting ${_pendingPlaybackTitle ?? 'playback'}',
                           ),
                         ),
                       ),
@@ -1964,25 +1944,17 @@ class _StartupPreparingSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ColoredBox(
     key: const ValueKey('startup-preparing-surface'),
-    color: const Color(0xFF111212),
+    color: Cinema.ink,
     child: Center(
       child: Semantics(
         liveRegion: true,
         label: 'Opening Wabbit TV',
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xFF191A1A),
-            border: Border.all(color: _line),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: const Text(
-            'Opening Wabbit TV…',
-            style: TextStyle(
-              color: _warmWhite,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
+        child: const Text(
+          'Opening Wabbit TV…',
+          style: TextStyle(
+            color: Cinema.text,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),

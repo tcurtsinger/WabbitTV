@@ -26,7 +26,8 @@ abstract final class Cinema {
   ];
 
   /// A Material button as a pill: glass at rest and solid amber when
-  /// focused. A [primary] button rests amber and gains a warm-white edge.
+  /// focused. A [primary] button rests amber. Any focused pill gains a
+  /// warm-white edge, so a focused secondary never reads as the primary.
   static ButtonStyle pillButton({bool primary = false}) => ButtonStyle(
     shape: const WidgetStatePropertyAll(StadiumBorder()),
     minimumSize: const WidgetStatePropertyAll(Size(64, 44)),
@@ -57,7 +58,7 @@ abstract final class Cinema {
           : text,
     ),
     side: WidgetStateProperty.resolveWith(
-      (states) => primary && states.contains(WidgetState.focused)
+      (states) => states.contains(WidgetState.focused)
           ? const BorderSide(color: text, width: 2)
           : BorderSide.none,
     ),

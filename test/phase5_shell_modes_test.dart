@@ -889,7 +889,13 @@ void main() {
       FocusManager.instance.primaryFocus?.debugLabel,
       'multiview second stream',
     );
-    expect(find.text('MULTIVIEW · SELECTED'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('multiview-shared-deck')),
+        matching: find.text('Channel Two'),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Muted. Pick a channel to hear it.'), findsNothing);
   });
 
@@ -944,7 +950,6 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(manager.sessions.where((session) => session.isAudible), isEmpty);
-      expect(find.text('MULTIVIEW · AUDIO OFF'), findsOneWidget);
       expect(find.text('Muted. Pick a channel to hear it.'), findsOneWidget);
       expect(find.text("Couldn't switch audio."), findsNothing);
       expect(

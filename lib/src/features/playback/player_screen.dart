@@ -716,9 +716,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     child: RepaintBoundary(child: video),
                   ),
                   if (_state.isBuffering && _state.hasVideo)
-                    const Center(child: _StatusMark('Buffering')),
+                    const Center(child: StatusMark('Buffering')),
                   if (_starting)
-                    Center(child: _StatusMark('Starting ${_handoff.title}')),
+                    Center(child: StatusMark('Starting ${_handoff.title}')),
                   if (_chromeVisible || _starting || _failed || _tracksOpen)
                     FocusScope(
                       node: _chrome,
@@ -915,8 +915,9 @@ class _DeckNodes {
       fullscreen;
 }
 
-class _StatusMark extends StatelessWidget {
-  const _StatusMark(this.label);
+/// A spinner and one line of status, centered over the video.
+class StatusMark extends StatelessWidget {
+  const StatusMark(this.label, {super.key});
   final String label;
   @override
   Widget build(BuildContext context) => Semantics(
