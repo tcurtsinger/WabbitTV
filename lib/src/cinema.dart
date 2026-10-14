@@ -1,6 +1,6 @@
 import 'dart:math' show pi;
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
 /// Night Cinema design tokens shared by the redesigned screens: an ink
 /// ground, warm-white text, and amber as the one accent and focus signal.
@@ -24,6 +24,39 @@ abstract final class Cinema {
     BoxShadow(color: Color(0xD9FFB547), spreadRadius: 3),
     BoxShadow(color: Color(0x40FFB547), blurRadius: 24, offset: Offset(0, 8)),
   ];
+
+  /// A Material button as a pill: glass at rest and solid amber when
+  /// focused. A [primary] button rests amber and gains a warm-white edge.
+  static ButtonStyle pillButton({bool primary = false}) => ButtonStyle(
+    shape: const WidgetStatePropertyAll(StadiumBorder()),
+    minimumSize: const WidgetStatePropertyAll(Size(64, 44)),
+    padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 20)),
+    textStyle: const WidgetStatePropertyAll(
+      TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+    ),
+    overlayColor: const WidgetStatePropertyAll(Color(0x00000000)),
+    backgroundColor: WidgetStateProperty.resolveWith(
+      (states) => states.contains(WidgetState.disabled)
+          ? glass
+          : primary || states.contains(WidgetState.focused)
+          ? amber
+          : states.contains(WidgetState.hovered)
+          ? glassFocused
+          : glass,
+    ),
+    foregroundColor: WidgetStateProperty.resolveWith(
+      (states) => states.contains(WidgetState.disabled)
+          ? faint
+          : primary || states.contains(WidgetState.focused)
+          ? amberInk
+          : text,
+    ),
+    side: WidgetStateProperty.resolveWith(
+      (states) => primary && states.contains(WidgetState.focused)
+          ? const BorderSide(color: text, width: 2)
+          : BorderSide.none,
+    ),
+  );
 
   /// Scrim behind chrome that floats over video, darkest at the edge.
   static LinearGradient scrim({required bool fromTop}) => LinearGradient(

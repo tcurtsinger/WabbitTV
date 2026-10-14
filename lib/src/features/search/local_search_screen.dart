@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
-import '../../focus_edge.dart';
+import '../../cinema.dart';
 import '../artwork/artwork_loader.dart';
 import '../artwork/source_artwork.dart';
 import '../browse/catalog_scope_controller.dart';
@@ -15,13 +15,12 @@ import '../sources/credential_store.dart';
 import '../sources/source_catalog_database.dart';
 import '../sources/source_models.dart';
 
-const _graphite = Color(0xFF111212);
-const _surface = Color(0xFF191A1A);
-const _raised = Color(0xFF222321);
-const _line = Color(0xFF343534);
-const _warmWhite = Color(0xFFF4F0E7);
-const _quietText = Color(0xFFAAA8A2);
-const _amber = Color(0xFFFFB347);
+const _graphite = Cinema.ink;
+const _surface = Color(0xFF141419);
+const _raised = Color(0xFF1E1E23);
+const _warmWhite = Cinema.text;
+const _quietText = Cinema.faint;
+const _amber = Cinema.amber;
 
 String? _catalogScopeState(CatalogScopeController controller) {
   final selected = controller.selectedSource;
@@ -506,11 +505,16 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
     widget.session.mountedItemFocusCount = _mountedItemNodes.length;
   }
 
+  double get _rowExtent {
+    final scaled = MediaQuery.textScalerOf(context).scale(16);
+    return 68 + ((scaled - 16).clamp(0, 16) * 1.25);
+  }
+
   void _focusRow(int index) {
     if (index < 0 || index >= _items.length) return;
     void reveal() {
       if (!mounted || !_scrollController.hasClients) return;
-      const rowExtent = 64.0;
+      final rowExtent = _rowExtent;
       final position = _scrollController.position;
       final start = index * rowExtent;
       final end = start + rowExtent;
@@ -838,8 +842,8 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
         widget.scopeController.sources.isEmpty) {
       return _SearchMessage(
         key: const ValueKey('search-catalog-error'),
-        title: 'Catalog unavailable',
-        message: 'Could not load the local source list. Try again.',
+        title: "Can't load your sources",
+        message: "The saved list couldn't be read.",
         actionLabel: 'Try again',
         onPressed: _retryCatalogScope,
         actionFocusNode: _errorRetryFocus,
@@ -848,16 +852,16 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
     if (!_hasQuery) {
       return const _SearchMessage(
         key: ValueKey('search-empty'),
-        title: 'Search your local library',
-        message: 'Type a title, channel, movie, or series to search every imported source.',
+        title: 'Search everything',
+        message: 'Channels, movies and series.',
       );
     }
     if (_error != null) {
       return _SearchMessage(
         key: const ValueKey('search-error'),
-        title: 'Search unavailable',
-        message: 'Could not search the local library. Try again.',
-        actionLabel: 'Retry',
+        title: 'Search failed',
+        message: "The saved catalog couldn't be read.",
+        actionLabel: 'Try again',
         onPressed: _loadForCurrentQuery,
         actionFocusNode: _errorRetryFocus,
       );
@@ -866,58 +870,42 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
     if (!_loading && _items.isEmpty) {
       return _SearchMessage(
         key: const ValueKey('search-no-results'),
-        title: 'No local matches',
+        title: 'Nothing found',
         message:
             'No matches for “$_query” in ${widget.scopeController.scopeLabel}.',
       );
     }
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Semantics(
-                    liveRegion: true,
-                    label: _total == null
-                        ? 'Searching local library'
-                        : '${_formatCount(_total!)} local results',
-                    child: Text(
-                      _total == null
-                          ? 'Searching local library'
-                          : '${_formatCount(_total!)} results',
-                      key: const ValueKey('search-result-count'),
-                      style: const TextStyle(
-                        color: _warmWhite,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-                const ExcludeSemantics(
-                  child: Icon(
-                    Icons.manage_search_outlined,
-                    color: _quietText,
-                    size: 20,
-                  ),
-                ),
-              ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          child: Semantics(
+            liveRegion: true,
+            label: _total == null
+                ? 'Searching local library'
+                : '${_formatCount(_total!)} local results',
+            child: Text(
+              _total == null
+                  ? 'Searching'
+                  : '${_formatCount(_total!)} ${_total == 1 ? 'result' : 'results'}',
+              key: const ValueKey('search-result-count'),
+              style: const TextStyle(
+                color: _quietText,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.3,
+              ),
             ),
           ),
-          const Divider(height: 1, color: _line),
-          Expanded(
+        ),
+        Expanded(
+          child: _BottomFade(
             child: ListView.builder(
               key: const ValueKey('search-results'),
               controller: _scrollController,
-              itemExtent: 64,
+              itemExtent: _rowExtent,
+              padding: const EdgeInsets.only(bottom: 48),
               scrollCacheExtent: const ScrollCacheExtent.pixels(384),
               itemCount: _items.length + (_loadingMore ? 3 : 0),
               itemBuilder: (context, index) {
@@ -959,13 +947,13 @@ class _LocalSearchScreenState extends State<LocalSearchScreen> {
               },
             ),
           ),
-          if (_pageError)
-            _PageRetry(
-              focusNode: _pageRetryFocus,
-              onPressed: () => unawaited(_loadMore()),
-            ),
-        ],
-      ),
+        ),
+        if (_pageError)
+          _PageRetry(
+            focusNode: _pageRetryFocus,
+            onPressed: () => unawaited(_loadMore()),
+          ),
+      ],
     );
   }
 }
@@ -1032,9 +1020,10 @@ class _SearchHeader extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: _warmWhite,
-                    fontSize: 31,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.7,
+                    fontFamily: Cinema.display,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.6,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -1114,6 +1103,7 @@ class _ScopeMenuState extends State<_ScopeMenu> {
       context: context,
       position: position,
       color: _raised,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       items: [
         const PopupMenuItem(
           value: LibraryScope.all(),
@@ -1181,35 +1171,41 @@ class _ScopeButton extends StatelessWidget {
   final bool focused;
 
   @override
-  Widget build(BuildContext context) => Container(
-    constraints: BoxConstraints(maxWidth: compact ? 160 : 184),
-    height: 44,
-    padding: const EdgeInsets.symmetric(horizontal: 14),
-    decoration: BoxDecoration(
-      color: _surface,
-      border: Border.all(color: focused ? _amber : _line, width: 2),
-      borderRadius: BorderRadius.circular(6),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Flexible(
-          child: Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _warmWhite,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
+  Widget build(BuildContext context) {
+    final ink = focused ? Cinema.amberInk : Cinema.quiet;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
+      constraints: BoxConstraints(maxWidth: compact ? 160 : 240),
+      height: 40,
+      padding: const EdgeInsets.fromLTRB(14, 0, 12, 0),
+      decoration: BoxDecoration(
+        color: focused ? _amber : Cinema.glass,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: focused ? [Cinema.focusGlow.last] : const [],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.layers_outlined, size: 16, color: ink),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: ink,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        const Icon(Icons.keyboard_arrow_down, color: _quietText, size: 18),
-      ],
-    ),
-  );
+          const SizedBox(width: 6),
+          Icon(Icons.keyboard_arrow_down, size: 18, color: ink),
+        ],
+      ),
+    );
+  }
 }
 
 class _SearchField extends StatelessWidget {
@@ -1260,21 +1256,23 @@ class _SearchField extends StatelessWidget {
         }
         return KeyEventResult.ignored;
       },
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
         height: 52,
         decoration: BoxDecoration(
           color: _surface,
-          border: Border.all(
-            color: focusNode.hasFocus ? _amber : _line,
-            width: 2,
-          ),
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(26),
+          boxShadow: focusNode.hasFocus ? Cinema.focusGlow : const [],
         ),
         child: Row(
           children: [
-            const Padding(
-              padding: EdgeInsets.only(left: 16),
-              child: Icon(Icons.search, color: _quietText),
+            Padding(
+              padding: const EdgeInsets.only(left: 18),
+              child: Icon(
+                Icons.search_rounded,
+                color: focusNode.hasFocus ? _amber : _quietText,
+                size: 22,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1289,7 +1287,7 @@ class _SearchField extends StatelessWidget {
                 onTap: () => onContentFocus(focusNode),
                 onSubmitted: (_) => onOpenKeyboard(),
                 decoration: const InputDecoration(
-                  hintText: 'Search Live, Movies, and Series',
+                  hintText: 'Channels, movies, series',
                   hintStyle: TextStyle(color: _quietText),
                   border: InputBorder.none,
                   isDense: true,
@@ -1356,25 +1354,29 @@ class _TextActionState extends State<_TextAction> {
               widget.onPressed();
             }
           : null,
-      child: Container(
-        key: ValueKey('search-action-${widget.label}'),
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: widget.enabled ? _raised : Colors.transparent,
-          border: Border.all(
-            color: _focused ? _amber : Colors.transparent,
-            width: 2,
+      child: Visibility(
+        visible: widget.enabled,
+        maintainSize: true,
+        maintainAnimation: true,
+        maintainState: true,
+        child: AnimatedContainer(
+          key: ValueKey('search-action-${widget.label}'),
+          duration: const Duration(milliseconds: 120),
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _focused ? _amber : Cinema.glass,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: _focused ? [Cinema.focusGlow.last] : const [],
           ),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(
-          widget.label,
-          style: TextStyle(
-            color: widget.enabled ? _warmWhite : _quietText,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              color: _focused ? Cinema.amberInk : _warmWhite,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ),
@@ -1417,6 +1419,7 @@ class _SearchRow extends StatefulWidget {
 
 class _SearchRowState extends State<_SearchRow> {
   bool _focused = false;
+  bool _hovered = false;
   late final FocusNode _focusNode;
 
   @override
@@ -1486,93 +1489,170 @@ class _SearchRowState extends State<_SearchRow> {
               const CustomSemanticsAction(label: 'Organize item'):
                   widget.onOrganize!,
             },
-      child: GestureDetector(
-        onTap: () {
-          _focusNode.requestFocus();
-          widget.onActivate();
-        },
-        child: Container(
-          key: ValueKey('search-item-${widget.item.libraryItemId}'),
-          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: _focused ? _raised : Colors.transparent,
-            border: Border.all(
-              color: _focused ? _amber : Colors.transparent,
-              width: 2,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: () {
+            _focusNode.requestFocus();
+            widget.onActivate();
+          },
+          child: AnimatedContainer(
+            key: ValueKey('search-item-${widget.item.libraryItemId}'),
+            duration: const Duration(milliseconds: 120),
+            margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            padding: const EdgeInsets.fromLTRB(6, 0, 10, 0),
+            decoration: BoxDecoration(
+              // Opaque when focused so the ring stays a ring.
+              color: _focused
+                  ? _raised
+                  : _hovered
+                  ? Cinema.glass
+                  : const Color(0x00000000),
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: _focused ? Cinema.focusGlow : const [],
             ),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Row(
-            children: [
-              SourceArtwork(
-                key: ValueKey('search-artwork-${widget.item.libraryItemId}'),
-                locator: widget.item.artworkLocator,
-                kind: widget.item.kind,
-                loader: widget.artworkLoader,
-                focused: _focused,
-                loadWhenVisible: true,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  widget.item.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _warmWhite,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                _kindBadge(widget.item.kind),
-                style: const TextStyle(
-                  color: _quietText,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              if (widget.showSource) ...[
-                const SizedBox(width: 12),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 160),
-                  child: Text(
-                    widget.item.sourceDisplayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: _quietText, fontSize: 14),
-                  ),
-                ),
-              ],
-              if (widget.onOrganize != null) ...[
-                const SizedBox(width: 8),
-                Tooltip(
-                  message: 'Organize',
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () {
-                      _focusNode.requestFocus();
-                      widget.onOrganize!();
-                    },
-                    child: const Padding(
-                      padding: EdgeInsets.all(7),
-                      child: Icon(
-                        Icons.bookmark_add_outlined,
-                        size: 18,
-                        color: _quietText,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 88,
+                  child: Center(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(
+                        widget.item.kind == SourceMediaKind.live ? 10 : 6,
+                      ),
+                      child: SourceArtwork(
+                        key: ValueKey(
+                          'search-artwork-${widget.item.libraryItemId}',
+                        ),
+                        locator: widget.item.artworkLocator,
+                        kind: widget.item.kind,
+                        loader: widget.artworkLoader,
+                        focused: _focused,
+                        loadWhenVisible: true,
+                        width: widget.item.kind == SourceMediaKind.live
+                            ? 88
+                            : 34,
+                        height: 50,
                       ),
                     ),
                   ),
                 ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.item.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _warmWhite,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        widget.showSource
+                            ? '${_kindLabel(widget.item.kind)} · ${widget.item.sourceDisplayName}'
+                            : _kindLabel(widget.item.kind),
+                        key: ValueKey(
+                          'search-detail-${widget.item.libraryItemId}',
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Cinema.quiet,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (widget.onOrganize != null) ...[
+                  const SizedBox(width: 8),
+                  Visibility(
+                    visible: _focused || _hovered,
+                    maintainSize: true,
+                    maintainAnimation: true,
+                    maintainState: true,
+                    child: _OrganizeButton(
+                      onPressed: () {
+                        _focusNode.requestFocus();
+                        widget.onOrganize!();
+                      },
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
     ),
+  );
+}
+
+/// The round Organize button a row shows while focused or hovered.
+class _OrganizeButton extends StatelessWidget {
+  const _OrganizeButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Organize',
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onPressed,
+      child: Container(
+        width: 34,
+        height: 34,
+        decoration: const BoxDecoration(
+          color: Color(0xB80B0B0E),
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(
+          Icons.bookmark_add_outlined,
+          size: 17,
+          color: _warmWhite,
+        ),
+      ),
+    ),
+  );
+}
+
+/// Fades a list into the ink ground so its last row reads as "more below".
+class _BottomFade extends StatelessWidget {
+  const _BottomFade({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      Positioned.fill(child: child),
+      const Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: 48,
+        child: IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [Cinema.ink, Color(0x000B0B0E)],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ],
   );
 }
 
@@ -1594,7 +1674,7 @@ class _SearchMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
     child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 560),
+      constraints: const BoxConstraints(maxWidth: 520),
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -1605,8 +1685,10 @@ class _SearchMessage extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: _warmWhite,
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
+                fontFamily: Cinema.display,
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.4,
               ),
             ),
             const SizedBox(height: 8),
@@ -1614,18 +1696,18 @@ class _SearchMessage extends StatelessWidget {
               message,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                color: _quietText,
-                fontSize: 16,
+                color: Cinema.quiet,
+                fontSize: 15,
                 height: 1.4,
               ),
             ),
             if (actionLabel != null) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: 20),
               TextButton(
                 key: const ValueKey('search-error-retry'),
                 focusNode: actionFocusNode,
                 onPressed: onPressed,
-                style: ButtonStyle(side: focusEdge()),
+                style: Cinema.pillButton(),
                 child: Text(actionLabel!),
               ),
             ],
@@ -1640,17 +1722,10 @@ class _SearchSkeleton extends StatelessWidget {
   const _SearchSkeleton();
 
   @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      color: _surface,
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(8),
-    ),
-    child: ListView.builder(
-      itemCount: 7,
-      itemExtent: 64,
-      itemBuilder: (_, _) => const _SearchRowSkeleton(),
-    ),
+  Widget build(BuildContext context) => ListView.builder(
+    itemCount: 7,
+    itemExtent: 68,
+    itemBuilder: (_, _) => const _SearchRowSkeleton(),
   );
 }
 
@@ -1659,13 +1734,34 @@ class _SearchRowSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-    child: Container(
-      height: 32,
-      decoration: BoxDecoration(
-        color: _raised,
-        borderRadius: BorderRadius.circular(6),
-      ),
+    padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+    child: Row(
+      children: [
+        Container(
+          width: 88,
+          height: 50,
+          decoration: BoxDecoration(
+            color: _surface,
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: FractionallySizedBox(
+              widthFactor: .45,
+              child: Container(
+                height: 14,
+                decoration: BoxDecoration(
+                  color: _surface,
+                  borderRadius: BorderRadius.circular(7),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     ),
   );
 }
@@ -1676,16 +1772,16 @@ class _PageRetry extends StatelessWidget {
   final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) => Padding(
     key: const ValueKey('search-next-page-error'),
-    width: double.infinity,
-    color: _raised,
-    padding: const EdgeInsets.all(10),
-    child: TextButton(
-      focusNode: focusNode,
-      onPressed: onPressed,
-      style: ButtonStyle(side: focusEdge()),
-      child: const Text('Retry'),
+    padding: const EdgeInsets.only(top: 8),
+    child: Center(
+      child: TextButton(
+        focusNode: focusNode,
+        onPressed: onPressed,
+        style: Cinema.pillButton(),
+        child: const Text('Load more'),
+      ),
     ),
   );
 }
@@ -1839,39 +1935,33 @@ class _TvKeyboardOverlayState extends State<_TvKeyboardOverlay> {
                     child: DecoratedBox(
                       decoration: BoxDecoration(
                         color: _surface,
-                        border: Border.all(color: _line),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(22),
                       ),
                       child: Padding(
-                        padding: const EdgeInsets.all(18),
+                        padding: const EdgeInsets.all(20),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              'Enter search text',
+                              'Search',
                               style: TextStyle(
                                 color: _warmWhite,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
+                                fontFamily: Cinema.display,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            const Text(
-                              'Use arrows to move, then Select',
-                              style: TextStyle(color: _quietText, fontSize: 14),
                             ),
                             const SizedBox(height: 12),
                             Container(
                               key: const ValueKey('search-tv-keyboard-query'),
-                              height: 44,
+                              height: 48,
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
+                                horizontal: 16,
                               ),
                               decoration: BoxDecoration(
                                 color: _graphite,
-                                border: Border.all(color: _line),
-                                borderRadius: BorderRadius.circular(6),
+                                borderRadius: BorderRadius.circular(24),
                               ),
                               child: Row(
                                 children: [
@@ -1985,21 +2075,20 @@ class _TvKeyState extends State<_TvKey> {
           widget.focusNode.requestFocus();
           widget.onPressed();
         },
-        child: Container(
-          height: 42,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 90),
+          height: 44,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: _focused ? _raised : _graphite,
-            border: Border.all(
-              color: _focused ? _amber : _line,
-              width: _focused ? 2 : 1,
-            ),
-            borderRadius: BorderRadius.circular(6),
+            color: _focused ? _amber : Cinema.glass,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: _focused ? [Cinema.focusGlow.last] : const [],
           ),
           child: Text(
             widget.label,
-            style: const TextStyle(
-              color: _warmWhite,
+            style: TextStyle(
+              color: _focused ? Cinema.amberInk : _warmWhite,
+              fontSize: 15,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -2019,8 +2108,8 @@ String _formatCount(int value) {
   return buffer.toString();
 }
 
-String _kindBadge(SourceMediaKind kind) => switch (kind) {
-  SourceMediaKind.live => 'LIVE',
-  SourceMediaKind.movies => 'MOVIE',
-  SourceMediaKind.series => 'SERIES',
+String _kindLabel(SourceMediaKind kind) => switch (kind) {
+  SourceMediaKind.live => 'Channel',
+  SourceMediaKind.movies => 'Movie',
+  SourceMediaKind.series => 'Series',
 };
